@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AIW_ROOT="$HOME/ai-workbench"
+DEFAULT_WORKSPACE="sandbox-test"
+
+cmd="${1:-help}"
+workspace="${2:-$DEFAULT_WORKSPACE}"
+
+load_env() {
+  if [ -f "$AIW_ROOT/.env" ]; then
+    set -a
+    source "$AIW_ROOT/.env"
+    set +a
+  fi
+}
+
+start_gateway() {
+  cd "$AIW_ROOT"
+  echo "==> Starting LiteLLM gateway..."
+  docker compose up -d litellm
+}
+
+prepare_workspace() {
+  mkdir -p "$AIW_ROOT/workspaces/$workspace"
+  mkdir -p "$AIW_ROOT/workspaces/$workspace/project"
+  mkdir -p "$AIW_ROOT/workspaces/$workspace/conversations"
+  mkdir -p "$AIW_ROOT/workspaces/$workspace/bash_events"
+
+  chmod -R a+rwX "$AIW_ROOT/workspaces/$workspace" 2>/dev/null || true
+  chmod 777 "$AIW_ROOT/workspaces/$workspace" 2>/dev/null || true
+  chmod 777 "$AIW_ROOT/workspaces/$workspace/project" 2>/dev/null || true
+  chmod 777 "$AIW_ROOT/workspaces/$workspace/conversations" 2>/dev/null || true
+  chmod 777 "$AIW_ROOT/workspaces/$workspace/bash_events" 2>/dev/null || true
+}
+
+case "$cmd" in
+  start)
+    load_env
+
+    if [ -z "${LITELLM_MASTER_KEY:-}" ]; then
+      echo "ERRO: LITELLM_MASTER_KEY não encontrada em $AIW_ROOT/.env"
+      exit 1
+    fi
+
+    start_gateway
+    prepare_workspace
+
+    export LLM_API_KEY="$LITELLM_MASTER_KEY"
+    export LLM_BASE_URL="${AIW_OPENHANDS_BASE_URL:-http://host.docker.internal:4000}"
+    export LLM_MODEL="${AIW_OPENHANDS_MODEL:-openai/dev-coder}"
+
+    echo "==> Starting OpenHands cockpit"
+    echo "==> Workspace: $AIW_ROOT/workspaces/$workspace"
+    echo "==> Model: $LLM_MODEL"
+    echo "==> Base URL: $LLM_BASE_URL"
+    echo "==> OpenHands: http://127.0.0.1:3000"
+
+    cd "$AIW_ROOT/workspaces/$workspace"
+    openhands serve --mount-cwd
+    ;;
+
+  gateway)
+    load_env
+    start_gateway
+    echo "==> LiteLLM: http://localhost:4000"
+    echo "==> LiteLLM UI: http://localhost:4000/ui"
+    ;;
+
+  stop)
+    echo "==> Stopping OpenHands..."
+    docker rm -f openhands-app 2>/dev/null || true
+    docker rm -f $(docker ps -aq --filter 'name=oh-agent-server') 2>/dev/null || true
+
+    echo "==> Stopping AI Workbench services..."
+    cd "$AIW_ROOT"
+    docker compose down
+    ;;
+
+  status)
+    cd "$AIW_ROOT"
+    echo "==> Docker compose services:"
+    docker compose ps
+    echo
+    echo "==> OpenHands containers:"
+    docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}' | grep -E 'openhands|oh-agent|agent-server|aiw-litellm' || true
+    ;;
+
+  logs)
+    service="${2:-litellm}"
+
+    if [ "$service" = "openhands" ]; then
+      docker logs -f --tail=120 openhands-app
+    else
+      cd "$AIW_ROOT"
+      docker compose logs -f --tail=120 litellm
+    fi
+    ;;
+
+  models)
+    load_env
+
+    if [ -z "${LITELLM_MASTER_KEY:-}" ]; then
+      echo "ERRO: LITELLM_MASTER_KEY não encontrada em $AIW_ROOT/.env"
+      exit 1
+    fi
+
+    curl -s http://localhost:4000/v1/models \
+      -H "Authorization: Bearer $LITELLM_MASTER_KEY" | python3 -m json.tool
+    ;;
+
+  *)
+    cat <<HELP
+AI Workbench
+
+Usage:
+  ./scripts/aiw start [workspace]      Start LiteLLM + OpenHands
+  ./scripts/aiw gateway                Start only LiteLLM
+  ./scripts/aiw stop                   Stop OpenHands + LiteLLM
+  ./scripts/aiw status                 Show containers
+  ./scripts/aiw logs                   Follow LiteLLM logs
+  ./scripts/aiw logs openhands         Follow OpenHands logs
+  ./scripts/aiw models                 List LiteLLM models
+
+Examples:
+  ./scripts/aiw start sandbox-test
+  ./scripts/aiw status
+  ./scripts/aiw stop
+HELP
+    ;;
+esac
