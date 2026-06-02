@@ -209,6 +209,11 @@ case "$cmd" in
     run_doctor
     ;;
 
+  smoke)
+    cd_aiw_root
+    ./scripts/model-smoke "${2:-dev-coder}"
+    ;;
+
   help|*)
     cat <<'HELP'
 AI Workbench
@@ -223,12 +228,14 @@ Usage:
   aiw logs                Follow LiteLLM logs
   aiw models              List models exposed by LiteLLM
   aiw doctor              Check local environment health
+  aiw smoke [model]       Run chat smoke test through LiteLLM
 
 Examples:
   aiw start sandbox-test
   aiw repo
   aiw current
   aiw gateway
+  aiw smoke dev-coder
   aiw stop
 HELP
     ;;
