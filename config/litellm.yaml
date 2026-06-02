@@ -14,15 +14,16 @@ model_list:
       model: groq/openai/gpt-oss-120b
       api_key: os.environ/GROQ_API_KEY
 
-
   - model_name: dev-openrouter-free
     litellm_params:
-      model: openrouter/moonshotai/kimi-k2.6:free
+      model: openai/openai/gpt-oss-120b:free
+      api_base: https://openrouter.ai/api/v1
       api_key: os.environ/OPENROUTER_API_KEY
 
   - model_name: dev-coder
     litellm_params:
-      model: openrouter/moonshotai/kimi-k2.6:free
+      model: openai/openai/gpt-oss-120b:free
+      api_base: https://openrouter.ai/api/v1
       api_key: os.environ/OPENROUTER_API_KEY
 
 general_settings:
