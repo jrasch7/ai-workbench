@@ -1,131 +1,235 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-AIW_ROOT="$HOME/ai-workbench"
-DEFAULT_WORKSPACE="sandbox-test"
+AIW_ROOT="${AIW_ROOT:-$HOME/ai-workbench}"
+DEFAULT_WORKSPACE="${DEFAULT_WORKSPACE:-sandbox-test}"
 
 cmd="${1:-help}"
 workspace="${2:-$DEFAULT_WORKSPACE}"
 
-load_env() {
-  if [ -f "$AIW_ROOT/.env" ]; then
+log() {
+  echo "==> $1"
+}
+
+ok() {
+  echo "OK: $1"
+}
+
+warn() {
+  echo "WARN: $1"
+}
+
+err() {
+  echo "ERROR: $1"
+}
+
+cd_aiw_root() {
+  cd "$AIW_ROOT"
+}
+
+load_env_if_present() {
+  if [[ -f "$AIW_ROOT/.env" ]]; then
     set -a
+    # shellcheck disable=SC1091
     source "$AIW_ROOT/.env"
     set +a
   fi
 }
 
-start_gateway() {
-  cd "$AIW_ROOT"
-  echo "==> Starting LiteLLM gateway..."
+start_litellm() {
+  cd_aiw_root
+  log "Starting LiteLLM gateway..."
   docker compose up -d litellm
 }
 
-prepare_workspace() {
-  mkdir -p "$AIW_ROOT/workspaces/$workspace"
-  mkdir -p "$AIW_ROOT/workspaces/$workspace/project"
-  mkdir -p "$AIW_ROOT/workspaces/$workspace/conversations"
-  mkdir -p "$AIW_ROOT/workspaces/$workspace/bash_events"
+cleanup_openhands() {
+  log "Stopping OpenHands containers if running..."
+  docker rm -f openhands-app >/dev/null 2>&1 || true
+  local agent_ids
+  agent_ids="$(docker ps -aq --filter "name=oh-agent-server" || true)"
+  if [[ -n "$agent_ids" ]]; then
+    docker rm -f $agent_ids >/dev/null 2>&1 || true
+  fi
+}
 
-  chmod -R a+rwX "$AIW_ROOT/workspaces/$workspace" 2>/dev/null || true
-  chmod 777 "$AIW_ROOT/workspaces/$workspace" 2>/dev/null || true
-  chmod 777 "$AIW_ROOT/workspaces/$workspace/project" 2>/dev/null || true
-  chmod 777 "$AIW_ROOT/workspaces/$workspace/conversations" 2>/dev/null || true
-  chmod 777 "$AIW_ROOT/workspaces/$workspace/bash_events" 2>/dev/null || true
+prepare_workspace() {
+  local target_dir="$1"
+  mkdir -p "$target_dir"
+  mkdir -p "$target_dir/conversations" "$target_dir/bash_events"
+  chmod 777 "$target_dir/conversations" "$target_dir/bash_events" >/dev/null 2>&1 || true
+  if [[ -d "$target_dir/.git/info" ]]; then
+    touch "$target_dir/.git/info/exclude"
+    grep -qxF "conversations/" "$target_dir/.git/info/exclude" || printf "\
+conversations/\n" >> "$target_dir/.git/info/exclude"
+    grep -qxF "bash_events/" "$target_dir/.git/info/exclude" || printf "bash_events/\n" >> "$target_dir/.git/info/exclude"
+    grep -qxF "project/" "$target_dir/.git/info/exclude" || printf "project/\n" >> "$target_dir/.git/info/exclude"
+  fi
+}
+
+start_openhands_here() {
+  log "OpenHands will be available at: http://localhost:3000"
+  log "Mounting workspace: $(pwd)"
+  openhands serve --mount-cwd
+}
+
+run_workspace() {
+  local target_dir="$1"
+  start_litellm
+  cleanup_openhands
+  prepare_workspace "$target_dir"
+  cd "$target_dir"
+  start_openhands_here
+}
+
+run_doctor() {
+  log "AI Workbench doctor"
+  local failed=0
+
+
+  if command -v docker >/dev/null 2>&1; then
+    ok "docker binary found"
+  else
+    err "docker binary not found"
+    failed=1
+  fi
+
+  if docker info >/dev/null 2>&1; then
+    ok "docker daemon responding"
+  else
+    err "docker daemon not responding"
+    failed=1
+  fi
+
+  if docker compose version >/dev/null 2>&1; then
+    ok "docker compose available"
+  else
+    err "docker compose not available"
+    failed=1
+  fi
+
+  if [[ -f "$AIW_ROOT/.env" ]]; then
+    ok ".env found at $AIW_ROOT/.env"
+    if grep -q '^LITELLM_MASTER_KEY=.' "$AIW_ROOT/.env"; then
+      ok "LITELLM_MASTER_KEY configured"
+    else
+      err "LITELLM_MASTER_KEY missing or empty in .env"
+      failed=1
+    fi
+  else
+    err ".env not found at $AIW_ROOT/.env"
+    failed=1
+  fi
+
+  if command -v openhands >/dev/null 2>&1; then
+    ok "openhands binary found"
+  else
+    err "openhands binary not found"
+    failed=1
+  fi
+
+  if docker ps --format '{{.Names}}' | grep -q '^aiw-litellm$'; then
+    ok "LiteLLM container is running"
+    load_env_if_present
+    if [[ -n "${LITELLM_MASTER_KEY:-}" ]]; then
+      if curl --max-time 15 -fsS http://localhost:4000/v1/models -H "Authorization: Bearer $LITELLM_MASTER_KEY" >/dev/null 2>&1; then
+        ok "LiteLLM /v1/models responding"
+      else
+        warn "LiteLLM is running but /v1/models did not respond"
+      fi
+    else
+      warn "Cannot test LiteLLM /v1/models because LITELLM_MASTER_KEY is not loaded"
+    fi
+  else
+    warn "LiteLLM container is not running; run ./scripts/aiw gateway"
+  fi
+
+  if [[ "$failed" -eq 0 ]]; then
+    log "Doctor finished without blocking errors."
+  else
+    log "Doctor found blocking errors."
+    exit 1
+  fi
 }
 
 case "$cmd" in
   start)
-    load_env
+    run_workspace "$AIW_ROOT/workspaces/$workspace"
+    ;;
 
-    if [ -z "${LITELLM_MASTER_KEY:-}" ]; then
-      echo "ERRO: LITELLM_MASTER_KEY não encontrada em $AIW_ROOT/.env"
-      exit 1
-    fi
+  repo)
+    run_workspace "$AIW_ROOT"
+    ;;
 
-    start_gateway
-    prepare_workspace
-
-    export LLM_API_KEY="$LITELLM_MASTER_KEY"
-    export LLM_BASE_URL="${AIW_OPENHANDS_BASE_URL:-http://host.docker.internal:4000}"
-    export LLM_MODEL="${AIW_OPENHANDS_MODEL:-openai/dev-coder}"
-
-    echo "==> Starting OpenHands cockpit"
-    echo "==> Workspace: $AIW_ROOT/workspaces/$workspace"
-    echo "==> Model: $LLM_MODEL"
-    echo "==> Base URL: $LLM_BASE_URL"
-    echo "==> OpenHands: http://127.0.0.1:3000"
-
-    cd "$AIW_ROOT/workspaces/$workspace"
-    openhands serve --mount-cwd
+  current)
+    run_workspace "$(pwd)"
     ;;
 
   gateway)
-    load_env
-    start_gateway
-    echo "==> LiteLLM: http://localhost:4000"
-    echo "==> LiteLLM UI: http://localhost:4000/ui"
+    start_litellm
+    log "LiteLLM access: http://localhost:4000"
+    log "LiteLLM UI: http://localhost:4000/ui"
     ;;
 
   stop)
-    echo "==> Stopping OpenHands..."
-    docker rm -f openhands-app 2>/dev/null || true
-    docker rm -f $(docker ps -aq --filter 'name=oh-agent-server') 2>/dev/null || true
-
-    echo "==> Stopping AI Workbench services..."
-    cd "$AIW_ROOT"
+    cleanup_openhands
+    log "Stopping AI Workbench services..."
+    cd_aiw_root
     docker compose down
     ;;
 
   status)
-    cd "$AIW_ROOT"
-    echo "==> Docker compose services:"
+    cd_aiw_root
+    log "Docker compose services:"
     docker compose ps
     echo
-    echo "==> OpenHands containers:"
-    docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}' | grep -E 'openhands|oh-agent|agent-server|aiw-litellm' || true
+    log "OpenHands containers:"
+    docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}' | grep -E 'openhands|oh-agent|aiw-litellm' || true
     ;;
 
   logs)
-    service="${2:-litellm}"
-
-    if [ "$service" = "openhands" ]; then
-      docker logs -f --tail=120 openhands-app
-    else
-      cd "$AIW_ROOT"
-      docker compose logs -f --tail=120 litellm
-    fi
+    cd_aiw_root
+    docker compose logs -f --tail=100 litellm
     ;;
 
   models)
-    load_env
-
-    if [ -z "${LITELLM_MASTER_KEY:-}" ]; then
-      echo "ERRO: LITELLM_MASTER_KEY não encontrada em $AIW_ROOT/.env"
+    cd_aiw_root
+    if [[ ! -f .env ]]; then
+      err ".env not found at $AIW_ROOT/.env"
       exit 1
     fi
-
-    curl -s http://localhost:4000/v1/models \
-      -H "Authorization: Bearer $LITELLM_MASTER_KEY" | python3 -m json.tool
+    load_env_if_present
+    if [[ -z "${LITELLM_MASTER_KEY:-}" ]]; then
+      err "LITELLM_MASTER_KEY missing or empty"
+      exit 1
+    fi
+    curl --max-time 30 -sS http://localhost:4000/v1/models -H "Authorization: Bearer $LITELLM_MASTER_KEY" | python3 -m json.tool
     ;;
 
-  *)
-    cat <<HELP
+  doctor)
+    run_doctor
+    ;;
+
+  help|*)
+    cat <<'HELP'
 AI Workbench
 
 Usage:
-  ./scripts/aiw start [workspace]      Start LiteLLM + OpenHands
-  ./scripts/aiw gateway                Start only LiteLLM
-  ./scripts/aiw stop                   Stop OpenHands + LiteLLM
-  ./scripts/aiw status                 Show containers
-  ./scripts/aiw logs                   Follow LiteLLM logs
-  ./scripts/aiw logs openhands         Follow OpenHands logs
-  ./scripts/aiw models                 List LiteLLM models
+  aiw start [workspace]   Start LiteLLM + OpenHands for an isolated workspace under ~/ai-workbench/workspaces
+  aiw repo                Start LiteLLM + OpenHands mounted on ~/ai-workbench
+  aiw current            Start LiteLLM + OpenHands mounted on the current directory
+  aiw gateway             Start only LiteLLM gateway
+  aiw stop                Stop OpenHands + LiteLLM
+  aiw status              Show service status
+  aiw logs                Follow LiteLLM logs
+  aiw models              List models exposed by LiteLLM
+  aiw doctor              Check local environment health
 
 Examples:
-  ./scripts/aiw start sandbox-test
-  ./scripts/aiw status
-  ./scripts/aiw stop
+  aiw start sandbox-test
+  aiw repo
+  aiw current
+  aiw gateway
+  aiw stop
 HELP
     ;;
 esac
