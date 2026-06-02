@@ -1,75 +1,150 @@
-# Troubleshooting LiteLLM & OpenRouter Integration
+# Troubleshooting — LiteLLM e OpenRouter
 
-This document lists common issues when using the local LiteLLM proxy together with OpenRouter and how to resolve them.
+Este documento registra problemas encontrados ao integrar LiteLLM, OpenRouter e OpenHands no AI Workbench.
 
-## 1. LiteLLM does not expose the `dev-coder` alias
+## 1. OpenRouter direto funciona, mas LiteLLM reseta conexão
 
-- **Symptom**: OpenHands UI shows *Model not found* or returns a 404.
-- **Fix**:
-  1. Open `config/litellm.yaml` (or the environment variable `LITELLM_ALIAS`).
-  2. Ensure the `model_list` contains an entry:
-     ```yaml
-     - model_name: dev-coder
-       litellm_model_name: openai/dev-coder
-     ```
-  3. Restart the LiteLLM container: `docker compose restart litellm`.
+Sintoma:
 
-## 2. OpenRouter returns HTTP 429 Too Many Requests
-
-- **Cause**: Free tier models on OpenRouter are rate‑limited and may be throttled.
-- **Work‑arounds**:
-  - Reduce request frequency (e.g., add a short delay between calls).
-  - Switch to a paid model or another provider in `LITELLM_MODEL`.
-  - Configure a fallback provider in `config/litellm.yaml`:
-    ```yaml
-    fallback_models:
-      - model_name: openai/gpt-4o-mini
-        api_key: $OPENAI_API_KEY
-    ```
-
-## 3. OpenRouter integration fails with *adapter* error
-
-- **Symptom**: LiteLLM logs show `adapter openrouter/... not found`.
-- **Explanation**: LiteLLM expects an OpenAI‑compatible `api_base` URL, not the dedicated `openrouter/...` adapter.
-- **Fix**: Set the environment variables:
-  ```bash
-  LITELLM_OPENROUTER_API_BASE=https://api.openrouter.ai/v1
-  LITELLM_OPENROUTER_API_KEY=$OPENROUTER_API_KEY
-  ```
-  and ensure `api_base` is used in the request configuration.
-
-## 4. Sandbox Docker cannot write files to the workspace
-
-- **Symptom**: Generated code runs but no file appears in the mounted volume.
-- **Fix**:
-  1. Verify the volume mount in `docker-compose.yml` (e.g., `- ./workspace:/workspace`).
-  2. Ensure the sandbox container has write permissions (`chmod -R 777 workspace`).
-  3. Check container logs: `docker logs sandbox` for permission errors.
-
-## 5. Model identifier mismatch
-
-- **Symptom**: OpenHands sends `openai/dev-coder` but LiteLLM expects `dev-coder`.
-- **Fix**: In `.env.example` set:
-  ```
-  OPENHANDS_MODEL=openai/dev-coder
-  LITELLM_ALIAS=dev-coder
-  ```
-  LiteLLM will map the alias correctly.
-
-## 6. General connectivity issues
-
-- Verify that the host can reach `api.openrouter.ai` (run `curl -I https://api.openrouter.ai/v1`).
-- Ensure no firewall blocks outbound traffic from the LiteLLM container.
-- Check that the Docker network allows communication between `openhands` and `litellm` containers (`docker network ls`).
-
-## 7. Restart the stack
-
-Sometimes stale containers cause unexpected behavior. A clean restart often resolves issues:
-```bash
-docker compose down
-docker compose up -d --build
+```text
+curl: (56) Recv failure: Connection reset by peer
 ```
 
----
+Diagnóstico feito:
 
-If problems persist, consult the OpenHands and LiteLLM issue trackers or open a new issue with logs from the relevant containers.
+- Docker estava funcionando.
+- LiteLLM estava em execução.
+- `/v1/models` respondia normalmente.
+- OpenRouter direto respondia usando `https://openrouter.ai/api/v1/chat/completions`.
+- LiteLLM resetava conexão usando configurações com `openrouter/...`.
+
+Solução aplicada:
+
+Usar OpenRouter como endpoint OpenAI-compatible no `config/litellm.yaml`:
+
+```yaml
+- model_name: dev-coder
+  litellm_params:
+    model: openai/openai/gpt-oss-120b:free
+    api_base: https://openrouter.ai/api/v1
+    api_key: os.environ/OPENROUTER_API_KEY
+```
+
+O OpenHands deve continuar usando:
+
+```text
+openai/dev-coder
+```
+
+## 2. OpenRouter free retorna 429
+
+Sintoma:
+
+```text
+Provider returned error
+code: 429
+is temporarily rate-limited upstream
+```
+
+Causa:
+
+Modelos grátis do OpenRouter dependem de provedores upstream. Eles podem ficar saturados, retornar `429`, ou trocar de provider conforme disponibilidade.
+
+Impacto:
+
+- O ambiente local pode estar correto e ainda assim o modelo grátis falhar.
+- O erro pode variar entre modelos como Kimi, Qwen, Llama, GPT-OSS, GLM ou outros.
+
+Solução temporária:
+
+- Testar outro modelo grátis.
+- Aguardar alguns minutos.
+- Usar `openrouter/free` diretamente apenas para diagnóstico.
+
+Solução séria futura:
+
+- Configurar fallback no LiteLLM.
+- Usar um agregador confiável com pequeno crédito.
+- Separar aliases por finalidade: `dev-fast`, `dev-coder`, `dev-review`, `dev-premium`.
+
+## 3. OpenHands usa o modelo errado
+
+Sintoma:
+
+A UI mostra outro modelo no topo, por exemplo:
+
+```text
+gpt-5.5
+```
+
+Correção:
+
+Na configuração da UI do OpenHands:
+
+```text
+Modelo personalizado: openai/dev-coder
+URL base: http://host.docker.internal:4000
+Chave API: valor de LITELLM_MASTER_KEY
+```
+
+## 4. Sandbox não cria arquivos no workspace
+
+Sintoma:
+
+```text
+PermissionError: [Errno 13] Permission denied: /workspace/conversations
+```
+
+Correção aplicada em workspaces descartáveis:
+
+```bash
+cd ~/ai-workbench/workspaces/sandbox-test && mkdir -p conversations project bash_events && chmod -R a+rwX . && chmod 777 . conversations project bash_events
+```
+
+## 5. Porta presa por sandbox antigo
+
+Sintoma:
+
+```text
+Bind for 0.0.0.0:<porta> failed: port is already allocated
+```
+
+Correção:
+
+```bash
+cd ~/ai-workbench && ./scripts/aiw stop
+```
+
+Se necessário:
+
+```bash
+docker rm -f openhands-app 2>/dev/null || true
+```
+
+```bash
+docker rm -f $(docker ps -aq --filter name=oh-agent-server) 2>/dev/null || true
+```
+
+## 6. Validar gateway LiteLLM
+
+```bash
+cd ~/ai-workbench && ./scripts/aiw models
+```
+
+Teste de chat:
+
+```bash
+cd ~/ai-workbench && bash -lc 'set -a; source .env; set +a; curl --max-time 90 -sS http://localhost:4000/v1/chat/completions -H "Authorization: Bearer $LITELLM_MASTER_KEY" -H "Content-Type: application/json" --data-binary @/tmp/aiw-test.json | python3 -m json.tool'
+```
+
+Resposta esperada:
+
+```text
+AI Workbench OK
+```
+
+## 7. Parar tudo
+
+```bash
+cd ~/ai-workbench && ./scripts/aiw stop
+```

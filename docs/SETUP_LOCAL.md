@@ -1,70 +1,110 @@
-# Setup Local Development for **ai-workbench**
+# Setup Local — AI Workbench
 
-This guide contains the minimal steps required to clone the repository on a new machine and get the full stack running locally.
+Este guia descreve como subir o AI Workbench em um novo ambiente local.
 
-## 1. Clone the repository
+## Pré-requisitos
+
+- Windows com WSL2 habilitado.
+- Ubuntu rodando em WSL2.
+- Git configurado com acesso ao GitHub.
+- Docker Engine instalado dentro do Ubuntu.
+- `uv` instalado.
+- OpenHands instalado via `uv tool install openhands --python 3.12`.
+
+## Clonar o repositório
 
 ```bash
-git clone https://github.com/your-org/ai-workbench.git
-cd ai-workbench
+git clone git@github.com:jrasch7/ai-workbench.git
 ```
 
-## 2. Create environment file
+```bash
+cd ~/ai-workbench
+```
 
-Copy the example file and fill in your own keys:
+## Criar o arquivo local de ambiente
 
 ```bash
 cp .env.example .env
-# Edit .env and replace the placeholder values with real keys
 ```
 
-> **Important**: do **not** commit the real ``.env`` file.
+Edite o `.env` e preencha as chaves necessárias. O arquivo `.env` nunca deve ser commitado.
 
-## 3. Build and start containers
+Variáveis principais:
+
+```text
+LITELLM_MASTER_KEY=chave local usada para acessar o gateway LiteLLM
+OPENROUTER_API_KEY=chave da OpenRouter
+GROQ_API_KEY=chave da Groq, opcional
+```
+
+## Subir o gateway LiteLLM
 
 ```bash
-# Build Docker images (if not already built)
-docker compose build
-
-# Start the stack in the background
-docker compose up -d
+./scripts/aiw gateway
 ```
 
-The stack consists of:
-- **OpenHands GUI** (exposes UI on ``http://host.docker.internal:4000``)
-- **LiteLLM** (local LLM proxy, ports ``8011`` and ``8012`` as defined in `work_hosts`)
-- **OpenRouter** (accessed via LiteLLM)
-- **Sandbox Docker** (executes generated code)
-- **Workspace volume** (where generated files are stored)
+O LiteLLM deve ficar disponível em:
 
-## 4. Verify the services
+```text
+http://localhost:4000
+```
+
+A UI do LiteLLM, quando disponível, fica em:
+
+```text
+http://localhost:4000/ui
+```
+
+## Validar modelos expostos pelo LiteLLM
 
 ```bash
-# List running containers
-docker ps
+./scripts/aiw models
 ```
-You should see containers for `openhands`, `litellm`, and the sandbox.
 
-## 5. Open the UI
+Aliases esperados:
 
-Navigate to **http://host.docker.internal:4000** in your browser.
+```text
+dev-fast
+dev-balanced
+dev-large
+dev-openrouter-free
+dev-coder
+```
 
-## 6. Model configuration
+## Subir o OpenHands
 
-OpenHands expects the model identifier **openai/dev-coder**. LiteLLM must expose this model under the alias **dev-coder**.
+```bash
+./scripts/aiw start sandbox-test
+```
 
-## 7. OpenRouter integration (optional)
+A UI do OpenHands deve abrir em:
 
-LiteLLM forwards requests to OpenRouter using an OpenAI‑compatible ``api_base`` URL (e.g. ``https://api.openrouter.ai/v1``). Direct use of the ``openrouter/...`` adapter is **not** supported.
+```text
+http://127.0.0.1:3000
+```
 
-### Known limitations
-- Free OpenRouter models are unstable and may return HTTP 429 errors.
-- For production workloads you should configure fallback providers or use a paid, reliable model.
+## Configuração do modelo no OpenHands
 
-## 8. End‑to‑end flow (validated)
+Na UI do OpenHands, use:
 
-1. **OpenHands GUI** → 2. **LiteLLM (local)** → 3. **OpenRouter** → 4. **Sandbox Docker** → 5. Generated file placed in the workspace.
+```text
+Modelo personalizado: openai/dev-coder
+URL base: http://host.docker.internal:4000
+Chave API: valor de LITELLM_MASTER_KEY
+```
 
----
+O LiteLLM expõe o alias interno `dev-coder`. O OpenHands usa `openai/dev-coder` porque se conecta ao LiteLLM como endpoint OpenAI-compatible.
 
-**Next steps**: See `docs/TROUBLESHOOTING_LITELLM_OPENROUTER.md` for common issues.
+## Fluxo validado
+
+```text
+OpenHands GUI → LiteLLM local → OpenRouter → sandbox Docker → arquivo criado no workspace
+```
+
+## Observações importantes
+
+- O OpenRouter funcionou melhor via `api_base: https://openrouter.ai/api/v1` usando provider OpenAI-compatible.
+- O adapter direto `openrouter/...` no LiteLLM apresentou instabilidade/reset de conexão neste ambiente.
+- Modelos grátis do OpenRouter podem retornar `429` por limite upstream.
+- Free tier serve para validar a arquitetura, mas não deve ser tratado como base confiável para produção.
+- Para uso sério, o projeto deve evoluir para fallbacks de modelos/provedores e pelo menos um agregador confiável com crédito.
