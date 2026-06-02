@@ -60,6 +60,23 @@ OK: model smoke passed for dev-coder
 ```
 
 Se retornar `429`, timeout ou erro de provider, o problema está no modelo/provedor e não necessariamente no OpenHands.
+### Testar matriz de modelos via LiteLLM
+
+```bash
+./scripts/aiw matrix dev-openrouter-free dev-coder
+```
+
+Use este comando para validar mais de um alias de modelo sem envolver OpenHands.
+
+Resultado esperado:
+
+```text
+Passed: 2
+Failed: 0
+```
+
+Se algum alias falhar, a falha deve ser tratada como problema de chave, provider, rate limit, timeout ou roteamento de modelo antes de culpar o agente.
+
 ### Abrir workspace isolado
 
 ```bash
