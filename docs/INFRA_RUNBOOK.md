@@ -60,7 +60,7 @@ OK: model smoke passed for dev-coder
 ```
 
 Se retornar `429`, timeout ou erro de provider, o problema está no modelo/provedor e não necessariamente no OpenHands.
-\n### Abrir workspace isolado
+### Abrir workspace isolado
 
 ```bash
 ./scripts/aiw start sandbox-test

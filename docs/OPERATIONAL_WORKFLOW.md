@@ -168,6 +168,12 @@ Listar modelos:
 ./scripts/aiw models
 ```
 
+Testar chat do modelo sem OpenHands:
+
+```bash
+./scripts/aiw smoke dev-coder
+```
+
 Abrir bancada no repo atual:
 
 ```bash
