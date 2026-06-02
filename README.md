@@ -252,3 +252,23 @@ O objetivo final é ter uma infraestrutura própria de IA para engenharia de sof
 ## Licença
 
 Licença a definir.
+
+## Operational Documentation
+
+Core docs for operating the AI Workbench:
+
+- [Engineering Bench](docs/ENGINEERING_BENCH.md)
+- [Infra Runbook](docs/INFRA_RUNBOOK.md)
+- [Project Contexts](docs/PROJECT_CONTEXTS.md)
+- [Agents](docs/AGENTS.md)
+- [Operational Workflow](docs/OPERATIONAL_WORKFLOW.md)
+- [Local Setup](docs/SETUP_LOCAL.md)
+- [LiteLLM/OpenRouter Troubleshooting](docs/TROUBLESHOOTING_LITELLM_OPENROUTER.md)
+
+Operational assets:
+
+- [Nivela Context](context/projects/NIVELA.md)
+- [SisOpERP Web Context](context/projects/SISOPERP_WEB.md)
+- [Task Templates](context/templates/)
+- [Agent Profiles](agents/)
+
