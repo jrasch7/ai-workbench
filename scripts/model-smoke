@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AIW_ROOT="${AIW_ROOT:-$HOME/ai-workbench}"
+MODEL="${1:-dev-coder}"
+
+cd "$AIW_ROOT"
+
+if [[ ! -f .env ]]; then
+  echo "ERROR: .env not found at $AIW_ROOT/.env"
+  exit 1
+fi
+
+set -a
+# shellcheck disable=SC1091
+source .env
+set +a
+
+if [[ -z "${LITELLM_MASTER_KEY:-}" ]]; then
+  echo "ERROR: LITELLM_MASTER_KEY missing or empty"
+  exit 1
+fi
+
+ready=0
+
+for i in {1..40}; do
+  if curl -fsS http://localhost:4000/v1/models -H "Authorization: Bearer $LITELLM_MASTER_KEY" >/dev/null 2>&1; then
+    echo "OK: LiteLLM ready"
+    ready=1
+    break
+  fi
+
+  echo "WAIT: LiteLLM not ready yet ($i/40)"
+  sleep 2
+done
+
+if [[ "$ready" -ne 1 ]]; then
+  echo "ERROR: LiteLLM did not become ready"
+  exit 1
+fi
+
+REQUEST_FILE="/tmp/aiw-model-smoke.json"
+RESPONSE_FILE="/tmp/aiw-model-smoke-response.json"
+
+python3 -c 'import json, sys; model=sys.argv[1]; path=sys.argv[2]; payload={"model":model,"messages":[{"role":"user","content":"Responda apenas: AIW_MODEL_OK"}],"max_tokens":80}; open(path,"w",encoding="utf-8").write(json.dumps(payload, ensure_ascii=False))' "$MODEL" "$REQUEST_FILE"
+
+HTTP_CODE=$(curl --max-time 90 -sS -o "$RESPONSE_FILE" -w "%{http_code}" http://localhost:4000/v1/chat/completions -H "Authorization: Bearer $LITELLM_MASTER_KEY" -H "Content-Type: application/json" --data-binary @"$REQUEST_FILE" || true)
+
+echo "HTTP: $HTTP_CODE"
+
+if [[ ! -s "$RESPONSE_FILE" ]]; then
+  echo "ERROR: empty response from LiteLLM"
+  exit 1
+fi
+
+python3 -m json.tool "$RESPONSE_FILE" || cat "$RESPONSE_FILE"
+
+if [[ "$HTTP_CODE" != "200" ]]; then
+  echo "ERROR: model smoke failed for $MODEL"
+  exit 1
+fi
+
+if grep -q "AIW_MODEL_OK" "$RESPONSE_FILE"; then
+  echo "OK: model smoke passed for $MODEL"
+else
+  echo "WARN: request succeeded but expected text was not found"
+fi
