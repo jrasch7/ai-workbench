@@ -44,7 +44,23 @@ dev-openrouter-free
 dev-coder
 ```
 
-### Abrir workspace isolado
+
+### Testar chat do modelo via LiteLLM
+
+```bash
+./scripts/aiw smoke dev-coder
+```
+
+Use este comando depois de `gateway` e `models` para validar se o alias realmente responde chat, sem envolver OpenHands.
+
+Resultado esperado:
+
+```text
+OK: model smoke passed for dev-coder
+```
+
+Se retornar `429`, timeout ou erro de provider, o problema está no modelo/provedor e não necessariamente no OpenHands.
+\n### Abrir workspace isolado
 
 ```bash
 ./scripts/aiw start sandbox-test
