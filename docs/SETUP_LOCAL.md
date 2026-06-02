@@ -33,8 +33,8 @@ Variáveis principais:
 
 ```text
 LITELLM_MASTER_KEY=chave local usada para acessar o gateway LiteLLM
-OPENROUTER_API_KEY=chave da OpenRouter
-GROQ_API_KEY=chave da Groq, opcional
+OPENROUTER_API_KEY=
+GROQ_API_KEY=
 ```
 
 ## Subir o gateway LiteLLM

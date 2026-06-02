@@ -26,5 +26,15 @@ model_list:
       api_base: https://openrouter.ai/api/v1
       api_key: os.environ/OPENROUTER_API_KEY
 
+  - model_name: dev-gemini-fast
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: dev-gemini-coder
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
