@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AIW_ROOT="${AIW_ROOT:-$HOME/ai-workbench}"
+cd "$AIW_ROOT"
+
+if [[ ! -x "$AIW_ROOT/scripts/model-smoke" ]]; then
+  echo "ERROR: scripts/model-smoke not found or not executable"
+  exit 1
+fi
+
+if [[ "$#" -gt 0 ]]; then
+  models=("$@")
+else
+  models=(dev-fast dev-balanced dev-large dev-openrouter-free dev-coder)
+fi
+
+echo "=== AI Workbench model matrix ==="
+echo "Models: ${models[*]}"
+echo
+
+passed=0
+failed=0
+
+for model in "${models[@]}"; do
+  echo "=== Testing $model ==="
+  if "$AIW_ROOT/scripts/model-smoke" "$model"; then
+    echo "PASS: $model"
+    passed=$(( passed + 1 ))
+  else
+    echo "FAIL: $model"
+    failed=$(( failed + 1 ))
+  fi
+  echo
+done
+
+echo "=== Summary ==="
+echo "Passed: $passed"
+echo "Failed: $failed"
+
+if [[ "$failed" -gt 0 ]]; then
+  exit 1
+fi
