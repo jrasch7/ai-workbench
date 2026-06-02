@@ -214,6 +214,12 @@ case "$cmd" in
     ./scripts/model-smoke "${2:-dev-coder}"
     ;;
 
+  matrix)
+    cd_aiw_root
+    shift || true
+    ./scripts/model-matrix "$@"
+    ;;
+
   help|*)
     cat <<'HELP'
 AI Workbench
@@ -229,6 +235,7 @@ Usage:
   aiw models              List models exposed by LiteLLM
   aiw doctor              Check local environment health
   aiw smoke [model]       Run chat smoke test through LiteLLM
+  aiw matrix [models...]  Run smoke test matrix through LiteLLM
 
 Examples:
   aiw start sandbox-test
@@ -236,6 +243,7 @@ Examples:
   aiw current
   aiw gateway
   aiw smoke dev-coder
+  aiw matrix dev-openrouter-free dev-coder
   aiw stop
 HELP
     ;;
