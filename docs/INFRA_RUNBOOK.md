@@ -45,6 +45,16 @@ dev-coder
 ```
 
 
+### Alias oficial de código
+
+```bash
+./scripts/aiw smoke dev-coder
+```
+
+`dev-coder` é o alias operacional para tarefas de código. Atualmente ele está roteado para Gemini.
+
+Aliases com nome de provedor, como `dev-gemini-coder` e `dev-openrouter-free`, existem para teste, comparação e laboratório.
+
 ### Testar chat do modelo via LiteLLM
 
 ```bash

@@ -127,6 +127,13 @@ Uso:
 - ajustes em scripts;
 - correções focadas.
 
+Decisão atual:
+
+- `dev-coder` é o alias oficial de trabalho para código;
+- atualmente está roteado para Gemini via `gemini/gemini-2.5-flash`;
+- o uso externo no OpenHands deve continuar sendo `openai/dev-coder`;
+- o provedor por baixo pode mudar sem alterar o fluxo operacional.
+
 Prioridade:
 
 - seguir instrução;
@@ -218,6 +225,17 @@ dev-architect -> provider forte de raciocínio -> provider premium sob demanda
 ```
 
 Free tier pode ser fallback de laboratório, não fallback operacional crítico.
+
+## Decisão atual de roteamento
+
+```text
+dev-coder           -> alias oficial de código, atualmente roteado para Gemini
+dev-gemini-coder    -> alias explícito para testar Gemini
+dev-openrouter-free -> laboratório/fallback não crítico
+```
+
+No uso normal da bancada, preferir aliases por papel, como `dev-coder`, em vez de chamar diretamente aliases por provedor.
+
 
 ## Critérios para promover um modelo
 
