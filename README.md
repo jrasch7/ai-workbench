@@ -261,7 +261,9 @@ Core docs for operating the AI Workbench:
 - [Infra Runbook](docs/INFRA_RUNBOOK.md)
 - [Project Contexts](docs/PROJECT_CONTEXTS.md)
 - [Agents](docs/AGENTS.md)
-- [Operational Workflow](docs/OPERATIONAL_WORKFLOW.md)\n- [Model Strategy](docs/MODEL_STRATEGY.md)
+- [Operational Workflow](docs/OPERATIONAL_WORKFLOW.md)
+- [Model Strategy](docs/MODEL_STRATEGY.md)
+- [Role Aliases](docs/ROLE_ALIASES.md)
 - [Local Setup](docs/SETUP_LOCAL.md)
 - [LiteLLM/OpenRouter Troubleshooting](docs/TROUBLESHOOTING_LITELLM_OPENROUTER.md)
 

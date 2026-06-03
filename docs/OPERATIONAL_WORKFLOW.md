@@ -174,6 +174,12 @@ Testar chat do modelo sem OpenHands:
 ./scripts/aiw smoke dev-coder
 ```
 
+Testar aliases operacionais por papel:
+
+```bash
+./scripts/aiw matrix dev-coder dev-review dev-architect
+```
+
 Abrir bancada no repo atual:
 
 ```bash
