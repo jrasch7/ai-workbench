@@ -59,3 +59,7 @@ Model: openai/dev-coder
 Base URL: http://host.docker.internal:4000
 API Key: LITELLM_MASTER_KEY local
 ```
+
+## Hermes substituindo OpenHands no teste controlado
+
+O Hermes conseguiu criar arquivo fora do Git e será testado agora como agente principal.
