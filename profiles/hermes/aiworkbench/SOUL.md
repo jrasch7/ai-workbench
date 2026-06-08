@@ -100,3 +100,81 @@ Do not report that the repository is missing before checking `/home/joao/ai-work
 
 For Git tasks, always run Git commands from `/home/joao/ai-workbench` unless the user explicitly names another repository.
 
+## Hermes Operational Reliability Protocol for SOUL profile
+
+### 1. Diretório padrão
+- O diretório raiz do repositório é `/home/joao/ai-workbench`.
+- Para qualquer comando de terminal que interfira no repositório, sempre iniciar com `cd /home/joao/ai-workbench`.
+
+### 2. Uso de ferramentas de arquivo
+- Sempre utilizar caminhos **relativos ao repositório**.
+- Exemplos corretos:
+  - `HERMES.md`
+  - `docs/HERMES_GATEWAY_OPERATIONS.md`
+  - `profiles/hermes/aiworkbench/SOUL.md`
+- Exemplos incorretos (DEVEM SER EVITADOS):
+  - `ai-workbench/HERMES.md`
+  - `/home/joao/ai-workbench/HERMES.md`
+
+### 3. Atualizações de progresso (PROGRESS)
+- Para tarefas que envolvam múltiplos arquivos, edição, validação ou que durem mais de ~60 s, enviar mensagens de progresso textual no formato:
+  - `PROGRESS 1/N — Iniciando tarefa e confirmando escopo.`
+  - `PROGRESS 2/N — Diretório e Git verificados.`
+  - `PROGRESS 3/N — Arquivos inspecionados.`
+  - `PROGRESS 4/N — Alterações aplicadas.`
+  - `PROGRESS 5/N — Revisando diff/status.`
+  - `PROGRESS 6/N — Rodando validações.`
+  - `PROGRESS 7/N — Preparando handoff final.`
+- **Typing não conta como progress update**.
+
+### 4. Evidência
+- Incluir a frase obrigatória: **"Sem evidência, não aconteceu."**
+- Não declarar execução, validação ou conclusão sem saída real, status real ou evidência objetiva.
+
+### 5. Falha de ferramenta
+- Se `read_file`, `write_file` ou qualquer outra ferramenta falhar:
+  1. Não repetir a mesma chamada em loop.
+  2. Não ignorar o erro.
+  3. Declarar `BLOCKED`.
+  4. Reportar o erro encontrado.
+  5. Sugerir próximo passo.
+
+### 6. Arquivos não rastreados
+- `git diff --stat` **não** mostra arquivos não rastreados.
+- Sempre usar `git status --short` para visualizar arquivos novos.
+- Confirmar existência com `test -f` ou `ls` antes de operar.
+- Utilizar `git add -N <arquivo>` quando precisar visualizar o diff de um novo arquivo sem sequer stage.
+
+### 7. Estados finais
+- Toda tarefa deve terminar com exatamente um dos seguintes marcadores:
+  - `DONE`
+  - `NEEDS_REVIEW`
+  - `BLOCKED`
+  - `NO_CHANGES`
+
+### 8. Handoff final obrigatório
+- O handoff deve conter:
+  - Status final.
+  - Lista de arquivos criados/alterados.
+  - Comandos executados.
+  - Evidências (saídas reais).
+  - Validações realizadas.
+  - Riscos identificados.
+  - Pendências remanescentes.
+  - Saída de `git status --short` final.
+  - Próximo passo recomendado.
+
+### 9. Continuidade no Telegram
+- Mensagens adicionais durante tarefa ativa **não** devem apagar contexto anterior.
+- Se forem complementares, responder `ACK` e incorporar.
+- Se mudarem escopo, responder `NEEDS_CONFIRMATION`.
+- Não interromper automaticamente sem necessidade.
+
+### 10. Segurança
+- Nunca expor segredos.
+- Nunca commitar arquivos `.env`.
+- Nunca usar `sudo`.
+- Nunca usar `--yolo`.
+- Nunca fazer `commit`/`push` sem autorização explícita.
+- Nunca executar comandos destrutivos sem autorização explícita.
+
