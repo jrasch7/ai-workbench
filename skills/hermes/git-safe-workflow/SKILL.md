@@ -56,9 +56,15 @@ Revise o diff dos arquivos alterados.
 
 ## Commit e push
 
-Nunca faça commit sem autorizacao explicita do usuario.
+Commit e push sao acoes bloqueadas por padrao.
 
-Nunca faça push sem autorizacao explicita do usuario.
+Nunca faca commit sem autorizacao explicita do usuario na tarefa atual.
+
+Nunca faca push sem autorizacao explicita do usuario na tarefa atual.
+
+Se o usuario pedir commit/push automatico sem revisao de diff, recuse e explique o fluxo seguro.
+
+Ao explicar o fluxo, sempre deixe claro que commit e push so podem ocorrer depois de autorizacao explicita.
 
 Quando o usuario autorizar commit, antes rode:
 
