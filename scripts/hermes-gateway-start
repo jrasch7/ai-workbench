@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PATH="$HOME/.local/bin:$PATH"
+AIW_ROOT="${AIW_ROOT:-$HOME/ai-workbench}"
+SESSION_NAME="${HERMES_TMUX_SESSION:-hermes-aiw}"
+
+cd "$AIW_ROOT"
+
+if ! command -v hermes >/dev/null 2>&1; then
+  echo "ERROR: hermes command not found. Check ~/.local/bin/hermes."
+  exit 1
+fi
+
+if ! command -v tmux >/dev/null 2>&1; then
+  echo "ERROR: tmux not found. Install tmux before using persistent gateway mode."
+  exit 1
+fi
+
+STATUS_OUTPUT="$(hermes gateway status --deep 2>&1 || true)"
+if printf "%s\n" "$STATUS_OUTPUT" | grep -q "Gateway is running"; then
+  echo "OK: Hermes gateway is already running."
+  printf "%s\n" "$STATUS_OUTPUT"
+  exit 0
+fi
+
+if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+  echo "WARN: tmux session $SESSION_NAME exists but gateway is not running. Recreating session."
+  tmux kill-session -t "$SESSION_NAME"
+fi
+
+echo "Starting Hermes gateway in tmux session: $SESSION_NAME"
+tmux new-session -d -s "$SESSION_NAME" "cd $AIW_ROOT && exec hermes gateway run"
+sleep 4
+hermes gateway status --deep
+
+echo
+echo "Logs: tmux attach -t $SESSION_NAME"
+echo "Detach from logs: Ctrl+B then D"
