@@ -141,6 +141,26 @@ Hermes deve conseguir executar uma tarefa que OpenHands falhou:
 Editar um unico arquivo Markdown existente, sem alterar mais nada, sem commit, e reportar git status e git diff.
 ```
 
+## Validacao real inicial
+
+Hermes passou no primeiro teste operacional controlado no PC DESKTOP-S2AARAD.
+
+Resultados:
+
+- `hermes -z` funcionou com OpenRouter configurado em `~/.hermes/config.yaml`;
+- criou somente o arquivo `/tmp/aiw-hermes-smoke/HERMES_SMOKE.md` fora do Git;
+- editou somente `docs/OPENHANDS_VALIDATION.md` dentro do repo;
+- `git diff --stat` mostrou apenas 1 arquivo alterado;
+- a alteracao foi revisada e commitada;
+- OpenHands havia falhado em tarefa equivalente de edicao documental.
+
+Conclusao:
+
+```text
+Hermes substitui OpenHands como candidato principal da camada de agente.
+OpenHands permanece apenas como laboratorio opcional.
+```
+
 ## Decisao atual
 
 Seguir com Hermes como camada de agente candidata.
