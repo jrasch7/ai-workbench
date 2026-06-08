@@ -66,7 +66,6 @@ Liste como saberemos que a tarefa foi concluida com sucesso.
 
 Diga se pode seguir ou se precisa de confirmacao do usuario antes de executar.
 
-
 ## Regra anti-alucinacao operacional
 
 Ao planejar integracoes externas, ferramentas, comandos, APIs, providers, Telegram, GitHub, Docker, cloud, gateway, billing ou seguranca:
@@ -79,7 +78,6 @@ Ao planejar integracoes externas, ferramentas, comandos, APIs, providers, Telegr
 - nao assuma que um recurso existe apenas porque seria conveniente.
 
 Se o plano depender de comportamento especifico de ferramenta externa, inclua uma secao chamada `Pontos que exigem verificacao`.
-
 
 ## Regra para ferramentas externas nao verificadas
 
@@ -99,7 +97,6 @@ Quando a tarefa envolver uma ferramenta externa ou recurso ainda nao verificado,
 Se a documentacao oficial nao foi consultada na tarefa atual, diga explicitamente: `Documentacao oficial ainda nao consultada nesta tarefa`.
 
 Se um comando ou campo de configuracao nao foi verificado por `--help`, arquivo local, config atual ou documentacao oficial, marque como `nao confirmado`.
-
 
 ## Regra de comandos e campos confirmados
 
@@ -143,3 +140,42 @@ Use para:
 - organizar debug;
 - preparar integracao;
 - planejar alteracao em Nivela, SisOpERP Web ou AI Workbench.
+
+## Hermes Operational Reliability Protocol
+
+1. **Sem evidência, não aconteceu.**
+2. Ao transformar uma tarefa em plano, nunca invente contexto, arquivos, comandos, validacoes ou estado do repositorio.
+3. O plano deve declarar *escopo permitido* e *fora do escopo*.
+4. O plano deve indicar arquivos esperados, comandos permitidos, validacoes obrigatorias e riscos.
+5. **Regras de parada:**
+   - se o repo não estiver limpo, usar `BLOCKED` ou `NEEDS_REVIEW`;
+   - se a tarefa pedir algo fora do escopo permitido, usar `NEEDS_CONFIRMATION`;
+   - se houver conflito entre instruções, usar `NEEDS_REVIEW`;
+   - se faltar informação critica, usar `NEEDS_CONFIRMATION`.
+6. **Estados finais possíveis:** `DONE`, `NEEDS_REVIEW`, `BLOCKED`, `NO_CHANGES`.
+7. Para tarefas longas ou via Telegram, incluir *progress updates* como:
+   - `PROGRESS 1/N — Iniciando tarefa e confirmando escopo.`
+   - `PROGRESS 2/N — Diretório e Git verificados.`
+   - `PROGRESS 3/N — Arquivos inspecionados.`
+   - `PROGRESS 4/N — Alterações aplicadas.`
+   - `PROGRESS 5/N — Revisando diff/status.`
+   - `PROGRESS 6/N — Rodando validacoes.`
+   - `PROGRESS 7/N — Preparando handoff final.`
+8. **Typing não conta como progress update.**
+9. `git diff --stat` não mostra arquivos untracked.
+10. Para arquivos novos, usar `git status --short`, `test -f` ou `ls`, e `git add -N` quando necessário.
+11. O handoff final deve conter:
+    - status final;
+    - resumo da mudança;
+    - escopo;
+    - arquivos criados/alterados;
+    - comandos executados;
+    - saídas reais;
+    - validacoes;
+    - riscos;
+    - pendências;
+    - `git status --short` final;
+    - **não** fazer commit nem push;
+    - próximo passo recomendado.
+12. Não declarar commit, push, teste verde, validacao concluida ou diff limpo sem evidencia real.
+13. Se ocorrer erro de `read_file`, `write_file`, `repeated_exact_fail`, erro de ferramenta ou falha de comando, usar `BLOCKED` ou `NEEDS_REVIEW`, nunca `DONE`.
