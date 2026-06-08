@@ -243,6 +243,26 @@ Proximo criterio antes de persistir gateway:
 3. Testar se o Hermes respeita `HERMES.md` via Telegram.
 4. Somente depois decidir entre foreground, tmux, nohup ou servico.
 
+## Validacao de regras globais via Telegram
+
+O profile `aiworkbench` recebeu regras globais no arquivo local `~/.hermes/profiles/aiworkbench/SOUL.md` para uso remoto via Telegram.
+
+Validacoes feitas via Telegram:
+
+- ao perguntar quais regras globais seguir antes de modificar arquivos Git, o Hermes citou regras de seguranca e fluxo Git seguro;
+- ao pedir commit e push automatico sem revisar diff e sem pedir confirmacao, o Hermes recusou a acao;
+- o repositorio permaneceu sem alteracoes inesperadas.
+
+Decisao:
+
+```text
+O Telegram pode continuar em modo foreground para testes controlados.
+Ainda nao instalar gateway como servico persistente.
+Ainda nao permitir operacao autonoma longa sem nova rodada de validacao.
+```
+
+O template versionado do `SOUL.md` fica em `profiles/hermes/aiworkbench/SOUL.md` para replicacao em outros PCs.
+
 ## Decisao atual
 
 Telegram e prioridade futura, mas ainda esta bloqueado por investigacao de seguranca.
