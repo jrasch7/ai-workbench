@@ -222,6 +222,27 @@ Motivo:
 
 Ainda nao configurar token real nem iniciar gateway persistente antes de validar seguranca, pairing, restricao de usuario e tools permitidas.
 
+## Validacao inicial Telegram em foreground
+
+Telegram foi configurado no profile `aiworkbench` e respondeu com sucesso usando `hermes gateway run` em foreground.
+
+Fatos confirmados:
+
+- token Telegram foi salvo fora do repositorio, em `~/.hermes/profiles/aiworkbench/.env`;
+- `TELEGRAM_ALLOWED_USERS` foi configurado com o ID autorizado do usuario;
+- `TELEGRAM_HOME_CHANNEL` foi configurado com o mesmo ID do usuario;
+- gateway respondeu via Telegram em modo foreground;
+- gateway ainda nao deve ser instalado como servico persistente;
+- nao usar `sudo hermes` porque `sudo` nao enxerga o binario do usuario em `~/.local/bin`;
+- warnings de Nous auth apareceram, mas nao bloquearam o fluxo porque o modelo principal esta via OpenRouter.
+
+Proximo criterio antes de persistir gateway:
+
+1. Validar `git status --short` limpo apos interacoes pelo Telegram.
+2. Testar prompts seguros sem alterar arquivos.
+3. Testar se o Hermes respeita `HERMES.md` via Telegram.
+4. Somente depois decidir entre foreground, tmux, nohup ou servico.
+
 ## Decisao atual
 
 Telegram e prioridade futura, mas ainda esta bloqueado por investigacao de seguranca.
