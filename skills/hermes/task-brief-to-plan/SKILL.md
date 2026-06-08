@@ -100,6 +100,27 @@ Se a documentacao oficial nao foi consultada na tarefa atual, diga explicitament
 
 Se um comando ou campo de configuracao nao foi verificado por `--help`, arquivo local, config atual ou documentacao oficial, marque como `nao confirmado`.
 
+
+## Regra de comandos e campos confirmados
+
+Em planos de investigacao, comandos, flags, nomes de campos de config, variaveis de ambiente, endpoints, webhooks, permissoes e modos de aprovacao so podem ser citados como instrucao concreta quando houver evidencia.
+
+Evidencias aceitas:
+
+1. o comando foi executado ou inspecionado na sessao atual;
+2. o comando apareceu em `--help` local;
+3. o usuario forneceu explicitamente;
+4. a documentacao oficial foi consultada na tarefa atual;
+5. um arquivo local de config/documentacao do projeto confirma o nome.
+
+Se nao houver evidencia, escreva `nao confirmado`.
+
+Nao escreva exemplos como `gateway.telegram.*`, `approvals.mode`, `security.redact_secrets`, `BOT_TOKEN`, webhook automatico, intents, OAuth, rate limit ou campos semelhantes como se fossem reais sem verificacao.
+
+Quando a tarefa pedir plano de investigacao, nao inclua passo de execucao. Inclua apenas comandos seguros para investigar, preferencialmente `--help`, `config show`, `config path`, `status`, `doctor` ou leitura de documentacao local.
+
+Se o usuario pedir para configurar algo externo sem pesquisa/documentacao, a resposta deve parar em investigacao e pedir confirmacao antes de executar qualquer configuracao.
+
 ## Regras
 
 - Nao altere arquivos durante o planejamento.
