@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AIW_ROOT="${AIW_ROOT:-$HOME/ai-workbench}"
+cd "$AIW_ROOT"
+
+./scripts/hermes-gateway-stop || true
+sleep 2
+./scripts/hermes-gateway-start

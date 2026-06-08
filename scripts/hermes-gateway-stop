@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PATH="$HOME/.local/bin:$PATH"
+SESSION_NAME="${HERMES_TMUX_SESSION:-hermes-aiw}"
+
+if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+  echo "Stopping tmux session: $SESSION_NAME"
+  tmux kill-session -t "$SESSION_NAME"
+else
+  echo "No tmux session found: $SESSION_NAME"
+fi
+
+PIDS="$(pgrep -u "$USER" -f "hermes gateway run" || true)"
+if [[ -n "$PIDS" ]]; then
+  echo "Stopping manual Hermes gateway process(es): $PIDS"
+  kill $PIDS || true
+  sleep 2
+fi
+
+STATUS_OUTPUT="$(hermes gateway status --deep 2>&1 || true)"
+printf "%s\n" "$STATUS_OUTPUT"
+
+if printf "%s\n" "$STATUS_OUTPUT" | grep -q "Gateway is running"; then
+  echo "WARN: Hermes gateway still appears to be running. Check manually."
+  exit 1
+fi
+
+echo "OK: Hermes gateway stopped."
