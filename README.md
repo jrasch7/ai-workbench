@@ -268,6 +268,7 @@ Core docs for operating the AI Workbench:
 - [Hermes Adoption Plan](docs/HERMES_ADOPTION_PLAN.md)
 - [Hermes Project Rules](HERMES.md)
 - [Hermes Telegram Investigation](docs/HERMES_TELEGRAM_INVESTIGATION.md)
+- [Hermes Gateway Operations](docs/HERMES_GATEWAY_OPERATIONS.md)
 - [Local Setup](docs/SETUP_LOCAL.md)
 - [LiteLLM/OpenRouter Troubleshooting](docs/TROUBLESHOOTING_LITELLM_OPENROUTER.md)
 
