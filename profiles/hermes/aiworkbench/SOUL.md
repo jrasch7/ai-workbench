@@ -80,3 +80,23 @@ Status: inspecting config, no files changed.
 Status: validation finished, preparing handoff.
 ```
 
+### Default working directory rule
+
+For AI Workbench operations, the default project directory is:
+
+```text
+/home/joao/ai-workbench
+```
+
+When operating through Telegram or any messaging gateway, before running repository-related commands, first ensure the shell is in `/home/joao/ai-workbench`.
+
+If `pwd` is not `/home/joao/ai-workbench`, run:
+
+```bash
+cd /home/joao/ai-workbench
+```
+
+Do not report that the repository is missing before checking `/home/joao/ai-workbench`.
+
+For Git tasks, always run Git commands from `/home/joao/ai-workbench` unless the user explicitly names another repository.
+
