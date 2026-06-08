@@ -124,6 +124,20 @@ O `tmux` mantem o gateway vivo enquanto a instancia WSL estiver ativa.
 
 Se o Windows ou o WSL reiniciar completamente, clique novamente no atalho `Start Hermes AIW.cmd` para religar o Hermes.
 
+## Padrao de progresso pelo Telegram
+
+Durante tarefas com multiplas etapas, o Hermes deve enviar mensagens curtas de progresso, para evitar que o usuario fique sem retorno enquanto o agente trabalha.
+
+Exemplos esperados:
+
+```text
+Status: verificando diretorio e Git.
+Status: inspecionando configuracao, sem alterar arquivos.
+Status: validacao concluida, preparando handoff.
+```
+
+Esse comportamento deve ser mantido especialmente em tarefas de Git, validacao, debug, planejamento, alteracao de arquivos e execucao via terminal.
+
 ## Validacao rapida
 
 1. Clique no atalho ou rode o script.

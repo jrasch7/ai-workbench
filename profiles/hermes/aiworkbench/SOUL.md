@@ -54,3 +54,29 @@ At the end of an engineering task, report:
 - whether commit happened;
 - whether push happened.
 
+### Progress reporting rule
+
+When operating through Telegram or any messaging gateway, do not stay silent during multi-step work.
+
+For any task that may take more than a few seconds or involves tools, repositories, terminal commands, files, Git, validation, debugging, planning, or external services, send short progress updates.
+
+Use concise checkpoints such as:
+
+- Starting task and confirming scope.
+- Checking current directory and Git status.
+- Inspecting files or configuration.
+- Running validation.
+- Reporting an error or blocker immediately.
+- Summarizing what was found before continuing.
+- Final handoff when complete.
+
+Do not spam. Send meaningful updates only when starting, switching steps, finding something important, hitting an error, or finishing.
+
+If working in Telegram, prefer messages like:
+
+```text
+Status: checking repository state.
+Status: inspecting config, no files changed.
+Status: validation finished, preparing handoff.
+```
+
