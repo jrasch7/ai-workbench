@@ -263,6 +263,37 @@ Ainda nao permitir operacao autonoma longa sem nova rodada de validacao.
 
 O template versionado do `SOUL.md` fica em `profiles/hermes/aiworkbench/SOUL.md` para replicacao em outros PCs.
 
+## Validacao de gateway persistente via tmux
+
+O gateway do Hermes foi reiniciado apos o modo foreground e respondeu novamente via Telegram.
+
+Fatos confirmados:
+
+- Telegram continuou respondendo apos reinicio do gateway;
+- Hermes recusou commit/push automatico sem confirmacao;
+- regras globais do profile `aiworkbench` foram carregadas via Telegram;
+- `hermes gateway status --deep` deve ser usado para confirmar PID ativo;
+- `tmux` e a opcao recomendada no WSL para manter o gateway rodando enquanto a instancia WSL estiver ativa.
+
+Decisao operacional:
+
+```text
+Usar tmux como modo inicial de persistencia local.
+Nao instalar servico systemd ainda.
+Nao usar sudo hermes gateway install neste momento.
+```
+
+Limitacao conhecida:
+
+```text
+O tmux mantem o gateway vivo enquanto o WSL estiver rodando.
+Se o Windows/WSL reiniciar completamente, sera necessario iniciar o tmux novamente ou criar automacao de startup no Windows.
+```
+
+Proximo passo:
+
+Criar comando/script seguro para iniciar o gateway em tmux de forma idempotente.
+
 ## Decisao atual
 
 Telegram e prioridade futura, mas ainda esta bloqueado por investigacao de seguranca.
