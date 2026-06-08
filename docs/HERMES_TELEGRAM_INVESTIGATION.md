@@ -203,6 +203,25 @@ Antes de configurar Telegram de verdade:
 7. Testar primeiro com tarefa sem acesso a repo real.
 8. So depois permitir tarefas pequenas em repo, sem commit/push automatico.
 
+## Decisao de plataforma remota
+
+O `hermes gateway setup` confirmou localmente que o Hermes suporta varias plataformas de mensagem, incluindo Telegram e Discord.
+
+Decisao atual:
+
+```text
+1. Telegram primeiro — interface pessoal/remota do usuario com Hermes.
+2. Discord depois — possivel interface futura para canais, equipe, projetos e logs.
+```
+
+Motivo:
+
+- Telegram e mais simples para uso pessoal e remoto pelo celular.
+- Telegram permite iniciar com menor superficie operacional.
+- Discord fica mais adequado para uma fase posterior com canais por projeto, equipe e observabilidade.
+
+Ainda nao configurar token real nem iniciar gateway persistente antes de validar seguranca, pairing, restricao de usuario e tools permitidas.
+
 ## Decisao atual
 
 Telegram e prioridade futura, mas ainda esta bloqueado por investigacao de seguranca.
