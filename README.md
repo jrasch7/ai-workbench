@@ -266,6 +266,7 @@ Core docs for operating the AI Workbench:
 - [Role Aliases](docs/ROLE_ALIASES.md)
 - [OpenHands Validation](docs/OPENHANDS_VALIDATION.md)
 - [Hermes Adoption Plan](docs/HERMES_ADOPTION_PLAN.md)
+- [Hermes Project Rules](HERMES.md)
 - [Local Setup](docs/SETUP_LOCAL.md)
 - [LiteLLM/OpenRouter Troubleshooting](docs/TROUBLESHOOTING_LITELLM_OPENROUTER.md)
 
