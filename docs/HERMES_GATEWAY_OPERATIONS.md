@@ -160,3 +160,62 @@ oi
 ```bash
 cd ~/ai-workbench && git status --short
 ```
+
+## Operational Reliability and Telegram Task Health
+
+### 1. Typing não conta
+- O indicador de typing no Telegram não conta como progress update.
+- Progress update precisa ser mensagem textual curta, por exemplo:
+  `PROGRESS 1/N — Iniciando tarefa e confirmando escopo.`
+
+### 2. Quando considerar a tarefa travada
+- Se não houver typing e não houver progress update por vários minutos.
+- Se o agente parar em `PROGRESS 1/N` ou `PROGRESS 2/N` sem handoff.
+- Se o tmux mostrar erro de tool loop, `repeated_exact_fail`, erro de `read_file`/`write_file` ou interrupção de API.
+- Se o agente imprimir comandos sem saída real e não entregar handoff.
+
+### 3. Como diagnosticar o gateway
+```
+bash
+# Listar sessões tmux
+ tmux ls
+# Capturar últimos 120 linhas dos logs da sessão hermes-aiw
+ tmux capture-pane -t hermes-aiw -p -S -120 | tail -120
+# Verificar status do repositório
+ cd /home/joao/ai-workbench && git status --short
+```
+
+### 4. Como interpretar erros comuns
+- **Unrepairable tool_call arguments for write_file** – indica falha de chamada de ferramenta que requer correção antes de prosseguir.
+- **Tool read_file returned error** – falha ao ler arquivo, pode ser caminho errado ou permissões.
+- **repeated_exact_fail** – loop de falha exata, geralmente indica bug no agente.
+- **Interrupted during API call** – interrupção externa, pode ser rede ou limites de API.
+- **Telegram fallback IP warnings** – avisos de fallback de IP, normalmente não bloqueantes.
+- **Auxiliary Nous unavailable** – serviço auxiliares indisponível, pode degradar funcionalidades mas não impede operação básica.
+
+> Warnings de Nous/Telegram fallback podem não ser bloqueantes, mas `read_file`/`write_file`/`repeated_exact_fail` são sinais de falha operacional.
+
+### 5. Quando reiniciar
+- Reiniciar gateway quando a sessão tmux está viva, mas o agente parou sem handoff.
+- Reiniciar depois de atualizar `SOUL.md` ou regras do profile.
+- Não reiniciar no meio de tarefa com alterações não revisadas sem antes checar `git status`.
+
+### 6. Checklist pós-restart
+- Confirmar tmux ativo.
+- Enviar teste simples pelo Telegram.
+- Confirmar diretório padrão `/home/joao/ai-workbench`.
+- Confirmar que o agente não diz que repo não existe antes de checar o diretório certo.
+- Confirmar que progress update textual aparece em tarefa controlada.
+
+### 7. Estados finais obrigatórios
+Toda tarefa via Telegram deve terminar com um dos seguintes estados:
+- `DONE`
+- `NEEDS_REVIEW`
+- `BLOCKED`
+- `NO_CHANGES`
+
+### 8. Regra de evidência
+Sem evidência, não aconteceu.
+
+### 9. Cautela atual
+Telegram ainda deve ser tratado com cautela para tarefas de edição até passar em teste de continuidade, progress updates e handoff com evidência.
