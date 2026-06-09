@@ -219,3 +219,53 @@ Sem evidência, não aconteceu.
 
 ### 9. Cautela atual
 Telegram ainda deve ser tratado com cautela para tarefas de edição até passar em teste de continuidade, progress updates e handoff com evidência.
+
+
+## Telegram stale session recovery
+
+Use this procedure when the Telegram gateway appears alive but keeps reusing an old task/session.
+
+Observed symptoms:
+
+- `/stop` responds with `No active task to stop`.
+- A normal message still triggers `Interrupting current task`.
+- The bot continues old `PROGRESS` messages from a previous task.
+- A simple smoke such as `Responda exatamente: TELEGRAM_H6_SMOKE_OK` does not return the exact expected response.
+
+Manual recovery:
+
+```bash
+hermes sessions list
+hermes sessions delete <session_id> --yes
+scripts/hermes-gateway-restart
+
+Safer recovery using the project script:
+
+scripts/hermes-telegram-reset-session <session_id>
+
+The reset script:
+
+stops the Hermes gateway;
+creates a backup under /tmp/hermes-aiw-session-backup-YYYYmmdd-HHMMSS;
+backs up sessions.json and request_dump_*.json;
+deletes only the explicit session id passed by the user;
+restarts the gateway;
+shows tmux ls;
+shows the last gateway pane lines with tmux capture-pane.
+
+Do not use this reset when:
+
+the session id is not known;
+the gateway is currently executing a valid long-running task;
+there are secrets visible in logs;
+the problem is only model latency or provider rate limit.
+
+After recovery, send this Telegram smoke:
+
+Responda exatamente: TELEGRAM_H6_SMOKE_OK
+
+Expected response:
+
+TELEGRAM_H6_SMOKE_OK
+
+If the bot still answers with old PROGRESS messages or Interrupting current task, list sessions again and verify whether another stale Telegram session is active.

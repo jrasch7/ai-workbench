@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Verify exactly one argument is provided
+if [[ $# -ne 1 ]]; then
+  echo "Usage: scripts/hermes-telegram-reset-session <session_id>"
+  exit 1
+fi
+SESSION_ID="$1"
+
+# Ensure we are in the AI Workbench context
+if [[ "$(pwd)" != "/home/joao/ai-workbench" ]]; then
+  echo "Error: Must run from /home/joao/ai-workbench"
+  exit 1
+fi
+
+# Stop the Hermes gateway if stop script exists
+if [[ -x "scripts/hermes-gateway-stop" ]]; then
+  scripts/hermes-gateway-stop
+fi
+
+# Create backup directory with timestamp
+TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
+BACKUP_DIR="/tmp/hermes-aiw-session-backup-${TIMESTAMP}"
+mkdir -p "${BACKUP_DIR}"
+
+# Backup sessions.json if it exists
+if [[ -f "$HOME/.hermes/profiles/aiworkbench/sessions/sessions.json" ]]; then
+  cp "$HOME/.hermes/profiles/aiworkbench/sessions/sessions.json" "${BACKUP_DIR}/"
+fi
+
+# Backup any request_dump_*.json files if they exist
+shopt -s nullglob
+for f in "$HOME/.hermes/profiles/aiworkbench/sessions/request_dump_"*.json; do
+  cp "$f" "${BACKUP_DIR}/"
+done
+shopt -u nullglob
+
+# Delete the stale session
+hermes sessions delete "${SESSION_ID}" --yes
+
+# Restart the Hermes gateway if start script exists
+if [[ -x "scripts/hermes-gateway-start" ]]; then
+  scripts/hermes-gateway-start
+fi
+
+# Show tmux sessions
+tmux ls || true
+
+# Show last lines of the gateway pane (assuming session name hermes-aiw)
+if tmux has-session -t hermes-aiw 2>/dev/null; then
+  tmux capture-pane -t hermes-aiw -p -S -80 | tail -80
+fi
+
+# Final confirmation message
+echo "OK: Telegram session reset completed."
