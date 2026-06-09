@@ -1,5 +1,9 @@
 # Obsidian Knowledge Layer
 
+## Operational vault path
+
+The operational vault is located at `docs/obsidian/vault/`. This directory can be opened directly in Obsidian as a vault, providing an auditable knowledge layer that complements the Git repository.
+
 ## 1. Purpose
 Explain that Obsidian will serve as the auditable second brain of the AI Workbench, capturing decisions, handoffs, skills, runbooks, model test reports, and contextual knowledge for future reference and compliance.
 

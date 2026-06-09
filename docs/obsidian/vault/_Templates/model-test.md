@@ -1,0 +1,10 @@
+---
+model: 
+provider: 
+task: 
+result: 
+tool_use_evidence: 
+failures: 
+cost_notes: 
+approved_use: 
+---
