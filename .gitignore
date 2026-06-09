@@ -32,3 +32,6 @@ Thumbs.db
 scripts/aiw.bak.*
 
 !.env.example
+
+# Obsidian local app state
+/docs/obsidian/vault/.obsidian/
