@@ -1,0 +1,14 @@
+skill: 
+source: 
+date: 
+reviewer: 
+status: 
+classification: 
+security_conflicts: 
+useful_parts: 
+removed_parts: 
+promotion_path: 
+repo_files: 
+validation: 
+decision: 
+follow_up: 

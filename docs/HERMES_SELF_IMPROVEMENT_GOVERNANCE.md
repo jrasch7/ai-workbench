@@ -87,4 +87,5 @@ A self‑generated skill may only become authoritative after review, diff inspec
   - `docs/obsidian/templates/handoff.md`
   - `docs/obsidian/templates/model-test.md`
   - `docs/obsidian/templates/skill-review.md`
+- `docs/obsidian/templates/skill-promotion.md`
   - `docs/obsidian/templates/runbook.md`

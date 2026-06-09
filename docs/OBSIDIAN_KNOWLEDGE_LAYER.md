@@ -73,3 +73,15 @@ Recommend a weekly review or review at each major milestone to ensure the vault 
 
 ## 9. Future integration
 Future Hermes capabilities may automatically write notes to Obsidian, limited to the Inbox or predefined templates, ensuring that only reviewed and approved content becomes part of the knowledge graph.
+
+## 10. Skill promotion workflow
+
+Skill promotion is governed by:
+
+- `docs/HERMES_SKILL_PROMOTION_WORKFLOW.md`
+- `docs/obsidian/templates/skill-promotion.md`
+
+Use the skill promotion template when reviewing self-generated Hermes skills, deciding whether to keep them as local drafts, promote them to versioned repository skills, convert them to runbooks, convert them to Obsidian notes, quarantine them, or discard them.
+
+A skill created by Hermes self-improvement is not authoritative until reviewed, validated, and promoted through the workflow.
+
