@@ -78,3 +78,13 @@ A self‑generated skill may only become authoritative after review, diff inspec
 - H7B: curate telegram‑smoke‑tests;
 - H7C: create Obsidian vault structure;
 - H7D: define skill promotion workflow.
+
+## 11. Obsidian Knowledge Layer
+
+- Documentation: `docs/OBSIDIAN_KNOWLEDGE_LAYER.md`
+- Templates:
+  - `docs/obsidian/templates/decision.md`
+  - `docs/obsidian/templates/handoff.md`
+  - `docs/obsidian/templates/model-test.md`
+  - `docs/obsidian/templates/skill-review.md`
+  - `docs/obsidian/templates/runbook.md`

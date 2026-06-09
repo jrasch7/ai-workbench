@@ -1,0 +1,9 @@
+---
+status: 
+scope: 
+files_changed: 
+commands: 
+validations: 
+risks: 
+next_steps: 
+---
