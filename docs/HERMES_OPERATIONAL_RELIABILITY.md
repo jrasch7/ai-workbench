@@ -48,3 +48,15 @@ Mensagens adicionais durante tarefa ativa não devem apagar contexto anterior. S
 - `git status --short`
 - `git diff --check`
 - `test -f docs/HERMES_OPERATIONAL_RELIABILITY.md && echo "reliability doc exists"`
+- Não configure identidade Git local ou global (git config user.name / user.email).
+
+
+## Regra de identidade Git
+
+Commit/push autorizado não autoriza alterar identidade Git.
+
+O agente nunca deve executar `git config user.name ...` ou `git config user.email ...`.
+
+O agente nunca deve inventar identidade como `Test User` ou `test@example.com`.
+
+Se `git commit` falhar por identidade Git ausente, a tarefa deve terminar como `BLOCKED`, pedindo que o usuário configure a identidade Git fora da tarefa.

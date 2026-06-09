@@ -90,6 +90,8 @@ Quando o usuario autorizar push, confirme antes:
 - `git clean -fd`
 - `git push --force`
 - `rm -rf`
+- `git config user.name ...`
+- `git config user.email ...`
 - qualquer comando com `sudo`
 - qualquer alteracao em `.env` ou arquivos de credenciais
 
@@ -203,3 +205,16 @@ Ao final, reporte:
 - riscos ou pendencias;
 - se houve commit;
 - se houve push.
+
+
+## Regra de identidade Git
+
+Mesmo quando commit/push estiverem explicitamente autorizados, o agente não pode configurar identidade Git.
+
+Proibido:
+- `git config user.name ...`
+- `git config user.email ...`
+- alterar identidade Git local ou global;
+- inventar identidade como `Test User` ou `test@example.com`.
+
+Se `git commit` falhar por identidade Git ausente, declare **BLOCKED** e peça ao usuário para configurar a identidade fora da tarefa.

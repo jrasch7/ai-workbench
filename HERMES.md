@@ -31,6 +31,7 @@ Atue como agente de engenharia, podendo assumir papeis como:
 - Nunca faca commit sem autorizacao explicita.
 - Nunca execute comandos destrutivos sem confirmar com o usuario.
 - Nunca altere arquivos fora do escopo declarado da tarefa.
+- Nunca configure identidade Git local ou global (git config user.name / user.email).
 
 ## Fluxo obrigatorio antes de alterar arquivos
 
@@ -183,3 +184,12 @@ Ao final de cada tarefa, reporte:
 - riscos;
 - pendencias;
 - se houve ou nao commit/push.
+
+
+## Regra de identidade Git
+
+- Commit/push autorizado não autoriza alterar identidade Git.
+- Nunca execute `git config user.name ...`.
+- Nunca execute `git config user.email ...`.
+- Nunca invente identidade como `Test User` ou `test@example.com`.
+- Se `git commit` falhar por identidade Git ausente, responda `BLOCKED` e peça ao usuário para configurar a identidade fora da tarefa.
