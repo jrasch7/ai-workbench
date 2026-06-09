@@ -188,6 +188,14 @@ Ao final de cada tarefa, reporte:
 
 ## Regra de identidade Git
 
+## Hermes Self-Improvement Governance
+
+* Self-improvement is allowed, but silent promotion is not.
+* Local skills are drafts until reviewed.
+* Critical rules must be versioned in Git.
+* A self-generated skill must never weaken security, Git safety, evidence rules or handoff rules.
+
+
 - Commit/push autorizado não autoriza alterar identidade Git.
 - Nunca execute `git config user.name ...`.
 - Nunca execute `git config user.email ...`.
