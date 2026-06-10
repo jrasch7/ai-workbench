@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1-}" != "" && "${1-}" != "--dry-run" ]]; then
+  echo "Usage: scripts/obsidian-vault-pull-from-repo [--dry-run]"
+  exit 2
+fi
+
+if ! command -v rsync >/dev/null 2>&1; then
+  echo "BLOCKED: rsync is required"
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_VAULT="$REPO_ROOT/docs/obsidian/vault"
+
+WIN_PROFILE="$(powershell.exe -NoProfile -Command "\$env:USERPROFILE" | tr -d "\r")"
+WIN_PATH="$(wslpath -u "$WIN_PROFILE")"
+WINDOWS_VAULT="$WIN_PATH/Documents/AIW-Obsidian-Vault"
+
+mkdir -p "$WINDOWS_VAULT"
+
+RSYNC_OPTS=(
+  -rt
+  --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r
+  --exclude=".obsidian/"
+  --exclude=".trash/"
+  --exclude=".DS_Store"
+  --exclude="Thumbs.db"
+)
+
+if [[ "${1-}" == "--dry-run" ]]; then
+  RSYNC_OPTS+=(--dry-run --itemize-changes)
+fi
+
+rsync "${RSYNC_OPTS[@]}" "$REPO_VAULT/" "$WINDOWS_VAULT/"
