@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT/vendor/paperclip"
+
+corepack enable >/dev/null 2>&1 || true
+
+if [ ! -d node_modules ]; then
+  pnpm install
+fi
+
+export PORT="${PORT:-3100}"
+export SERVE_UI="${SERVE_UI:-true}"
+export BETTER_AUTH_SECRET="${BETTER_AUTH_SECRET:-paperclip-aiw-local-dev-secret}"
+
+pnpm dev

@@ -47,3 +47,4 @@ scripts/aiw.bak.*
 !.aiw/runs/.gitkeep
 !.aiw/state/
 !.aiw/state/.gitkeep
+.aiw/lab/
