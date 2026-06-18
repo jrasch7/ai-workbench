@@ -15,7 +15,7 @@ task_file="$(basename "$task")"
 task_id="${task_file%.md}"
 ts="$(date -u +%Y%m%dT%H%M%SZ)"
 run_dir=".aiw/runs/${ts}-${task_id}"
-model="${AIW_MODEL:-dev-coder}"
+model="${AIW_MODEL:-dev-gemini-fast}"
 llm_enabled="${AIW_LLM_ENABLED:-0}"
 
 mkdir -p "$run_dir"

@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT"
 
-model="${1:-${AIW_MODEL:-dev-coder}}"
+model="${1:-${AIW_MODEL:-dev-gemini-fast}}"
 
 if [[ "${AIW_LLM_ENABLED:-0}" != "1" ]]; then
   echo "AIW_LLM_DISABLED"

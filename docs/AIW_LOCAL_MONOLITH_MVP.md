@@ -120,7 +120,7 @@ O runner continua seguro por padrão:
 
 - `AIW_LLM_ENABLED=0` não chama modelo;
 - `AIW_LLM_ENABLED=1` chama `scripts/aiw-llm-ask`;
-- `AIW_MODEL` define o modelo, com fallback `dev-coder`;
+- `AIW_MODEL` define o modelo, com fallback `dev-gemini-fast`;
 - prompts e respostas completas ficam em `.aiw/runs`;
 - terminal recebe apenas resumo;
 - commit, push, deploy e secrets continuam bloqueados no MVP.
