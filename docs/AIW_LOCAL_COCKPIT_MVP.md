@@ -84,3 +84,17 @@ Guardrails:
 - não lê `.env`;
 - não executa comandos;
 - apenas renderiza evidências locais.
+
+## Auto-refresh e abertura no navegador
+
+O Cockpit atualiza a página automaticamente a cada 10 segundos.
+
+Também é possível abrir o navegador automaticamente:
+
+    AIW_COCKPIT_OPEN_BROWSER=1 ./scripts/aiw cockpit
+
+Melhorias visuais adicionadas:
+
+- badges para status;
+- indicação de refresh;
+- status `done`, `review` e `failed` destacados.

@@ -3,6 +3,7 @@ import html
 import json
 import os
 import socketserver
+import webbrowser
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
@@ -10,6 +11,7 @@ from urllib.parse import parse_qs, quote, urlparse
 ROOT = Path(os.environ.get("AIW_ROOT", Path.home() / "ai-workbench")).resolve()
 PORT = int(os.environ.get("AIW_COCKPIT_PORT", "8765"))
 HOST = os.environ.get("AIW_COCKPIT_HOST", "127.0.0.1")
+OPEN_BROWSER = os.environ.get("AIW_COCKPIT_OPEN_BROWSER", "0") == "1"
 
 TASK_QUEUES = ["inbox", "running", "blocked", "review", "done", "failed"]
 
@@ -87,9 +89,9 @@ def render_page() -> str:
         run_rows += f"""
         <tr>
           <td><a href="/run?path={quote(row["run"])}"><code>{html.escape(row["run"])}</code></a></td>
-          <td>{html.escape(row["status"])}</td>
-          <td>{html.escape(row["doc_status"])}</td>
-          <td>{html.escape(row["llm_status"])}</td>
+          <td><span class="badge badge-{html.escape(str(row["status"]))}">{html.escape(row["status"])}</span></td>
+          <td><span class="badge">{html.escape(row["doc_status"])}</span></td>
+          <td><span class="badge">{html.escape(row["llm_status"])}</span></td>
           <td>{html.escape(row["model"])}</td>
           <td><code>{html.escape(row["task_id"])}</code></td>
         </tr>
@@ -108,6 +110,8 @@ def render_page() -> str:
   <meta charset="utf-8">
   <title>AIW Local Cockpit</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="10">
+  <meta http-equiv="refresh" content="10">
   <style>
     :root {{
       color-scheme: dark;
@@ -253,7 +257,7 @@ def render_page() -> str:
         <h1>AIW Local Cockpit</h1>
         <div class="subtitle">Painel local do AI Workbench MVP. Root: <code>{html.escape(str(ROOT))}</code></div>
       </div>
-      <div class="pill"><span class="ok">●</span> Local only</div>
+      <div class="pill"><span class="ok">●</span> Local only · refresh 10s</div>
     </header>
 
     <div class="grid">
@@ -584,9 +588,13 @@ if __name__ == "__main__":
     if not ROOT.exists():
         raise SystemExit(f"AIW root not found: {ROOT}")
 
-    print(f"AIW Local Cockpit running at http://{HOST}:{PORT}")
+    url = f"http://{HOST}:{PORT}"
+    print(f"AIW Local Cockpit running at {url}")
     print(f"ROOT: {ROOT}")
     print("Press Ctrl+C to stop")
+
+    if OPEN_BROWSER:
+        webbrowser.open(url)
 
     with ThreadingTCPServer((HOST, PORT), Handler) as httpd:
         httpd.serve_forever()
