@@ -7,6 +7,7 @@ cd "$ROOT"
 model="${AIW_DOCTOR_MODEL:-dev-gemini-fast}"
 allow_dirty="${AIW_DOCTOR_ALLOW_DIRTY:-0}"
 model_smoke="${AIW_DOCTOR_MODEL_SMOKE:-1}"
+strict_model="${AIW_DOCTOR_STRICT_MODEL:-0}"
 
 mkdir -p .aiw/state
 
@@ -149,7 +150,11 @@ if [[ "$model_smoke" == "1" ]]; then
   if ./scripts/model-smoke "$model" > .aiw/state/doctor-model-smoke.log 2>&1; then
     pass "model smoke $model"
   else
-    fail "model smoke $model failed"
+    if [[ "$strict_model" == "1" ]]; then
+      fail "model smoke $model failed"
+    else
+      warn "model smoke $model failed, treated as warning because AIW_DOCTOR_STRICT_MODEL=0"
+    fi
     sed -n '1,120p' .aiw/state/doctor-model-smoke.log || true
   fi
 else

@@ -242,3 +242,23 @@ Uso:
 
 - `./scripts/aiw doctor-local`
 - `AIW_DOCTOR_ALLOW_DIRTY=1 ./scripts/aiw doctor-local`
+
+## 17. Doctor resiliente a provedor
+
+O `doctor-local` diferencia saúde local do AIW e instabilidade externa de modelo.
+
+Por padrão, falha temporária do modelo vira warning, não reprovação total do doctor.
+
+Variáveis:
+
+- `AIW_DOCTOR_STRICT_MODEL=0`: padrão, trata falha de modelo como warning;
+- `AIW_DOCTOR_STRICT_MODEL=1`: modo rígido, falha de modelo reprova o doctor;
+- `AIW_DOCTOR_MODEL_SMOKE=0`: pula o smoke real do modelo.
+
+Uso recomendado no desenvolvimento local:
+
+- `./scripts/aiw doctor-local`
+
+Uso recomendado antes de depender de LLM real:
+
+- `AIW_DOCTOR_STRICT_MODEL=1 ./scripts/aiw doctor-local`
