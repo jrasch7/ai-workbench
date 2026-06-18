@@ -1,0 +1,918 @@
+#!/usr/bin/env python3
+import html
+import json
+import os
+import socketserver
+import subprocess
+import webbrowser
+from http.server import BaseHTTPRequestHandler
+from pathlib import Path
+from urllib.parse import parse_qs, quote, urlparse
+
+ROOT = Path(os.environ.get("AIW_ROOT", Path.home() / "ai-workbench")).resolve()
+PORT = int(os.environ.get("AIW_COCKPIT_PORT", "8765"))
+HOST = os.environ.get("AIW_COCKPIT_HOST", "127.0.0.1")
+OPEN_BROWSER = os.environ.get("AIW_COCKPIT_OPEN_BROWSER", "0") == "1"
+
+TASK_QUEUES = ["inbox", "running", "blocked", "review", "done", "failed"]
+
+
+def count_tasks(queue: str) -> int:
+    path = ROOT / ".aiw" / "tasks" / queue
+    if not path.exists():
+        return 0
+    return len([p for p in path.glob("*.md") if p.is_file()])
+
+
+def read_json(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"status": "invalid_json"}
+
+
+def read_task_id(run_dir: Path) -> str:
+    task = run_dir / "task.md"
+    if not task.exists():
+        return "-"
+    for line in task.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith("Task ID:"):
+            return line.split(":", 1)[1].strip() or "-"
+    return "-"
+
+
+def list_runs(limit: int = 25) -> list[dict]:
+    runs_dir = ROOT / ".aiw" / "runs"
+    if not runs_dir.exists():
+        return []
+
+    rows = []
+    for run in sorted([p for p in runs_dir.iterdir() if p.is_dir()], reverse=True)[:limit]:
+        status = read_json(run / "status.json")
+        rows.append({
+            "run": str(run.relative_to(ROOT)),
+            "task_id": read_task_id(run),
+            "status": status.get("status", "unknown"),
+            "llm_status": status.get("llm_status", "-"),
+            "doc_status": status.get("doc_status", "-"),
+            "generated_file": status.get("generated_file", ""),
+            "model": status.get("model", "-"),
+        })
+    return rows
+
+
+def status_payload() -> dict:
+    return {
+        "root": str(ROOT),
+        "queues": {q: count_tasks(q) for q in TASK_QUEUES},
+        "runs": list_runs(25),
+    }
+
+
+def render_page() -> str:
+    payload = status_payload()
+    queues = payload["queues"]
+    runs = payload["runs"]
+
+    queue_cards = ""
+    for name, count in queues.items():
+        queue_cards += f"""
+        <div class="card">
+          <div class="label">{html.escape(name)}</div>
+          <div class="number">{count}</div>
+        </div>
+        """
+
+    run_rows = ""
+    for row in runs:
+        run_rows += f"""
+        <tr>
+          <td><a href="/run?path={quote(row["run"])}"><code>{html.escape(row["run"])}</code></a></td>
+          <td><span class="badge badge-{html.escape(str(row["status"]))}">{html.escape(row["status"])}</span></td>
+          <td><span class="badge">{html.escape(row["doc_status"])}</span></td>
+          <td><span class="badge">{html.escape(row["llm_status"])}</span></td>
+          <td>{html.escape(row["model"])}</td>
+          <td><code>{html.escape(row["task_id"])}</code></td>
+        </tr>
+        """
+
+
+    create_panel = """
+    <section class="create-panel">
+      <div class="section-head">
+        <h2>Nova task</h2>
+        <span class="hint">Cria em inbox. Não executa automaticamente.</span>
+      </div>
+
+      <form method="post" action="/task/create" class="create-form single-create-form">
+        <label>Instrução</label>
+        <input class="input" name="title" placeholder="Ex: Criar guia do cockpit local" required>
+
+        <label>Arquivo de documentação opcional</label>
+        <input class="input" name="output" placeholder="Opcional: docs/GUIA_COCKPIT.md">
+
+        <button class="button" type="submit">Criar task</button>
+
+        <p class="form-help">
+          Deixe o arquivo vazio para task normal. Preencha <code>docs/arquivo.md</code> para task documental.
+        </p>
+      </form>
+    </section>
+    """
+
+
+    runner_panel = """
+    <section class="runner-panel">
+      <div class="section-head">
+        <h2>Runner</h2>
+        <span class="hint">Executa uma task da inbox e abre o run gerado.</span>
+      </div>
+
+      <form method="post" action="/runner/run-once" class="runner-form">
+        <label class="check-row">
+          <input type="checkbox" name="llm_enabled" value="1">
+          Usar LLM
+        </label>
+
+        <label>Modelo</label>
+        <input class="input" name="model" value="dev-gemini-fast">
+
+        <button class="button run" type="submit">Run once</button>
+      </form>
+    </section>
+    """
+
+    if not run_rows:
+        run_rows = """
+        <tr>
+          <td colspan="6">Nenhum run encontrado.</td>
+        </tr>
+        """
+
+    return f"""<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>AIW Local Cockpit</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="10">
+  <meta http-equiv="refresh" content="10">
+  <style>
+    :root {{
+      color-scheme: dark;
+      --bg: #0b0d12;
+      --panel: #121622;
+      --panel2: #171b29;
+      --text: #f5f7fb;
+      --muted: #9aa4b2;
+      --line: #2a3040;
+      --accent: #8b5cf6;
+      --ok: #22c55e;
+    }}
+    body {{
+      margin: 0;
+      background: radial-gradient(circle at top left, #22163f 0, var(--bg) 36%);
+      color: var(--text);
+      font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    main {{
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 20px 48px;
+    }}
+    header {{
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      margin-bottom: 24px;
+    }}
+    h1 {{
+      margin: 0;
+      font-size: 30px;
+      letter-spacing: -0.04em;
+    }}
+    .subtitle {{
+      color: var(--muted);
+      margin-top: 6px;
+    }}
+    .pill {{
+      border: 1px solid var(--line);
+      background: rgba(18, 22, 34, 0.78);
+      padding: 8px 12px;
+      border-radius: 999px;
+      color: var(--muted);
+      white-space: nowrap;
+    }}
+    .grid {{
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 22px;
+    }}
+    .card {{
+      background: linear-gradient(180deg, var(--panel), var(--panel2));
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.24);
+    }}
+    .label {{
+      color: var(--muted);
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+    }}
+    .number {{
+      font-size: 30px;
+      font-weight: 750;
+      margin-top: 6px;
+    }}
+    section {{
+      background: rgba(18, 22, 34, 0.88);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      overflow: hidden;
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.22);
+    }}
+    .create-panel {{
+      margin-bottom: 22px;
+    }}
+    .create-form {{
+      display: grid;
+      gap: 10px;
+      padding: 18px;
+    }}
+    .single-create-form {{
+      max-width: 760px;
+    }}
+    .create-form label {{
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }}
+    .input {{
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: rgba(0, 0, 0, 0.20);
+      color: var(--text);
+    }}
+    .button {{
+      border: 1px solid rgba(139, 92, 246, 0.42);
+      border-radius: 12px;
+      padding: 10px 14px;
+      color: var(--text);
+      cursor: pointer;
+      font-weight: 750;
+      background: rgba(139, 92, 246, 0.16);
+      width: fit-content;
+    }}
+    .hint, .form-help {{
+      color: var(--muted);
+      font-size: 12px;
+    }}
+    .form-help {{
+      margin: 0;
+    }}
+    .runner-panel {{
+      margin-bottom: 22px;
+    }}
+    .runner-form {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: end;
+      padding: 18px;
+    }}
+    .runner-form label {{
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }}
+    .check-row {{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 38px;
+    }}
+    .button.run {{
+      border-color: rgba(34, 197, 94, 0.42);
+      background: rgba(34, 197, 94, 0.14);
+    }}
+    .section-head {{
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }}
+    h2 {{
+      margin: 0;
+      font-size: 18px;
+    }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+    }}
+    th, td {{
+      text-align: left;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }}
+    th {{
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.02);
+    }}
+    code {{
+      color: #d8ccff;
+      word-break: break-word;
+    }}
+    .ok {{
+      color: var(--ok);
+    }}
+    .links {{
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }}
+    a {{
+      color: #c4b5fd;
+      text-decoration: none;
+    }}
+    a:hover {{
+      text-decoration: underline;
+    }}
+    @media (max-width: 900px) {{
+      .grid {{
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }}
+      header {{
+        flex-direction: column;
+      }}
+      table {{
+        font-size: 12px;
+      }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>AIW Local Cockpit</h1>
+        <div class="subtitle">Painel local do AI Workbench MVP. Root: <code>{html.escape(str(ROOT))}</code></div>
+      </div>
+      <div class="pill"><span class="ok">●</span> Local only · refresh 10s</div>
+    </header>
+
+    <div class="grid">
+      {queue_cards}
+    </div>
+
+    {create_panel}
+
+    {runner_panel}
+
+    <section>
+      <div class="section-head">
+        <h2>Últimos runs</h2>
+        <div class="links">
+          <a href="/api/status">/api/status</a>
+          <a href="/api/runs">/api/runs</a>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Run</th>
+            <th>Status</th>
+            <th>Doc</th>
+            <th>LLM</th>
+            <th>Modelo</th>
+            <th>Task</th>
+          </tr>
+        </thead>
+        <tbody>
+          {run_rows}
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>"""
+
+
+def safe_run_dir(raw_path: str) -> Path | None:
+    if not raw_path:
+        return None
+
+    if raw_path.startswith("/") or ".." in raw_path:
+        return None
+
+    if not raw_path.startswith(".aiw/runs/"):
+        return None
+
+    run_dir = (ROOT / raw_path).resolve()
+    runs_root = (ROOT / ".aiw" / "runs").resolve()
+
+    try:
+        run_dir.relative_to(runs_root)
+    except ValueError:
+        return None
+
+    if not run_dir.exists() or not run_dir.is_dir():
+        return None
+
+    return run_dir
+
+
+def read_text_file(path: Path, limit: int = 20000) -> str:
+    if not path.exists() or not path.is_file():
+        return ""
+
+    text = path.read_text(encoding="utf-8", errors="replace")
+
+    if len(text) > limit:
+        return text[:limit] + "\n\n--- TRUNCATED ---\n"
+
+    return text
+
+
+def create_task_from_cockpit(title: str, output: str = "") -> tuple[bool, str]:
+    title = (title or "").strip()
+    output = (output or "").strip()
+
+    if not title:
+        return False, "task title is required"
+
+    if output:
+        if not output.startswith("docs/") or not output.endswith(".md") or ".." in output or output.startswith("/") or ".env" in output:
+            return False, "invalid output path"
+        cmd = [str(ROOT / "scripts" / "aiw-doc-task-create"), title, output]
+    else:
+        cmd = [str(ROOT / "scripts" / "aiw-task-create"), title]
+
+    try:
+        completed = subprocess.run(
+            cmd,
+            cwd=str(ROOT),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=30,
+            check=False,
+        )
+    except Exception as exc:
+        return False, f"task creation failed: {exc}"
+
+    ok = completed.returncode == 0
+    return ok, completed.stdout.strip()
+
+
+def run_once_from_cockpit(llm_enabled: str = "0", model: str = "dev-gemini-fast") -> tuple[bool, str, str]:
+    enabled = "1" if llm_enabled == "1" else "0"
+    model = (model or "dev-gemini-fast").strip()
+
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:/")
+    if not model or any(ch not in allowed for ch in model):
+        return False, "invalid model", ""
+
+    env = os.environ.copy()
+    env["AIW_LLM_ENABLED"] = enabled
+    env["AIW_MODEL"] = model
+
+    try:
+        completed = subprocess.run(
+            [str(ROOT / "scripts" / "aiw-runner-once")],
+            cwd=str(ROOT),
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=300,
+            check=False,
+        )
+    except Exception as exc:
+        return False, f"runner failed: {exc}", ""
+
+    output = completed.stdout.strip()
+    run_dir = ""
+
+    for line in output.splitlines():
+        if line.startswith("RUN_DIR:"):
+            run_dir = line.split(":", 1)[1].strip()
+
+    ok = completed.returncode == 0 and bool(run_dir)
+    return ok, output, run_dir
+
+
+def run_action(action: str, run_path: str, reason: str = "") -> tuple[bool, str]:
+    run_dir = safe_run_dir(run_path)
+
+    if run_dir is None:
+        return False, "invalid run path"
+
+    rel = str(run_dir.relative_to(ROOT))
+
+    if action == "approve":
+        cmd = [str(ROOT / "scripts" / "aiw-run-approve"), rel]
+    elif action == "reject":
+        cmd = [str(ROOT / "scripts" / "aiw-run-reject"), rel, reason or "Rejected from AIW Local Cockpit."]
+    else:
+        return False, "invalid action"
+
+    try:
+        completed = subprocess.run(
+            cmd,
+            cwd=str(ROOT),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=30,
+            check=False,
+        )
+    except Exception as exc:
+        return False, f"action failed: {exc}"
+
+    ok = completed.returncode == 0
+    return ok, completed.stdout.strip()
+
+
+def render_file_block(title: str, content: str) -> str:
+    if not content:
+        return f"""
+        <section class="detail-section muted-section">
+          <div class="section-head">
+            <h2>{html.escape(title)}</h2>
+          </div>
+          <pre class="empty">Arquivo ausente ou vazio.</pre>
+        </section>
+        """
+
+    return f"""
+    <section class="detail-section">
+      <div class="section-head">
+        <h2>{html.escape(title)}</h2>
+      </div>
+      <pre>{html.escape(content)}</pre>
+    </section>
+    """
+
+
+def render_run_detail(run_dir: Path) -> str:
+    rel = str(run_dir.relative_to(ROOT))
+    status = read_json(run_dir / "status.json")
+
+    files = [
+        "status.json",
+        "summary.md",
+        "approval.md",
+        "rejection.md",
+        "validation.log",
+        "commands.log",
+        "task.md",
+        "llm-output.md",
+        "llm-error.log",
+    ]
+
+    blocks = ""
+    for file in files:
+        blocks += render_file_block(file, read_text_file(run_dir / file))
+
+    status_label = status.get("status", "unknown")
+    doc_status = status.get("doc_status", "-")
+    llm_status = status.get("llm_status", "-")
+    model = status.get("model", "-")
+
+    action_panel = f"""
+    <section class="detail-section">
+      <div class="section-head">
+        <h2>Ações locais</h2>
+      </div>
+      <div class="actions">
+        <form method="post" action="/action/approve">
+          <input type="hidden" name="path" value="{html.escape(rel)}">
+          <button class="button approve" type="submit">Approve run</button>
+        </form>
+
+        <form method="post" action="/action/reject" class="reject-form">
+          <input type="hidden" name="path" value="{html.escape(rel)}">
+          <input class="input" name="reason" value="Rejected from AIW Local Cockpit." aria-label="Reject reason">
+          <button class="button reject" type="submit">Reject run</button>
+        </form>
+      </div>
+    </section>
+    """
+
+    return f"""<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>AIW Run Detail</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {{
+      color-scheme: dark;
+      --bg: #0b0d12;
+      --panel: #121622;
+      --panel2: #171b29;
+      --text: #f5f7fb;
+      --muted: #9aa4b2;
+      --line: #2a3040;
+      --accent: #8b5cf6;
+      --ok: #22c55e;
+    }}
+    body {{
+      margin: 0;
+      background: radial-gradient(circle at top left, #22163f 0, var(--bg) 36%);
+      color: var(--text);
+      font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    main {{
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 20px 48px;
+    }}
+    header {{
+      margin-bottom: 22px;
+    }}
+    h1 {{
+      margin: 0;
+      font-size: 28px;
+      letter-spacing: -0.04em;
+    }}
+    .subtitle {{
+      color: var(--muted);
+      margin-top: 8px;
+      word-break: break-word;
+    }}
+    .back {{
+      display: inline-flex;
+      margin-bottom: 16px;
+      color: #c4b5fd;
+      text-decoration: none;
+    }}
+    .back:hover {{
+      text-decoration: underline;
+    }}
+    .grid {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 22px;
+    }}
+    .card {{
+      background: linear-gradient(180deg, var(--panel), var(--panel2));
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+    }}
+    .label {{
+      color: var(--muted);
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+    }}
+    .value {{
+      margin-top: 8px;
+      font-size: 16px;
+      font-weight: 700;
+      word-break: break-word;
+    }}
+    .detail-section {{
+      background: rgba(18, 22, 34, 0.88);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      overflow: hidden;
+      margin-bottom: 16px;
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.22);
+    }}
+    .section-head {{
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }}
+    h2 {{
+      margin: 0;
+      font-size: 16px;
+    }}
+    pre {{
+      margin: 0;
+      padding: 18px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #e8e3ff;
+      background: rgba(0, 0, 0, 0.12);
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }}
+    code {{
+      color: #d8ccff;
+    }}
+    .empty {{
+      color: var(--muted);
+    }}
+    .muted-section {{
+      opacity: 0.72;
+    }}
+    .actions {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 18px;
+      align-items: center;
+    }}
+    .reject-form {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      flex: 1;
+      min-width: 280px;
+    }}
+    .button {{
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 14px;
+      color: var(--text);
+      cursor: pointer;
+      font-weight: 750;
+      background: rgba(255, 255, 255, 0.06);
+    }}
+    .button.approve {{
+      border-color: rgba(34, 197, 94, 0.42);
+      background: rgba(34, 197, 94, 0.14);
+    }}
+    .button.reject {{
+      border-color: rgba(239, 68, 68, 0.42);
+      background: rgba(239, 68, 68, 0.14);
+    }}
+    .input {{
+      flex: 1;
+      min-width: 260px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: rgba(0, 0, 0, 0.20);
+      color: var(--text);
+    }}
+    @media (max-width: 900px) {{
+      .grid {{
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <a class="back" href="/">← Voltar ao cockpit</a>
+
+    <header>
+      <h1>Run Detail</h1>
+      <div class="subtitle"><code>{html.escape(rel)}</code></div>
+    </header>
+
+    <div class="grid">
+      <div class="card">
+        <div class="label">Status</div>
+        <div class="value">{html.escape(str(status_label))}</div>
+      </div>
+      <div class="card">
+        <div class="label">Doc</div>
+        <div class="value">{html.escape(str(doc_status))}</div>
+      </div>
+      <div class="card">
+        <div class="label">LLM</div>
+        <div class="value">{html.escape(str(llm_status))}</div>
+      </div>
+      <div class="card">
+        <div class="label">Modelo</div>
+        <div class="value">{html.escape(str(model))}</div>
+      </div>
+    </div>
+
+    {action_panel}
+
+    {blocks}
+  </main>
+</body>
+</html>"""
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        print("%s - %s" % (self.address_string(), fmt % args))
+
+    def send_json(self, payload: dict, status: int = 200):
+        body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_html(self, body: str, status: int = 200):
+        raw = body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def do_GET(self):
+        path = urlparse(self.path).path
+
+        if path == "/":
+            self.send_html(render_page())
+            return
+
+        if path == "/run":
+            query = parse_qs(urlparse(self.path).query)
+            raw_path = query.get("path", [""])[0]
+            run_dir = safe_run_dir(raw_path)
+
+            if run_dir is None:
+                self.send_json({"error": "invalid_or_missing_run", "path": raw_path}, status=404)
+                return
+
+            self.send_html(render_run_detail(run_dir))
+            return
+
+        if path == "/api/status":
+            self.send_json(status_payload())
+            return
+
+        if path == "/api/runs":
+            self.send_json({"runs": list_runs(50)})
+            return
+
+        self.send_json({"error": "not_found", "path": path}, status=404)
+
+    def do_POST(self):
+        path = urlparse(self.path).path
+
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        raw = self.rfile.read(length).decode("utf-8", errors="replace")
+        form = parse_qs(raw)
+
+        run_path = form.get("path", [""])[0]
+        reason = form.get("reason", [""])[0]
+
+        if path == "/task/create":
+            title = form.get("title", [""])[0]
+            doc_output = form.get("output", [""])[0]
+            ok, output = create_task_from_cockpit(title, doc_output)
+            redirect = "/"
+        elif path == "/runner/run-once":
+            llm_enabled = form.get("llm_enabled", ["0"])[0]
+            model = form.get("model", ["dev-gemini-fast"])[0]
+            ok, output, generated_run = run_once_from_cockpit(llm_enabled, model)
+            redirect = f"/run?path={quote(generated_run)}" if generated_run else "/"
+        elif path == "/action/approve":
+            ok, output = run_action("approve", run_path)
+            redirect = f"/run?path={quote(run_path)}"
+        elif path == "/action/reject":
+            ok, output = run_action("reject", run_path, reason)
+            redirect = f"/run?path={quote(run_path)}"
+        else:
+            self.send_json({"error": "not_found", "path": path}, status=404)
+            return
+
+        if not ok:
+            self.send_json({"error": "action_failed", "output": output}, status=400)
+            return
+
+        self.send_response(303)
+        self.send_header("Location", redirect)
+        self.end_headers()
+
+
+class ThreadingTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    allow_reuse_address = True
+
+
+if __name__ == "__main__":
+    if not ROOT.exists():
+        raise SystemExit(f"AIW root not found: {ROOT}")
+
+    url = f"http://{HOST}:{PORT}"
+    print(f"AIW Local Cockpit running at {url}")
+    print(f"ROOT: {ROOT}")
+    print("Press Ctrl+C to stop")
+
+    if OPEN_BROWSER:
+        webbrowser.open(url)
+
+    with ThreadingTCPServer((HOST, PORT), Handler) as httpd:
+        httpd.serve_forever()
