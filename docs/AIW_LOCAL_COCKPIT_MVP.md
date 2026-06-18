@@ -55,3 +55,32 @@ Abrir no navegador:
 - filtro por status;
 - auto-refresh;
 - integração posterior com Hermes/Ralph/Paperclip.
+
+## Run detail
+
+O Cockpit permite abrir o detalhe de um run clicando na linha da tabela.
+
+Rota:
+
+    /run?path=.aiw/runs/<run-id>
+
+Arquivos exibidos:
+
+- status.json
+- summary.md
+- approval.md
+- rejection.md
+- validation.log
+- commands.log
+- task.md
+- llm-output.md
+- llm-error.log
+
+Guardrails:
+
+- aceita apenas paths dentro de `.aiw/runs`;
+- bloqueia path absoluto;
+- bloqueia `..`;
+- não lê `.env`;
+- não executa comandos;
+- apenas renderiza evidências locais.

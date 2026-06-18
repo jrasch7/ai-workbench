@@ -5,7 +5,7 @@ import os
 import socketserver
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 ROOT = Path(os.environ.get("AIW_ROOT", Path.home() / "ai-workbench")).resolve()
 PORT = int(os.environ.get("AIW_COCKPIT_PORT", "8765"))
@@ -86,7 +86,7 @@ def render_page() -> str:
     for row in runs:
         run_rows += f"""
         <tr>
-          <td><code>{html.escape(row["run"])}</code></td>
+          <td><a href="/run?path={quote(row["run"])}"><code>{html.escape(row["run"])}</code></a></td>
           <td>{html.escape(row["status"])}</td>
           <td>{html.escape(row["doc_status"])}</td>
           <td>{html.escape(row["llm_status"])}</td>
@@ -289,6 +289,243 @@ def render_page() -> str:
 </html>"""
 
 
+def safe_run_dir(raw_path: str) -> Path | None:
+    if not raw_path:
+        return None
+
+    if raw_path.startswith("/") or ".." in raw_path:
+        return None
+
+    if not raw_path.startswith(".aiw/runs/"):
+        return None
+
+    run_dir = (ROOT / raw_path).resolve()
+    runs_root = (ROOT / ".aiw" / "runs").resolve()
+
+    try:
+        run_dir.relative_to(runs_root)
+    except ValueError:
+        return None
+
+    if not run_dir.exists() or not run_dir.is_dir():
+        return None
+
+    return run_dir
+
+
+def read_text_file(path: Path, limit: int = 20000) -> str:
+    if not path.exists() or not path.is_file():
+        return ""
+
+    text = path.read_text(encoding="utf-8", errors="replace")
+
+    if len(text) > limit:
+        return text[:limit] + "\n\n--- TRUNCATED ---\n"
+
+    return text
+
+
+def render_file_block(title: str, content: str) -> str:
+    if not content:
+        return f"""
+        <section class="detail-section muted-section">
+          <div class="section-head">
+            <h2>{html.escape(title)}</h2>
+          </div>
+          <pre class="empty">Arquivo ausente ou vazio.</pre>
+        </section>
+        """
+
+    return f"""
+    <section class="detail-section">
+      <div class="section-head">
+        <h2>{html.escape(title)}</h2>
+      </div>
+      <pre>{html.escape(content)}</pre>
+    </section>
+    """
+
+
+def render_run_detail(run_dir: Path) -> str:
+    rel = str(run_dir.relative_to(ROOT))
+    status = read_json(run_dir / "status.json")
+
+    files = [
+        "status.json",
+        "summary.md",
+        "approval.md",
+        "rejection.md",
+        "validation.log",
+        "commands.log",
+        "task.md",
+        "llm-output.md",
+        "llm-error.log",
+    ]
+
+    blocks = ""
+    for file in files:
+        blocks += render_file_block(file, read_text_file(run_dir / file))
+
+    status_label = status.get("status", "unknown")
+    doc_status = status.get("doc_status", "-")
+    llm_status = status.get("llm_status", "-")
+    model = status.get("model", "-")
+
+    return f"""<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>AIW Run Detail</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {{
+      color-scheme: dark;
+      --bg: #0b0d12;
+      --panel: #121622;
+      --panel2: #171b29;
+      --text: #f5f7fb;
+      --muted: #9aa4b2;
+      --line: #2a3040;
+      --accent: #8b5cf6;
+      --ok: #22c55e;
+    }}
+    body {{
+      margin: 0;
+      background: radial-gradient(circle at top left, #22163f 0, var(--bg) 36%);
+      color: var(--text);
+      font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    main {{
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 20px 48px;
+    }}
+    header {{
+      margin-bottom: 22px;
+    }}
+    h1 {{
+      margin: 0;
+      font-size: 28px;
+      letter-spacing: -0.04em;
+    }}
+    .subtitle {{
+      color: var(--muted);
+      margin-top: 8px;
+      word-break: break-word;
+    }}
+    .back {{
+      display: inline-flex;
+      margin-bottom: 16px;
+      color: #c4b5fd;
+      text-decoration: none;
+    }}
+    .back:hover {{
+      text-decoration: underline;
+    }}
+    .grid {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 22px;
+    }}
+    .card {{
+      background: linear-gradient(180deg, var(--panel), var(--panel2));
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+    }}
+    .label {{
+      color: var(--muted);
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+    }}
+    .value {{
+      margin-top: 8px;
+      font-size: 16px;
+      font-weight: 700;
+      word-break: break-word;
+    }}
+    .detail-section {{
+      background: rgba(18, 22, 34, 0.88);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      overflow: hidden;
+      margin-bottom: 16px;
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.22);
+    }}
+    .section-head {{
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }}
+    h2 {{
+      margin: 0;
+      font-size: 16px;
+    }}
+    pre {{
+      margin: 0;
+      padding: 18px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #e8e3ff;
+      background: rgba(0, 0, 0, 0.12);
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }}
+    code {{
+      color: #d8ccff;
+    }}
+    .empty {{
+      color: var(--muted);
+    }}
+    .muted-section {{
+      opacity: 0.72;
+    }}
+    @media (max-width: 900px) {{
+      .grid {{
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <a class="back" href="/">← Voltar ao cockpit</a>
+
+    <header>
+      <h1>Run Detail</h1>
+      <div class="subtitle"><code>{html.escape(rel)}</code></div>
+    </header>
+
+    <div class="grid">
+      <div class="card">
+        <div class="label">Status</div>
+        <div class="value">{html.escape(str(status_label))}</div>
+      </div>
+      <div class="card">
+        <div class="label">Doc</div>
+        <div class="value">{html.escape(str(doc_status))}</div>
+      </div>
+      <div class="card">
+        <div class="label">LLM</div>
+        <div class="value">{html.escape(str(llm_status))}</div>
+      </div>
+      <div class="card">
+        <div class="label">Modelo</div>
+        <div class="value">{html.escape(str(model))}</div>
+      </div>
+    </div>
+
+    {blocks}
+  </main>
+</body>
+</html>"""
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         print("%s - %s" % (self.address_string(), fmt % args))
@@ -314,6 +551,18 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/":
             self.send_html(render_page())
+            return
+
+        if path == "/run":
+            query = parse_qs(urlparse(self.path).query)
+            raw_path = query.get("path", [""])[0]
+            run_dir = safe_run_dir(raw_path)
+
+            if run_dir is None:
+                self.send_json({"error": "invalid_or_missing_run", "path": raw_path}, status=404)
+                return
+
+            self.send_html(render_run_detail(run_dir))
             return
 
         if path == "/api/status":
