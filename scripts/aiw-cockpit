@@ -98,6 +98,30 @@ def render_page() -> str:
         </tr>
         """
 
+
+    create_panel = """
+    <section class="create-panel">
+      <div class="section-head">
+        <h2>Nova task</h2>
+        <span class="hint">Cria em inbox. Não executa automaticamente.</span>
+      </div>
+
+      <form method="post" action="/task/create" class="create-form single-create-form">
+        <label>Instrução</label>
+        <input class="input" name="title" placeholder="Ex: Criar guia do cockpit local" required>
+
+        <label>Arquivo de documentação opcional</label>
+        <input class="input" name="output" placeholder="Opcional: docs/GUIA_COCKPIT.md">
+
+        <button class="button" type="submit">Criar task</button>
+
+        <p class="form-help">
+          Deixe o arquivo vazio para task normal. Preencha <code>docs/arquivo.md</code> para task documental.
+        </p>
+      </form>
+    </section>
+    """
+
     if not run_rows:
         run_rows = """
         <tr>
@@ -191,6 +215,47 @@ def render_page() -> str:
       overflow: hidden;
       box-shadow: 0 18px 60px rgba(0, 0, 0, 0.22);
     }}
+    .create-panel {{
+      margin-bottom: 22px;
+    }}
+    .create-form {{
+      display: grid;
+      gap: 10px;
+      padding: 18px;
+    }}
+    .single-create-form {{
+      max-width: 760px;
+    }}
+    .create-form label {{
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }}
+    .input {{
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: rgba(0, 0, 0, 0.20);
+      color: var(--text);
+    }}
+    .button {{
+      border: 1px solid rgba(139, 92, 246, 0.42);
+      border-radius: 12px;
+      padding: 10px 14px;
+      color: var(--text);
+      cursor: pointer;
+      font-weight: 750;
+      background: rgba(139, 92, 246, 0.16);
+      width: fit-content;
+    }}
+    .hint, .form-help {{
+      color: var(--muted);
+      font-size: 12px;
+    }}
+    .form-help {{
+      margin: 0;
+    }}
     .section-head {{
       padding: 18px 20px;
       border-bottom: 1px solid var(--line);
@@ -265,6 +330,8 @@ def render_page() -> str:
       {queue_cards}
     </div>
 
+    {create_panel}
+
     <section>
       <div class="section-head">
         <h2>Últimos runs</h2>
@@ -328,6 +395,37 @@ def read_text_file(path: Path, limit: int = 20000) -> str:
         return text[:limit] + "\n\n--- TRUNCATED ---\n"
 
     return text
+
+
+def create_task_from_cockpit(title: str, output: str = "") -> tuple[bool, str]:
+    title = (title or "").strip()
+    output = (output or "").strip()
+
+    if not title:
+        return False, "task title is required"
+
+    if output:
+        if not output.startswith("docs/") or not output.endswith(".md") or ".." in output or output.startswith("/") or ".env" in output:
+            return False, "invalid output path"
+        cmd = [str(ROOT / "scripts" / "aiw-doc-task-create"), title, output]
+    else:
+        cmd = [str(ROOT / "scripts" / "aiw-task-create"), title]
+
+    try:
+        completed = subprocess.run(
+            cmd,
+            cwd=str(ROOT),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=30,
+            check=False,
+        )
+    except Exception as exc:
+        return False, f"task creation failed: {exc}"
+
+    ok = completed.returncode == 0
+    return ok, completed.stdout.strip()
 
 
 def run_action(action: str, run_path: str, reason: str = "") -> tuple[bool, str]:

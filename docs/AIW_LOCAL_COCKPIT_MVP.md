@@ -120,3 +120,32 @@ Guardrails:
 - não faz commit;
 - não faz push;
 - não faz deploy.
+
+## Criação de task pelo Cockpit
+
+A home do Cockpit possui um formulário único de Nova task.
+
+Campos:
+
+- instrução da task;
+- arquivo de documentação opcional.
+
+Regra:
+
+- sem arquivo: cria task L1 comum;
+- com arquivo `docs/*.md`: cria task documental L1.
+
+As ações usam POST e delegam para:
+
+- `scripts/aiw-task-create`;
+- `scripts/aiw-doc-task-create`.
+
+Guardrails:
+
+- cria apenas em inbox;
+- não executa runner automaticamente;
+- não lê `.env`;
+- não faz commit;
+- não faz push;
+- não faz deploy;
+- saída documental limitada a `docs/*.md`.
