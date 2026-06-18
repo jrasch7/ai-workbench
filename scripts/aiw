@@ -48,6 +48,12 @@ case "${1:-}" in
     exec "$AIW_ROOT/scripts/aiw-run-show" "$@"
     ;;
 
+  reject|run-reject)
+    shift
+    cd "$AIW_ROOT"
+    exec "$AIW_ROOT/scripts/aiw-run-reject" "$@"
+    ;;
+
   approve|run-approve)
     shift
     cd "$AIW_ROOT"

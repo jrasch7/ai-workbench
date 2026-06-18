@@ -262,3 +262,24 @@ Uso recomendado no desenvolvimento local:
 Uso recomendado antes de depender de LLM real:
 
 - `AIW_DOCTOR_STRICT_MODEL=1 ./scripts/aiw doctor-local`
+
+## 18. Rejeição de run
+
+O comando `scripts/aiw reject` reprova um run revisado.
+
+Fluxo:
+
+- lê o último run ou um run informado;
+- encontra o Task ID;
+- move a task de review para failed;
+- grava rejection.md no run;
+- atualiza status.json para failed;
+- registra o motivo da rejeição;
+- não faz commit automático;
+- não faz push automático.
+
+Uso:
+
+- ./scripts/aiw reject latest
+- ./scripts/aiw reject latest "motivo da reprovação"
+- ./scripts/aiw run-reject .aiw/runs/ID "motivo"

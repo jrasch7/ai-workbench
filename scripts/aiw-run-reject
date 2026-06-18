@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT"
+
+target="${1:-latest}"
+reason="${2:-Rejected by human reviewer.}"
+
+if [[ "$target" == "latest" ]]; then
+  run_dir="$(find .aiw/runs -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -n 1)"
+else
+  run_dir="$target"
+fi
+
+if [[ -z "${run_dir:-}" || ! -d "$run_dir" ]]; then
+  echo "ERROR: run not found"
+  exit 1
+fi
+
+if [[ ! -f "$run_dir/task.md" ]]; then
+  echo "ERROR: task.md not found in run"
+  exit 1
+fi
+
+task_id="$(grep -E '^Task ID:' "$run_dir/task.md" | head -n 1 | cut -d: -f2- | xargs || true)"
+
+if [[ -z "$task_id" ]]; then
+  echo "ERROR: Task ID not found"
+  exit 1
+fi
+
+review_task=".aiw/tasks/review/${task_id}.md"
+failed_task=".aiw/tasks/failed/${task_id}.md"
+rejected_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+mkdir -p .aiw/tasks/failed
+
+if [[ -f "$review_task" ]]; then
+  mv "$review_task" "$failed_task"
+  task_move="review_to_failed"
+elif [[ -f "$failed_task" ]]; then
+  task_move="already_failed"
+else
+  task_move="task_file_not_found"
+fi
+
+cat > "$run_dir/rejection.md" <<REJECTION
+# Run Rejection
+
+Status: FAILED
+Rejected UTC: $rejected_utc
+Run: $run_dir
+Task ID: $task_id
+Task move: $task_move
+Reason: $reason
+REJECTION
+
+python3 - "$run_dir/status.json" "$rejected_utc" "$task_move" "$reason" <<'PYJSON'
+from pathlib import Path
+import json
+import sys
+
+path = Path(sys.argv[1])
+rejected_utc = sys.argv[2]
+task_move = sys.argv[3]
+reason = sys.argv[4]
+
+data = {}
+if path.exists():
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+
+data["status"] = "failed"
+data["rejected_utc"] = rejected_utc
+data["task_move"] = task_move
+data["rejection_reason"] = reason
+
+path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PYJSON
+
+echo "STATUS: FAILED"
+echo "RUN_DIR: $run_dir"
+echo "TASK_ID: $task_id"
+echo "TASK_MOVE: $task_move"
+echo "REASON: $reason"
