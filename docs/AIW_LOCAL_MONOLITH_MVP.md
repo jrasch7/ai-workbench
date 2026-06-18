@@ -179,3 +179,12 @@ Fluxo:
 7. não faz push.
 
 Este comando representa o primeiro checkpoint humano explícito do AIW Local Monolith MVP.
+
+## 14. Consulta de runs
+
+O MVP inclui comandos para consultar execuções locais:
+
+- `scripts/aiw-run-list`: lista os últimos runs;
+- `scripts/aiw-run-show`: mostra o último run ou um run específico.
+
+Esses comandos evitam depender de saída longa em chat e preparam a base para o cockpit local.

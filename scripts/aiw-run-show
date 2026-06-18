@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT"
+
+target="${1:-latest}"
+
+if [[ "$target" == "latest" ]]; then
+  run_dir="$(find .aiw/runs -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -n 1)"
+else
+  run_dir="$target"
+fi
+
+if [[ -z "${run_dir:-}" || ! -d "$run_dir" ]]; then
+  echo "ERROR: run not found"
+  exit 1
+fi
+
+echo "RUN_DIR: $run_dir"
+echo
+
+for f in status.json summary.md approval.md validation.log commands.log; do
+  if [[ -f "$run_dir/$f" ]]; then
+    echo "=== $f ==="
+    sed -n '1,160p' "$run_dir/$f"
+    echo
+  fi
+done
+
+if [[ -f "$run_dir/llm-output.md" ]]; then
+  echo "=== llm-output.md head ==="
+  sed -n '1,120p' "$run_dir/llm-output.md"
+  echo
+fi
