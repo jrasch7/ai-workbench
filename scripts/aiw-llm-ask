@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT"
+
+model="${1:-${AIW_MODEL:-dev-coder}}"
+
+if [[ "${AIW_LLM_ENABLED:-0}" != "1" ]]; then
+  echo "AIW_LLM_DISABLED"
+  exit 0
+fi
+
+if [[ ! -x "./scripts/model-ask" ]]; then
+  echo "ERROR: scripts/model-ask not found or not executable"
+  exit 1
+fi
+
+./scripts/model-ask "$model"

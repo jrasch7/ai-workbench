@@ -111,3 +111,18 @@ Características:
 - grava evidências em `.aiw/runs`.
 
 Este é o primeiro passo para operação 24/7 local antes de integrar Hermes, Ralph Loop, Paperclip e cockpit web.
+
+## 10. LLM adapter opcional
+
+O script `scripts/aiw-llm-ask` é o adapter local para chamar modelos via `scripts/model-ask`.
+
+O runner continua seguro por padrão:
+
+- `AIW_LLM_ENABLED=0` não chama modelo;
+- `AIW_LLM_ENABLED=1` chama `scripts/aiw-llm-ask`;
+- `AIW_MODEL` define o modelo, com fallback `dev-coder`;
+- prompts e respostas completas ficam em `.aiw/runs`;
+- terminal recebe apenas resumo;
+- commit, push, deploy e secrets continuam bloqueados no MVP.
+
+Esta camada prepara a integração com Hermes, LiteLLM, Ralph Loop e Paperclip sem transformar o runner em agente autônomo irrestrito.
