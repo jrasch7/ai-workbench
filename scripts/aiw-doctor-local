@@ -78,6 +78,7 @@ scripts=(
   scripts/aiw-runner-watch
   scripts/aiw-llm-ask
   scripts/aiw-run-approve
+  scripts/aiw-run-reject
   scripts/aiw-run-list
   scripts/aiw-run-show
   scripts/model-smoke

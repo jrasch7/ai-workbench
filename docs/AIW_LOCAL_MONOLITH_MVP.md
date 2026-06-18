@@ -283,3 +283,12 @@ Uso:
 - ./scripts/aiw reject latest
 - ./scripts/aiw reject latest "motivo da reprovação"
 - ./scripts/aiw run-reject .aiw/runs/ID "motivo"
+
+## 19. Doctor cobre aprovação e rejeição
+
+O `doctor-local` valida os comandos de revisão humana:
+
+- `scripts/aiw-run-approve`;
+- `scripts/aiw-run-reject`.
+
+Com isso, o ciclo `review -> done` e `review -> failed` fica coberto pelo diagnóstico local.
