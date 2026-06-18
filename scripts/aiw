@@ -59,6 +59,12 @@ case "${1:-}" in
     cd "$AIW_ROOT"
     exec "$AIW_ROOT/scripts/aiw-run-approve" "$@"
     ;;
+  cockpit)
+    shift
+    cd "$AIW_ROOT"
+    exec "$AIW_ROOT/scripts/aiw-cockpit" "$@"
+    ;;
+
   doctor-local|local-doctor)
     shift
     cd "$AIW_ROOT"
