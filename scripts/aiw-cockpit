@@ -874,6 +874,11 @@ class Handler(BaseHTTPRequestHandler):
             doc_output = form.get("output", [""])[0]
             ok, output = create_task_from_cockpit(title, doc_output)
             redirect = "/"
+        elif path == "/runner/run-once":
+            llm_enabled = form.get("llm_enabled", ["0"])[0]
+            model = form.get("model", ["dev-gemini-fast"])[0]
+            ok, output, generated_run = run_once_from_cockpit(llm_enabled, model)
+            redirect = f"/run?path={quote(generated_run)}" if generated_run else "/"
         elif path == "/action/approve":
             ok, output = run_action("approve", run_path)
             redirect = f"/run?path={quote(run_path)}"

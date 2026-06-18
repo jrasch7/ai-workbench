@@ -182,3 +182,17 @@ Guardrails:
 - não faz deploy;
 - não lê `.env` diretamente no Cockpit;
 - execução continua limitada pelas regras do runner.
+
+## Hotfix do Runner pelo Cockpit
+
+O endpoint `POST /runner/run-once` executa uma task da inbox e redireciona para o detalhe do run gerado.
+
+Comportamento:
+
+- recebe `llm_enabled`;
+- recebe `model`;
+- delega para `scripts/aiw-runner-once`;
+- extrai `RUN_DIR` da saída;
+- redireciona com `303` para `/run?path=<run>`.
+
+Essa rota não faz commit, push ou deploy.
