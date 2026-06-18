@@ -122,6 +122,28 @@ def render_page() -> str:
     </section>
     """
 
+
+    runner_panel = """
+    <section class="runner-panel">
+      <div class="section-head">
+        <h2>Runner</h2>
+        <span class="hint">Executa uma task da inbox e abre o run gerado.</span>
+      </div>
+
+      <form method="post" action="/runner/run-once" class="runner-form">
+        <label class="check-row">
+          <input type="checkbox" name="llm_enabled" value="1">
+          Usar LLM
+        </label>
+
+        <label>Modelo</label>
+        <input class="input" name="model" value="dev-gemini-fast">
+
+        <button class="button run" type="submit">Run once</button>
+      </form>
+    </section>
+    """
+
     if not run_rows:
         run_rows = """
         <tr>
@@ -256,6 +278,32 @@ def render_page() -> str:
     .form-help {{
       margin: 0;
     }}
+    .runner-panel {{
+      margin-bottom: 22px;
+    }}
+    .runner-form {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: end;
+      padding: 18px;
+    }}
+    .runner-form label {{
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }}
+    .check-row {{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 38px;
+    }}
+    .button.run {{
+      border-color: rgba(34, 197, 94, 0.42);
+      background: rgba(34, 197, 94, 0.14);
+    }}
     .section-head {{
       padding: 18px 20px;
       border-bottom: 1px solid var(--line);
@@ -331,6 +379,8 @@ def render_page() -> str:
     </div>
 
     {create_panel}
+
+    {runner_panel}
 
     <section>
       <div class="section-head">
@@ -426,6 +476,43 @@ def create_task_from_cockpit(title: str, output: str = "") -> tuple[bool, str]:
 
     ok = completed.returncode == 0
     return ok, completed.stdout.strip()
+
+
+def run_once_from_cockpit(llm_enabled: str = "0", model: str = "dev-gemini-fast") -> tuple[bool, str, str]:
+    enabled = "1" if llm_enabled == "1" else "0"
+    model = (model or "dev-gemini-fast").strip()
+
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:/")
+    if not model or any(ch not in allowed for ch in model):
+        return False, "invalid model", ""
+
+    env = os.environ.copy()
+    env["AIW_LLM_ENABLED"] = enabled
+    env["AIW_MODEL"] = model
+
+    try:
+        completed = subprocess.run(
+            [str(ROOT / "scripts" / "aiw-runner-once")],
+            cwd=str(ROOT),
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=300,
+            check=False,
+        )
+    except Exception as exc:
+        return False, f"runner failed: {exc}", ""
+
+    output = completed.stdout.strip()
+    run_dir = ""
+
+    for line in output.splitlines():
+        if line.startswith("RUN_DIR:"):
+            run_dir = line.split(":", 1)[1].strip()
+
+    ok = completed.returncode == 0 and bool(run_dir)
+    return ok, output, run_dir
 
 
 def run_action(action: str, run_path: str, reason: str = "") -> tuple[bool, str]:

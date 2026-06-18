@@ -162,3 +162,23 @@ Comportamento:
 - erros retornam JSON com `action_failed`.
 
 Essa rota não executa o runner automaticamente.
+
+## Runner pelo Cockpit
+
+A home do Cockpit possui um painel Runner com ação `Run once`.
+
+Comportamento:
+
+- executa uma task da inbox;
+- permite escolher se usa LLM;
+- permite informar o modelo;
+- delega para `scripts/aiw-runner-once`;
+- redireciona para o detalhe do run gerado.
+
+Guardrails:
+
+- não faz commit;
+- não faz push;
+- não faz deploy;
+- não lê `.env` diretamente no Cockpit;
+- execução continua limitada pelas regras do runner.
