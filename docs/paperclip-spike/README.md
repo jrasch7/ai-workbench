@@ -7,9 +7,9 @@ Avaliar o Paperclip como control plane visual para o AI Workbench, mantendo o AI
 ## Estado atual
 
 - Branch: `spike/paperclip-control-plane`
-- Paperclip clonado em `.aiw/lab/paperclip`
-- `.aiw/lab/` deve permanecer fora do Git
-- Paperclip local rodando em `http://127.0.0.1:3100`
+- Paperclip vendorizado em `vendor/paperclip` para replicação via Git
+- `.aiw/lab/` permanece fora do Git apenas para clones temporários, caches, bancos e testes locais
+- Paperclip local pode rodar em `http://127.0.0.1:3100` via `./scripts/paperclip-dev`
 - Onboarding iniciado com organização `Nivela Ecosystem`
 - Adapter testado: `Hermes Agent`
 - Hermes CLI oficial instalado via `pipx`

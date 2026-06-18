@@ -14,7 +14,7 @@ Levar o spike Paperclip + Hermes + AIW para o PC principal, onde será possível
 
 ## O que não deve ir para o Git
 
-- `.aiw/lab/paperclip`
+- `.aiw/lab/paperclip` quando usado apenas como clone/cache local
 - `.env`
 - `~/.hermes/.env`
 - Tokens
@@ -27,7 +27,7 @@ Levar o spike Paperclip + Hermes + AIW para o PC principal, onde será possível
 1. Clonar/puxar `ai-workbench`.
 2. Instalar Node/pnpm conforme versão do AIW/Paperclip.
 3. Instalar Hermes Agent via pipx.
-4. Subir Paperclip local.
+4. Subir Paperclip local com `./scripts/paperclip-dev`.
 5. Instalar runtime local: Ollama ou vLLM.
 6. Baixar primeiro modelo open-source de coding.
 7. Configurar Hermes para provider local.
