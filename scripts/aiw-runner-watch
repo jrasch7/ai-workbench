@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT"
+
+interval="${AIW_WATCH_INTERVAL:-10}"
+max_iterations="${AIW_WATCH_MAX_ITERATIONS:-0}"
+iteration=0
+
+echo "AIW runner watch started"
+echo "ROOT: $ROOT"
+echo "INTERVAL: $interval"
+echo "MAX_ITERATIONS: $max_iterations"
+echo "Press Ctrl+C to stop"
+echo
+
+while true; do
+  iteration=$((iteration + 1))
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  inbox_count="$(find .aiw/tasks/inbox -maxdepth 1 -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
+
+  echo "[$ts] iteration=$iteration inbox=$inbox_count"
+
+  if [[ "$inbox_count" != "0" ]]; then
+    ./scripts/aiw-runner-once || true
+  fi
+
+  if [[ "$max_iterations" != "0" && "$iteration" -ge "$max_iterations" ]]; then
+    echo "AIW runner watch finished by max iterations"
+    exit 0
+  fi
+
+  sleep "$interval"
+done

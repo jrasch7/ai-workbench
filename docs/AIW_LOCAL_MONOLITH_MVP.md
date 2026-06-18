@@ -92,3 +92,22 @@ Depois deste MVP:
 - não versionar runtime;
 - bloquear níveis fora do MVP;
 - manter Git limpo exceto arquivos estruturais.
+
+## 9. Runner contínuo local
+
+O script `scripts/aiw-runner-watch` executa o runner em loop local.
+
+Características:
+
+- lê a fila `.aiw/tasks/inbox`;
+- chama `scripts/aiw-runner-once`;
+- respeita o intervalo `AIW_WATCH_INTERVAL`;
+- suporta `AIW_WATCH_MAX_ITERATIONS` para smoke tests;
+- para com `Ctrl+C`;
+- não chama LLM;
+- não faz commit;
+- não faz push;
+- não lê secrets;
+- grava evidências em `.aiw/runs`.
+
+Este é o primeiro passo para operação 24/7 local antes de integrar Hermes, Ralph Loop, Paperclip e cockpit web.
