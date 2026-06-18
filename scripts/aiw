@@ -53,6 +53,13 @@ case "${1:-}" in
     cd "$AIW_ROOT"
     exec "$AIW_ROOT/scripts/aiw-run-approve" "$@"
     ;;
+  doctor-local|local-doctor)
+    shift
+    cd "$AIW_ROOT"
+    exec "$AIW_ROOT/scripts/aiw-doctor-local" "$@"
+    ;;
+
+
 esac
 
 DEFAULT_WORKSPACE="${DEFAULT_WORKSPACE:-sandbox-test}"

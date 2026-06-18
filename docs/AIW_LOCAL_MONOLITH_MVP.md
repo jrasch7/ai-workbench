@@ -214,3 +214,31 @@ Esses atalhos não substituem os comandos existentes de serviço, como:
 - `./scripts/aiw matrix`
 
 Objetivo: permitir operar o MVP local sem decorar nomes de scripts soltos.
+
+## 16. Doctor local
+
+O comando `scripts/aiw doctor-local` executa um diagnóstico local do MVP.
+
+Ele valida:
+
+- repositório Git;
+- working tree limpo;
+- scripts essenciais executáveis;
+- sintaxe Bash;
+- estrutura `.aiw`;
+- presença de `.env`;
+- LiteLLM respondendo;
+- smoke do modelo padrão;
+- listagem de runs;
+- leitura do último run.
+
+Variáveis úteis:
+
+- `AIW_DOCTOR_ALLOW_DIRTY=1`: permite rodar o doctor com arquivos modificados;
+- `AIW_DOCTOR_MODEL=dev-gemini-fast`: define o modelo testado;
+- `AIW_DOCTOR_MODEL_SMOKE=0`: pula smoke real de modelo.
+
+Uso:
+
+- `./scripts/aiw doctor-local`
+- `AIW_DOCTOR_ALLOW_DIRTY=1 ./scripts/aiw doctor-local`
