@@ -98,3 +98,25 @@ Melhorias visuais adicionadas:
 - badges para status;
 - indicação de refresh;
 - status `done`, `review` e `failed` destacados.
+
+## Ações locais no detalhe do run
+
+O detalhe do run possui ações locais:
+
+- Approve run;
+- Reject run com motivo.
+
+As ações usam POST e delegam para os scripts existentes:
+
+- `scripts/aiw-run-approve`;
+- `scripts/aiw-run-reject`.
+
+Guardrails:
+
+- aceita apenas paths dentro de `.aiw/runs`;
+- não usa shell;
+- não lê `.env`;
+- não executa tasks;
+- não faz commit;
+- não faz push;
+- não faz deploy.

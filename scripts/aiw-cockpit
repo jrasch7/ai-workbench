@@ -3,6 +3,7 @@ import html
 import json
 import os
 import socketserver
+import subprocess
 import webbrowser
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -329,6 +330,38 @@ def read_text_file(path: Path, limit: int = 20000) -> str:
     return text
 
 
+def run_action(action: str, run_path: str, reason: str = "") -> tuple[bool, str]:
+    run_dir = safe_run_dir(run_path)
+
+    if run_dir is None:
+        return False, "invalid run path"
+
+    rel = str(run_dir.relative_to(ROOT))
+
+    if action == "approve":
+        cmd = [str(ROOT / "scripts" / "aiw-run-approve"), rel]
+    elif action == "reject":
+        cmd = [str(ROOT / "scripts" / "aiw-run-reject"), rel, reason or "Rejected from AIW Local Cockpit."]
+    else:
+        return False, "invalid action"
+
+    try:
+        completed = subprocess.run(
+            cmd,
+            cwd=str(ROOT),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=30,
+            check=False,
+        )
+    except Exception as exc:
+        return False, f"action failed: {exc}"
+
+    ok = completed.returncode == 0
+    return ok, completed.stdout.strip()
+
+
 def render_file_block(title: str, content: str) -> str:
     if not content:
         return f"""
@@ -374,6 +407,26 @@ def render_run_detail(run_dir: Path) -> str:
     doc_status = status.get("doc_status", "-")
     llm_status = status.get("llm_status", "-")
     model = status.get("model", "-")
+
+    action_panel = f"""
+    <section class="detail-section">
+      <div class="section-head">
+        <h2>Ações locais</h2>
+      </div>
+      <div class="actions">
+        <form method="post" action="/action/approve">
+          <input type="hidden" name="path" value="{html.escape(rel)}">
+          <button class="button approve" type="submit">Approve run</button>
+        </form>
+
+        <form method="post" action="/action/reject" class="reject-form">
+          <input type="hidden" name="path" value="{html.escape(rel)}">
+          <input class="input" name="reason" value="Rejected from AIW Local Cockpit." aria-label="Reject reason">
+          <button class="button reject" type="submit">Reject run</button>
+        </form>
+      </div>
+    </section>
+    """
 
     return f"""<!doctype html>
 <html lang="pt-BR">
@@ -489,6 +542,46 @@ def render_run_detail(run_dir: Path) -> str:
     .muted-section {{
       opacity: 0.72;
     }}
+    .actions {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 18px;
+      align-items: center;
+    }}
+    .reject-form {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      flex: 1;
+      min-width: 280px;
+    }}
+    .button {{
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 14px;
+      color: var(--text);
+      cursor: pointer;
+      font-weight: 750;
+      background: rgba(255, 255, 255, 0.06);
+    }}
+    .button.approve {{
+      border-color: rgba(34, 197, 94, 0.42);
+      background: rgba(34, 197, 94, 0.14);
+    }}
+    .button.reject {{
+      border-color: rgba(239, 68, 68, 0.42);
+      background: rgba(239, 68, 68, 0.14);
+    }}
+    .input {{
+      flex: 1;
+      min-width: 260px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: rgba(0, 0, 0, 0.20);
+      color: var(--text);
+    }}
     @media (max-width: 900px) {{
       .grid {{
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -523,6 +616,8 @@ def render_run_detail(run_dir: Path) -> str:
         <div class="value">{html.escape(str(model))}</div>
       </div>
     </div>
+
+    {action_panel}
 
     {blocks}
   </main>
@@ -578,6 +673,33 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         self.send_json({"error": "not_found", "path": path}, status=404)
+
+    def do_POST(self):
+        path = urlparse(self.path).path
+
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        raw = self.rfile.read(length).decode("utf-8", errors="replace")
+        form = parse_qs(raw)
+
+        run_path = form.get("path", [""])[0]
+        reason = form.get("reason", [""])[0]
+
+        if path == "/action/approve":
+            ok, output = run_action("approve", run_path)
+        elif path == "/action/reject":
+            ok, output = run_action("reject", run_path, reason)
+        else:
+            self.send_json({"error": "not_found", "path": path}, status=404)
+            return
+
+        if not ok:
+            self.send_json({"error": "action_failed", "output": output}, status=400)
+            return
+
+        self.send_response(303)
+        self.send_header("Location", f"/run?path={quote(run_path)}")
+        self.end_headers()
+
 
 
 class ThreadingTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
