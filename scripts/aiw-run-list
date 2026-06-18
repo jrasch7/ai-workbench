@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT"
+
+limit="${1:-10}"
+
+printf "%-4s %-70s %-10s %-12s %s\n" "#" "RUN" "STATUS" "DOC_STATUS" "TASK"
+i=0
+
+find .aiw/runs -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -r | head -n "$limit" | while read -r run; do
+  i=$((i + 1))
+  status="unknown"
+  doc_status="-"
+  task_id="-"
+
+  if [[ -f "$run/status.json" ]]; then
+    status="$(python3 - "$run/status.json" <<'PYJSON'
+import json, sys
+try:
+    d=json.load(open(sys.argv[1], encoding="utf-8"))
+    print(d.get("status","unknown"))
+except Exception:
+    print("invalid")
+PYJSON
+)"
+    doc_status="$(python3 - "$run/status.json" <<'PYJSON'
+import json, sys
+try:
+    d=json.load(open(sys.argv[1], encoding="utf-8"))
+    print(d.get("doc_status","-") or "-")
+except Exception:
+    print("-")
+PYJSON
+)"
+  fi
+
+  if [[ -f "$run/task.md" ]]; then
+    task_id="$(grep -E '^Task ID:' "$run/task.md" | head -n 1 | cut -d: -f2- | xargs || true)"
+    task_id="${task_id:-"-"}"
+  fi
+
+  printf "%-4s %-70s %-10s %-12s %s\n" "$i" "$run" "$status" "$doc_status" "$task_id"
+done

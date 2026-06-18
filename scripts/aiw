@@ -2,6 +2,72 @@
 set -euo pipefail
 
 AIW_ROOT="${AIW_ROOT:-$HOME/ai-workbench}"
+
+# AIW local monolith MVP shortcuts.
+# These commands delegate to focused scripts and do not override existing service commands.
+case "${1:-}" in
+  local-status)
+    shift
+    cd "$AIW_ROOT"
+    exec "$AIW_ROOT/scripts/aiw-status" "$@"
+    ;;
+
+  task)
+    shift
+    cd "$AIW_ROOT"
+    exec "$AIW_ROOT/scripts/aiw-task-create" "$@"
+    ;;
+
+  doc-task)
+    shift
+    cd "$AIW_ROOT"
+    exec "$AIW_ROOT/scripts/aiw-doc-task-create" "$@"
+    ;;
+
+  run-once|runner-once)
+    shift
+    cd "$AIW_ROOT"
+    exec "$AIW_ROOT/scripts/aiw-runner-once" "$@"
+    ;;
+
+  watch|runner-watch)
+    shift
+    cd "$AIW_ROOT"
+    exec "$AIW_ROOT/scripts/aiw-runner-watch" "$@"
+    ;;
+
+  runs|run-list)
+    shift
+    cd "$AIW_ROOT"
+    exec "$AIW_ROOT/scripts/aiw-run-list" "$@"
+    ;;
+
+  show|run-show)
+    shift
+    cd "$AIW_ROOT"
+    exec "$AIW_ROOT/scripts/aiw-run-show" "$@"
+    ;;
+
+  reject|run-reject)
+    shift
+    cd "$AIW_ROOT"
+    exec "$AIW_ROOT/scripts/aiw-run-reject" "$@"
+    ;;
+
+  approve|run-approve)
+    shift
+    cd "$AIW_ROOT"
+    exec "$AIW_ROOT/scripts/aiw-run-approve" "$@"
+    ;;
+  doctor-local|local-doctor)
+    shift
+    cd "$AIW_ROOT"
+    exec "$AIW_ROOT/scripts/aiw-doctor-local" "$@"
+    ;;
+
+
+esac
+
 DEFAULT_WORKSPACE="${DEFAULT_WORKSPACE:-sandbox-test}"
 
 cmd="${1:-help}"

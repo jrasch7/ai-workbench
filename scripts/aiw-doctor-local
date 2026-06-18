@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT"
+
+model="${AIW_DOCTOR_MODEL:-dev-gemini-fast}"
+allow_dirty="${AIW_DOCTOR_ALLOW_DIRTY:-0}"
+model_smoke="${AIW_DOCTOR_MODEL_SMOKE:-1}"
+strict_model="${AIW_DOCTOR_STRICT_MODEL:-0}"
+
+mkdir -p .aiw/state
+
+failures=0
+warnings=0
+
+pass() {
+  echo "PASS: $1"
+}
+
+warn() {
+  warnings=$((warnings + 1))
+  echo "WARN: $1"
+}
+
+fail() {
+  failures=$((failures + 1))
+  echo "FAIL: $1"
+}
+
+check_exec() {
+  local file="$1"
+
+  if [[ -x "$file" ]]; then
+    pass "executable $file"
+  else
+    fail "missing or not executable $file"
+  fi
+}
+
+echo "=== AIW local doctor ==="
+echo "ROOT: $ROOT"
+echo "MODEL: $model"
+echo
+
+if [[ -d .git ]]; then
+  pass "git repository found"
+else
+  fail "not a git repository"
+fi
+
+branch="$(git branch --show-current 2>/dev/null || true)"
+head="$(git log -1 --oneline 2>/dev/null || true)"
+
+echo "BRANCH: ${branch:-unknown}"
+echo "HEAD: ${head:-unknown}"
+echo
+
+if [[ -n "$(git status --short)" ]]; then
+  if [[ "$allow_dirty" == "1" ]]; then
+    warn "git working tree has changes, allowed by AIW_DOCTOR_ALLOW_DIRTY=1"
+  else
+    fail "git working tree is not clean"
+  fi
+else
+  pass "git working tree clean"
+fi
+
+echo
+echo "=== script checks ==="
+
+scripts=(
+  scripts/aiw
+  scripts/aiw-status
+  scripts/aiw-task-create
+  scripts/aiw-doc-task-create
+  scripts/aiw-runner-once
+  scripts/aiw-runner-watch
+  scripts/aiw-llm-ask
+  scripts/aiw-run-approve
+  scripts/aiw-run-reject
+  scripts/aiw-run-list
+  scripts/aiw-run-show
+  scripts/model-smoke
+)
+
+for s in "${scripts[@]}"; do
+  check_exec "$s"
+done
+
+if bash -n "${scripts[@]}" >/tmp/aiw-doctor-bash-n.log 2>&1; then
+  pass "bash syntax"
+else
+  fail "bash syntax failed"
+  cat /tmp/aiw-doctor-bash-n.log
+fi
+
+echo
+echo "=== runtime directories ==="
+
+dirs=(
+  .aiw/tasks/inbox
+  .aiw/tasks/running
+  .aiw/tasks/blocked
+  .aiw/tasks/review
+  .aiw/tasks/done
+  .aiw/tasks/failed
+  .aiw/runs
+  .aiw/state
+)
+
+for d in "${dirs[@]}"; do
+  if [[ -d "$d" ]]; then
+    pass "directory $d"
+  else
+    fail "missing directory $d"
+  fi
+done
+
+echo
+echo "=== LiteLLM checks ==="
+
+if [[ -f .env ]]; then
+  pass ".env exists"
+else
+  fail ".env missing"
+fi
+
+if [[ -f .env ]]; then
+  set -a
+  source .env
+  set +a
+fi
+
+if [[ -n "${LITELLM_MASTER_KEY:-}" ]]; then
+  pass "LITELLM_MASTER_KEY present"
+else
+  fail "LITELLM_MASTER_KEY missing"
+fi
+
+if [[ -n "${LITELLM_MASTER_KEY:-}" ]]; then
+  if curl -fsS http://localhost:4000/v1/models -H "Authorization: Bearer $LITELLM_MASTER_KEY" > .aiw/state/doctor-models.json 2> .aiw/state/doctor-models.err; then
+    pass "LiteLLM /v1/models responds"
+  else
+    fail "LiteLLM /v1/models failed"
+    sed -n '1,80p' .aiw/state/doctor-models.err || true
+  fi
+fi
+
+if [[ "$model_smoke" == "1" ]]; then
+  if ./scripts/model-smoke "$model" > .aiw/state/doctor-model-smoke.log 2>&1; then
+    pass "model smoke $model"
+  else
+    if [[ "$strict_model" == "1" ]]; then
+      fail "model smoke $model failed"
+    else
+      warn "model smoke $model failed, treated as warning because AIW_DOCTOR_STRICT_MODEL=0"
+    fi
+    sed -n '1,120p' .aiw/state/doctor-model-smoke.log || true
+  fi
+else
+  warn "model smoke skipped by AIW_DOCTOR_MODEL_SMOKE=0"
+fi
+
+echo
+echo "=== run inspection ==="
+
+if ./scripts/aiw-run-list 3 > .aiw/state/doctor-run-list.log 2>&1; then
+  pass "run list"
+else
+  fail "run list failed"
+  sed -n '1,80p' .aiw/state/doctor-run-list.log || true
+fi
+
+if ./scripts/aiw-run-show latest > .aiw/state/doctor-run-show.log 2>&1; then
+  pass "latest run readable"
+else
+  warn "latest run not readable"
+  sed -n '1,80p' .aiw/state/doctor-run-show.log || true
+fi
+
+echo
+echo "=== summary ==="
+echo "WARNINGS: $warnings"
+echo "FAILURES: $failures"
+
+if [[ "$failures" -gt 0 ]]; then
+  echo "AIW_DOCTOR_STATUS=FAILED"
+  exit 1
+fi
+
+echo "AIW_DOCTOR_STATUS=OK"

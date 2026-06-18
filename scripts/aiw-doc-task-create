@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT"
+
+title="${1:-}"
+output="${2:-}"
+
+if [[ -z "$title" || -z "$output" ]]; then
+  echo "Usage: ./scripts/aiw-doc-task-create \"Task title\" docs/path.md"
+  exit 1
+fi
+
+if [[ "$output" != docs/*.md ]]; then
+  echo "ERROR: output must be under docs/ and end with .md"
+  exit 1
+fi
+
+if [[ "$output" == *".."* || "$output" == /* || "$output" == *".env"* ]]; then
+  echo "ERROR: invalid output path"
+  exit 1
+fi
+
+ts="$(date -u +%Y%m%dT%H%M%SZ)"
+slug="$(printf "%s" "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-60)"
+slug="${slug:-doc-task}"
+path=".aiw/tasks/inbox/${ts}-${slug}.md"
+
+mkdir -p .aiw/tasks/inbox
+
+cat > "$path" <<TASK
+# AIW Task: $title
+
+Task ID: ${ts}-${slug}
+Created UTC: $ts
+Autonomy: L1
+Task type: doc
+Output file: $output
+Status: inbox
+
+## Goal
+
+$title
+
+## Allowed scope
+
+- $output
+- .aiw/runs/
+- local validation
+
+## Forbidden
+
+- commit
+- push
+- deploy
+- secrets
+- .env
+- destructive commands
+- production access
+
+## Success criteria
+
+- Generate a Markdown document at $output.
+- Keep content scoped to the task.
+- Save full evidence in .aiw/runs.
+- Do not commit automatically.
+TASK
+
+echo "TASK_CREATED: $path"
+echo "OUTPUT_FILE: $output"

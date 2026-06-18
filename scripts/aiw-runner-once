@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT"
+
+task="$(find .aiw/tasks/inbox -maxdepth 1 -type f -name '*.md' 2>/dev/null | sort | head -n 1 || true)"
+
+if [[ -z "$task" ]]; then
+  echo "NO_TASKS"
+  exit 0
+fi
+
+task_file="$(basename "$task")"
+task_id="${task_file%.md}"
+ts="$(date -u +%Y%m%dT%H%M%SZ)"
+run_dir=".aiw/runs/${ts}-${task_id}"
+model="${AIW_MODEL:-dev-gemini-fast}"
+llm_enabled="${AIW_LLM_ENABLED:-0}"
+
+mkdir -p "$run_dir"
+cp "$task" "$run_dir/task.md"
+
+level="$(grep -E '^Autonomy:' "$task" | head -n 1 | cut -d: -f2- | xargs || true)"
+level="${level:-UNKNOWN}"
+
+output_file="$(grep -E '^Output file:' "$task" | head -n 1 | cut -d: -f2- | xargs || true)"
+
+{
+  echo "task=$task"
+  echo "task_id=$task_id"
+  echo "run_dir=$run_dir"
+  echo "level=$level"
+  echo "model=$model"
+  echo "llm_enabled=$llm_enabled"
+  echo "output_file=${output_file:-}"
+  echo "started_utc=$ts"
+} > "$run_dir/commands.log"
+
+if [[ "$level" != "L0" && "$level" != "L1" ]]; then
+  mv "$task" ".aiw/tasks/blocked/$task_file"
+  cat > "$run_dir/status.json" <<JSON
+{"status":"blocked","reason":"unsupported autonomy level","level":"$level","llm_enabled":false}
+JSON
+  cat > "$run_dir/summary.md" <<SUMMARY
+# Run Summary
+
+Status: BLOCKED
+
+Reason: unsupported autonomy level.
+
+Allowed in this MVP:
+
+- L0
+- L1
+SUMMARY
+  echo "BLOCKED: $task_id"
+  echo "RUN_DIR: $run_dir"
+  exit 0
+fi
+
+cat > "$run_dir/validation.log" <<LOG
+VALIDATION_OK=true
+MODE=local-runner-once
+LLM_ENABLED=$llm_enabled
+MODEL=$model
+OUTPUT_FILE=${output_file:-}
+LOG
+
+cat > "$run_dir/llm-prompt.md" <<PROMPT
+You are the AIW local runner.
+
+Rules:
+- Do not access secrets.
+- Do not read .env.
+- Do not commit.
+- Do not push.
+- Do not deploy.
+- Do not claim file changes unless a tool actually changed files.
+
+If this task has an Output file, return ONLY the final Markdown document.
+
+Preferred format:
+
+---BEGIN_AIW_DOCUMENT---
+# Title
+
+Document body here.
+---END_AIW_DOCUMENT---
+
+If you fail to include the markers, the runner will store your raw Markdown output as the document fallback.
+
+Task:
+
+$(cat "$task")
+PROMPT
+
+if [[ "$llm_enabled" == "1" ]]; then
+  if ./scripts/aiw-llm-ask "$model" < "$run_dir/llm-prompt.md" > "$run_dir/llm-output.md" 2> "$run_dir/llm-error.log"; then
+    llm_status="ok"
+  else
+    llm_status="failed"
+  fi
+else
+  echo "AIW_LLM_DISABLED" > "$run_dir/llm-output.md"
+  : > "$run_dir/llm-error.log"
+  llm_status="disabled"
+fi
+
+generated_file=""
+doc_status="not_requested"
+
+if [[ -n "${output_file:-}" ]]; then
+  if [[ "$output_file" != docs/*.md || "$output_file" == *".."* || "$output_file" == /* || "$output_file" == *".env"* ]]; then
+    doc_status="blocked_invalid_output_path"
+  elif [[ "$llm_status" == "ok" ]]; then
+    if python3 - "$run_dir/llm-output.md" "$output_file" <<'PYDOC'
+from pathlib import Path
+import sys
+
+src = Path(sys.argv[1])
+dst = Path(sys.argv[2])
+text = src.read_text(encoding="utf-8")
+start = "---BEGIN_AIW_DOCUMENT---"
+end = "---END_AIW_DOCUMENT---"
+
+if start in text and end in text:
+    body = text.split(start, 1)[1].split(end, 1)[0].strip() + "\n"
+else:
+    lines = text.splitlines()
+    cleaned = []
+    for line in lines:
+        if line.startswith("OK: LiteLLM ready"):
+            continue
+        if line.startswith("HTTP: "):
+            continue
+        cleaned.append(line)
+    body = "\n".join(cleaned).strip() + "\n"
+    if not body.strip():
+        raise SystemExit(2)
+
+dst.parent.mkdir(parents=True, exist_ok=True)
+dst.write_text(body, encoding="utf-8")
+PYDOC
+    then
+      generated_file="$output_file"
+      doc_status="generated"
+    else
+      doc_status="generated_without_markers_fallback"
+    fi
+  else
+    doc_status="llm_failed"
+  fi
+fi
+
+cat > "$run_dir/status.json" <<JSON
+{"status":"review","level":"$level","llm_enabled":"$llm_enabled","llm_status":"$llm_status","model":"$model","doc_status":"$doc_status","generated_file":"$generated_file"}
+JSON
+
+cat > "$run_dir/summary.md" <<SUMMARY
+# Run Summary
+
+Status: REVIEW
+
+Task: $task_id
+Autonomy: $level
+LLM enabled: $llm_enabled
+LLM status: $llm_status
+Model: $model
+Doc status: $doc_status
+Generated file: ${generated_file:-none}
+
+Evidence:
+
+- task.md
+- validation.log
+- llm-prompt.md
+- llm-output.md
+- llm-error.log
+- status.json
+SUMMARY
+
+mv "$task" ".aiw/tasks/review/$task_file"
+
+echo "STATUS: REVIEW"
+echo "TASK_ID: $task_id"
+echo "RUN_DIR: $run_dir"
+echo "LLM_STATUS: $llm_status"
+echo "DOC_STATUS: $doc_status"
+if [[ -n "${generated_file:-}" ]]; then
+  echo "GENERATED_FILE: $generated_file"
+fi
