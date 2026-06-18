@@ -24,6 +24,8 @@ cp "$task" "$run_dir/task.md"
 level="$(grep -E '^Autonomy:' "$task" | head -n 1 | cut -d: -f2- | xargs || true)"
 level="${level:-UNKNOWN}"
 
+output_file="$(grep -E '^Output file:' "$task" | head -n 1 | cut -d: -f2- | xargs || true)"
+
 {
   echo "task=$task"
   echo "task_id=$task_id"
@@ -31,6 +33,7 @@ level="${level:-UNKNOWN}"
   echo "level=$level"
   echo "model=$model"
   echo "llm_enabled=$llm_enabled"
+  echo "output_file=${output_file:-}"
   echo "started_utc=$ts"
 } > "$run_dir/commands.log"
 
@@ -61,6 +64,7 @@ VALIDATION_OK=true
 MODE=local-runner-once
 LLM_ENABLED=$llm_enabled
 MODEL=$model
+OUTPUT_FILE=${output_file:-}
 LOG
 
 cat > "$run_dir/llm-prompt.md" <<PROMPT
@@ -73,7 +77,14 @@ Rules:
 - Do not push.
 - Do not deploy.
 - Do not claim file changes unless a tool actually changed files.
-- Produce concise execution guidance and evidence.
+
+If this task has an Output file, generate the document content exactly between these markers:
+
+---BEGIN_AIW_DOCUMENT---
+# Title
+
+Document body here.
+---END_AIW_DOCUMENT---
 
 Task:
 
@@ -92,8 +103,43 @@ else
   llm_status="disabled"
 fi
 
+generated_file=""
+doc_status="not_requested"
+
+if [[ -n "${output_file:-}" ]]; then
+  if [[ "$output_file" != docs/*.md || "$output_file" == *".."* || "$output_file" == /* || "$output_file" == *".env"* ]]; then
+    doc_status="blocked_invalid_output_path"
+  elif [[ "$llm_status" == "ok" ]]; then
+    if python3 - "$run_dir/llm-output.md" "$output_file" <<'PYDOC'
+from pathlib import Path
+import sys
+
+src = Path(sys.argv[1])
+dst = Path(sys.argv[2])
+text = src.read_text(encoding="utf-8")
+start = "---BEGIN_AIW_DOCUMENT---"
+end = "---END_AIW_DOCUMENT---"
+
+if start not in text or end not in text:
+    raise SystemExit(2)
+
+body = text.split(start, 1)[1].split(end, 1)[0].strip() + "\n"
+dst.parent.mkdir(parents=True, exist_ok=True)
+dst.write_text(body, encoding="utf-8")
+PYDOC
+    then
+      generated_file="$output_file"
+      doc_status="generated"
+    else
+      doc_status="missing_document_markers"
+    fi
+  else
+    doc_status="llm_failed"
+  fi
+fi
+
 cat > "$run_dir/status.json" <<JSON
-{"status":"review","level":"$level","llm_enabled":"$llm_enabled","llm_status":"$llm_status","model":"$model"}
+{"status":"review","level":"$level","llm_enabled":"$llm_enabled","llm_status":"$llm_status","model":"$model","doc_status":"$doc_status","generated_file":"$generated_file"}
 JSON
 
 cat > "$run_dir/summary.md" <<SUMMARY
@@ -106,6 +152,8 @@ Autonomy: $level
 LLM enabled: $llm_enabled
 LLM status: $llm_status
 Model: $model
+Doc status: $doc_status
+Generated file: ${generated_file:-none}
 
 Evidence:
 
@@ -123,3 +171,7 @@ echo "STATUS: REVIEW"
 echo "TASK_ID: $task_id"
 echo "RUN_DIR: $run_dir"
 echo "LLM_STATUS: $llm_status"
+echo "DOC_STATUS: $doc_status"
+if [[ -n "${generated_file:-}" ]]; then
+  echo "GENERATED_FILE: $generated_file"
+fi

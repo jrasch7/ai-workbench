@@ -126,3 +126,28 @@ O runner continua seguro por padrão:
 - commit, push, deploy e secrets continuam bloqueados no MVP.
 
 Esta camada prepara a integração com Hermes, LiteLLM, Ralph Loop e Paperclip sem transformar o runner em agente autônomo irrestrito.
+
+## 11. Executor documental L1
+
+O runner suporta tarefas documentais L1 com `Output file`.
+
+Fluxo:
+
+1. `scripts/aiw-doc-task-create` cria uma tarefa em `.aiw/tasks/inbox`;
+2. a tarefa declara `Task type: doc`;
+3. a tarefa declara `Output file: docs/...md`;
+4. `scripts/aiw-runner-once` chama o modelo quando `AIW_LLM_ENABLED=1`;
+5. o modelo devolve o documento entre markers;
+6. o runner extrai o documento;
+7. o arquivo é gravado em `docs/`;
+8. o commit continua manual.
+
+Guardrails:
+
+- só permite saída em `docs/*.md`;
+- bloqueia path absoluto;
+- bloqueia `..`;
+- bloqueia `.env`;
+- não faz commit;
+- não faz push;
+- mantém evidência completa em `.aiw/runs`.
