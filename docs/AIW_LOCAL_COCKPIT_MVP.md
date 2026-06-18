@@ -149,3 +149,16 @@ Guardrails:
 - não faz push;
 - não faz deploy;
 - saída documental limitada a `docs/*.md`.
+
+## Hotfix de criação de tasks
+
+O endpoint `POST /task/create` é a rota única para criação de tasks pelo Cockpit.
+
+Comportamento:
+
+- `title` preenchido e `output` vazio: cria task L1 comum;
+- `title` preenchido e `output=docs/*.md`: cria doc task L1;
+- resposta bem-sucedida retorna redirect `303` para `/`;
+- erros retornam JSON com `action_failed`.
+
+Essa rota não executa o runner automaticamente.

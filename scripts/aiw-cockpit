@@ -782,10 +782,17 @@ class Handler(BaseHTTPRequestHandler):
         run_path = form.get("path", [""])[0]
         reason = form.get("reason", [""])[0]
 
-        if path == "/action/approve":
+        if path == "/task/create":
+            title = form.get("title", [""])[0]
+            doc_output = form.get("output", [""])[0]
+            ok, output = create_task_from_cockpit(title, doc_output)
+            redirect = "/"
+        elif path == "/action/approve":
             ok, output = run_action("approve", run_path)
+            redirect = f"/run?path={quote(run_path)}"
         elif path == "/action/reject":
             ok, output = run_action("reject", run_path, reason)
+            redirect = f"/run?path={quote(run_path)}"
         else:
             self.send_json({"error": "not_found", "path": path}, status=404)
             return
@@ -795,9 +802,8 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         self.send_response(303)
-        self.send_header("Location", f"/run?path={quote(run_path)}")
+        self.send_header("Location", redirect)
         self.end_headers()
-
 
 
 class ThreadingTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
