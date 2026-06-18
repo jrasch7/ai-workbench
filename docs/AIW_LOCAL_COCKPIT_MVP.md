@@ -196,3 +196,16 @@ Comportamento:
 - redireciona com `303` para `/run?path=<run>`.
 
 Essa rota não faz commit, push ou deploy.
+
+## Guided UX
+
+O Cockpit passou a explicar o fluxo de uso diretamente na tela.
+
+Fluxo apresentado:
+
+- criar uma tarefa;
+- executar a próxima task;
+- revisar o run;
+- aprovar ou rejeitar.
+
+Também foram ajustados textos da interface para reduzir termos técnicos soltos.

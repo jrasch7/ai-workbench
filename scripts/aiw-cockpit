@@ -99,24 +99,74 @@ def render_page() -> str:
         """
 
 
+    usage_guide = """
+    <section class="guide-panel">
+      <div class="section-head">
+        <h2>Como usar o AIW</h2>
+        <span class="hint">Fluxo simples: criar, executar, revisar e decidir.</span>
+      </div>
+
+      <div class="guide-steps">
+        <article class="guide-step">
+          <div class="step-number">1</div>
+          <div>
+            <h3>Crie uma tarefa</h3>
+            <p>Escreva o que você quer que o AIW faça. A tarefa entra na fila <strong>inbox</strong>.</p>
+          </div>
+        </article>
+
+        <article class="guide-step">
+          <div class="step-number">2</div>
+          <div>
+            <h3>Execute a próxima tarefa</h3>
+            <p>Use <strong>Executar próxima task</strong>. O AIW pega a primeira tarefa da inbox e gera um run.</p>
+          </div>
+        </article>
+
+        <article class="guide-step">
+          <div class="step-number">3</div>
+          <div>
+            <h3>Revise o resultado</h3>
+            <p>Clique em um run da tabela para ver logs, resumo, arquivos e evidências.</p>
+          </div>
+        </article>
+
+        <article class="guide-step">
+          <div class="step-number">4</div>
+          <div>
+            <h3>Aprove ou rejeite</h3>
+            <p>No detalhe do run, aprove quando estiver bom ou rejeite com motivo.</p>
+          </div>
+        </article>
+      </div>
+
+      <div class="state-help">
+        <span><strong>Inbox:</strong> aguardando execução</span>
+        <span><strong>Review:</strong> precisa revisar</span>
+        <span><strong>Done:</strong> aprovado</span>
+        <span><strong>Failed:</strong> rejeitado ou falhou</span>
+      </div>
+    </section>
+    """
+
     create_panel = """
     <section class="create-panel">
       <div class="section-head">
-        <h2>Nova task</h2>
-        <span class="hint">Cria em inbox. Não executa automaticamente.</span>
+        <h2>1. Criar uma tarefa</h2>
+        <span class="hint">Descreva o objetivo. O AIW só executa quando você clicar no runner.</span>
       </div>
 
       <form method="post" action="/task/create" class="create-form single-create-form">
-        <label>Instrução</label>
-        <input class="input" name="title" placeholder="Ex: Criar guia do cockpit local" required>
+        <label>O que você quer que o AIW faça?</label>
+        <input class="input" name="title" placeholder="Ex: Melhorar o README do projeto e documentar o fluxo local" required>
 
-        <label>Arquivo de documentação opcional</label>
-        <input class="input" name="output" placeholder="Opcional: docs/GUIA_COCKPIT.md">
+        <label>Arquivo de documentação, opcional</label>
+        <input class="input" name="output" placeholder="Ex opcional: docs/GUIA_DO_PROJETO.md">
 
-        <button class="button" type="submit">Criar task</button>
+        <button class="button" type="submit">Salvar na inbox</button>
 
         <p class="form-help">
-          Deixe o arquivo vazio para task normal. Preencha <code>docs/arquivo.md</code> para task documental.
+          Deixe vazio para uma task comum. Preencha <code>docs/*.md</code> quando quiser obrigar o AIW a criar ou atualizar documentação.
         </p>
       </form>
     </section>
@@ -126,20 +176,20 @@ def render_page() -> str:
     runner_panel = """
     <section class="runner-panel">
       <div class="section-head">
-        <h2>Runner</h2>
-        <span class="hint">Executa uma task da inbox e abre o run gerado.</span>
+        <h2>2. Executar próxima task</h2>
+        <span class="hint">Pega a primeira task da inbox, executa e abre o resultado para revisão.</span>
       </div>
 
       <form method="post" action="/runner/run-once" class="runner-form">
         <label class="check-row">
           <input type="checkbox" name="llm_enabled" value="1">
-          Usar LLM
+          Usar LLM nesta execução
         </label>
 
         <label>Modelo</label>
         <input class="input" name="model" value="dev-gemini-fast">
 
-        <button class="button run" type="submit">Run once</button>
+        <button class="button run" type="submit">Executar próxima task</button>
       </form>
     </section>
     """
@@ -362,6 +412,70 @@ def render_page() -> str:
         font-size: 12px;
       }}
     }}
+
+    .guide-panel {{
+      margin-bottom: 22px;
+    }}
+    .guide-steps {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      padding: 18px;
+    }}
+    .guide-step {{
+      display: flex;
+      gap: 12px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.025);
+    }}
+    .step-number {{
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      font-weight: 800;
+      background: rgba(139, 92, 246, 0.22);
+      border: 1px solid rgba(139, 92, 246, 0.45);
+    }}
+    .guide-step h3 {{
+      margin: 0 0 8px;
+      font-size: 15px;
+    }}
+    .guide-step p {{
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }}
+    .state-help {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 0 18px 18px;
+    }}
+    .state-help span {{
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 8px 10px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.025);
+      font-size: 12px;
+    }}
+    @media (max-width: 1100px) {{
+      .guide-steps {{
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }}
+    }}
+    @media (max-width: 720px) {{
+      .guide-steps {{
+        grid-template-columns: 1fr;
+      }}
+    }}
+
   </style>
 </head>
 <body>
@@ -378,13 +492,15 @@ def render_page() -> str:
       {queue_cards}
     </div>
 
+    {usage_guide}
+
     {create_panel}
 
     {runner_panel}
 
     <section>
       <div class="section-head">
-        <h2>Últimos runs</h2>
+        <h2>3. Revisar últimos runs</h2>
         <div class="links">
           <a href="/api/status">/api/status</a>
           <a href="/api/runs">/api/runs</a>
