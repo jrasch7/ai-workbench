@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT"
+
+target="${1:-latest}"
+
+if [[ "$target" == "latest" ]]; then
+  run_dir="$(find .aiw/runs -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -n 1)"
+else
+  run_dir="$target"
+fi
+
+if [[ -z "${run_dir:-}" || ! -d "$run_dir" ]]; then
+  echo "ERROR: run not found"
+  exit 1
+fi
+
+if [[ ! -f "$run_dir/task.md" ]]; then
+  echo "ERROR: task.md not found in run"
+  exit 1
+fi
+
+task_id="$(grep -E '^Task ID:' "$run_dir/task.md" | head -n 1 | cut -d: -f2- | xargs || true)"
+
+if [[ -z "$task_id" ]]; then
+  echo "ERROR: Task ID not found"
+  exit 1
+fi
+
+review_task=".aiw/tasks/review/${task_id}.md"
+done_task=".aiw/tasks/done/${task_id}.md"
+approved_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+mkdir -p .aiw/tasks/done
+
+if [[ -f "$review_task" ]]; then
+  mv "$review_task" "$done_task"
+  task_move="review_to_done"
+elif [[ -f "$done_task" ]]; then
+  task_move="already_done"
+else
+  task_move="task_file_not_found"
+fi
+
+cat > "$run_dir/approval.md" <<APPROVAL
+# Run Approval
+
+Status: DONE
+Approved UTC: $approved_utc
+Run: $run_dir
+Task ID: $task_id
+Task move: $task_move
+APPROVAL
+
+python3 - "$run_dir/status.json" "$approved_utc" "$task_move" <<'PYJSON'
+from pathlib import Path
+import json
+import sys
+
+path = Path(sys.argv[1])
+approved_utc = sys.argv[2]
+task_move = sys.argv[3]
+
+data = {}
+if path.exists():
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+
+data["status"] = "done"
+data["approved_utc"] = approved_utc
+data["task_move"] = task_move
+
+path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PYJSON
+
+echo "STATUS: DONE"
+echo "RUN_DIR: $run_dir"
+echo "TASK_ID: $task_id"
+echo "TASK_MOVE: $task_move"

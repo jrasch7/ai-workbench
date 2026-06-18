@@ -163,3 +163,19 @@ Se o modelo não obedecer aos markers, o runner usa fallback seguro:
 - registra `doc_status=generated_without_markers_fallback`;
 - mantém evidência completa no run;
 - não faz commit automático.
+
+## 13. Aprovação de run
+
+O script `scripts/aiw-run-approve` promove um run revisado para `done`.
+
+Fluxo:
+
+1. lê o último run ou um run informado;
+2. encontra o `Task ID`;
+3. move a task de `.aiw/tasks/review` para `.aiw/tasks/done`;
+4. grava `approval.md` dentro do run;
+5. atualiza `status.json` para `done`;
+6. não faz commit;
+7. não faz push.
+
+Este comando representa o primeiro checkpoint humano explícito do AIW Local Monolith MVP.
