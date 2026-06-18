@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT"
+
+title="${1:-}"
+level="${AIW_LEVEL:-L1}"
+
+if [[ -z "$title" ]]; then
+  echo "Usage: ./scripts/aiw-task-create "Task title""
+  exit 1
+fi
+
+ts="$(date -u +%Y%m%dT%H%M%SZ)"
+slug="$(printf "%s" "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-60)"
+slug="${slug:-task}"
+path=".aiw/tasks/inbox/${ts}-${slug}.md"
+
+mkdir -p .aiw/tasks/inbox
+
+cat > "$path" <<TASK
+# AIW Task: $title
+
+Task ID: ${ts}-${slug}
+Created UTC: $ts
+Autonomy: $level
+Status: inbox
+
+## Goal
+
+$title
+
+## Allowed scope
+
+- docs/
+- .aiw/runs/
+- local validation
+
+## Forbidden
+
+- commit
+- push
+- deploy
+- secrets
+- .env
+- destructive commands
+- production access
+
+## Success criteria
+
+- Produce evidence.
+- Keep changes scoped.
+- Stop on policy violation.
+TASK
+
+echo "TASK_CREATED: $path"

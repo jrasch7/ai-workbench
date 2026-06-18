@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT"
+
+task="$(find .aiw/tasks/inbox -maxdepth 1 -type f -name '*.md' 2>/dev/null | sort | head -n 1 || true)"
+
+if [[ -z "$task" ]]; then
+  echo "NO_TASKS"
+  exit 0
+fi
+
+task_file="$(basename "$task")"
+task_id="${task_file%.md}"
+ts="$(date -u +%Y%m%dT%H%M%SZ)"
+run_dir=".aiw/runs/${ts}-${task_id}"
+
+mkdir -p "$run_dir"
+cp "$task" "$run_dir/task.md"
+
+level="$(grep -E '^Autonomy:' "$task" | head -n 1 | cut -d: -f2- | xargs || true)"
+level="${level:-UNKNOWN}"
+
+{
+  echo "task=$task"
+  echo "task_id=$task_id"
+  echo "run_dir=$run_dir"
+  echo "level=$level"
+  echo "started_utc=$ts"
+} > "$run_dir/commands.log"
+
+if [[ "$level" != "L0" && "$level" != "L1" ]]; then
+  mv "$task" ".aiw/tasks/blocked/$task_file"
+  cat > "$run_dir/status.json" <<JSON
+{"status":"blocked","reason":"unsupported autonomy level","level":"$level"}
+JSON
+  cat > "$run_dir/summary.md" <<SUMMARY
+# Run Summary
+
+Status: BLOCKED
+
+Reason: unsupported autonomy level.
+
+Allowed in this MVP:
+
+- L0
+- L1
+SUMMARY
+  echo "BLOCKED: $task_id"
+  echo "RUN_DIR: $run_dir"
+  exit 0
+fi
+
+cat > "$run_dir/validation.log" <<LOG
+VALIDATION_OK=true
+MODE=local-runner-once
+LLM_ENABLED=false
+LOG
+
+cat > "$run_dir/status.json" <<JSON
+{"status":"review","level":"$level","llm_enabled":false}
+JSON
+
+cat > "$run_dir/summary.md" <<SUMMARY
+# Run Summary
+
+Status: REVIEW
+
+Task: $task_id
+Autonomy: $level
+
+This MVP runner does not call an LLM yet.
+It validates the queue/run structure and produces local evidence.
+
+Next step:
+Connect this runner to Hermes/LiteLLM after the local control flow is stable.
+SUMMARY
+
+mv "$task" ".aiw/tasks/review/$task_file"
+
+echo "STATUS: REVIEW"
+echo "TASK_ID: $task_id"
+echo "RUN_DIR: $run_dir"

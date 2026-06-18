@@ -35,3 +35,15 @@ scripts/aiw.bak.*
 
 # Obsidian local app state
 /docs/obsidian/vault/.obsidian/
+
+# AIW local runtime state
+.aiw/tasks/**/*.md
+.aiw/runs/**
+.aiw/state/**
+!.aiw/tasks/
+!.aiw/tasks/*/
+!.aiw/tasks/*/.gitkeep
+!.aiw/runs/
+!.aiw/runs/.gitkeep
+!.aiw/state/
+!.aiw/state/.gitkeep
