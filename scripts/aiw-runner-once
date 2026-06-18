@@ -78,13 +78,17 @@ Rules:
 - Do not deploy.
 - Do not claim file changes unless a tool actually changed files.
 
-If this task has an Output file, generate the document content exactly between these markers:
+If this task has an Output file, return ONLY the final Markdown document.
+
+Preferred format:
 
 ---BEGIN_AIW_DOCUMENT---
 # Title
 
 Document body here.
 ---END_AIW_DOCUMENT---
+
+If you fail to include the markers, the runner will store your raw Markdown output as the document fallback.
 
 Task:
 
@@ -120,10 +124,21 @@ text = src.read_text(encoding="utf-8")
 start = "---BEGIN_AIW_DOCUMENT---"
 end = "---END_AIW_DOCUMENT---"
 
-if start not in text or end not in text:
-    raise SystemExit(2)
+if start in text and end in text:
+    body = text.split(start, 1)[1].split(end, 1)[0].strip() + "\n"
+else:
+    lines = text.splitlines()
+    cleaned = []
+    for line in lines:
+        if line.startswith("OK: LiteLLM ready"):
+            continue
+        if line.startswith("HTTP: "):
+            continue
+        cleaned.append(line)
+    body = "\n".join(cleaned).strip() + "\n"
+    if not body.strip():
+        raise SystemExit(2)
 
-body = text.split(start, 1)[1].split(end, 1)[0].strip() + "\n"
 dst.parent.mkdir(parents=True, exist_ok=True)
 dst.write_text(body, encoding="utf-8")
 PYDOC
@@ -131,7 +146,7 @@ PYDOC
       generated_file="$output_file"
       doc_status="generated"
     else
-      doc_status="missing_document_markers"
+      doc_status="generated_without_markers_fallback"
     fi
   else
     doc_status="llm_failed"

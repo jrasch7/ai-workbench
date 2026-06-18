@@ -151,3 +151,15 @@ Guardrails:
 - não faz commit;
 - não faz push;
 - mantém evidência completa em `.aiw/runs`.
+
+## 12. Fallback documental
+
+O executor documental L1 prefere documentos entre markers `---BEGIN_AIW_DOCUMENT---` e `---END_AIW_DOCUMENT---`.
+
+Se o modelo não obedecer aos markers, o runner usa fallback seguro:
+
+- remove linhas de transporte do `model-ask`;
+- grava o Markdown bruto gerado;
+- registra `doc_status=generated_without_markers_fallback`;
+- mantém evidência completa no run;
+- não faz commit automático.
