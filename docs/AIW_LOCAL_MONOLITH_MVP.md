@@ -188,3 +188,29 @@ O MVP inclui comandos para consultar execuções locais:
 - `scripts/aiw-run-show`: mostra o último run ou um run específico.
 
 Esses comandos evitam depender de saída longa em chat e preparam a base para o cockpit local.
+
+## 15. Atalhos no comando principal
+
+O comando `scripts/aiw` expõe atalhos para o MVP local.
+
+Comandos:
+
+- `./scripts/aiw local-status`
+- `./scripts/aiw task "Título da tarefa"`
+- `./scripts/aiw doc-task "Título da tarefa" docs/arquivo.md`
+- `./scripts/aiw run-once`
+- `./scripts/aiw watch`
+- `./scripts/aiw runs 5`
+- `./scripts/aiw show latest`
+- `./scripts/aiw approve latest`
+
+Esses atalhos não substituem os comandos existentes de serviço, como:
+
+- `./scripts/aiw gateway`
+- `./scripts/aiw stop`
+- `./scripts/aiw logs`
+- `./scripts/aiw models`
+- `./scripts/aiw smoke`
+- `./scripts/aiw matrix`
+
+Objetivo: permitir operar o MVP local sem decorar nomes de scripts soltos.
