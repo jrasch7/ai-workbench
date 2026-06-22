@@ -1,6 +1,8 @@
 # AIW_RUN_TASK Runbook
 
 ## Purpose
+
+See AGENTS.md for the operational contract governing agents.
 A standard, auditable runner for executing AIW task markdown files with Hermes. It provides logging, reproducibility, and avoids manual clipboard or editor steps.
 
 ## Usage
