@@ -39,7 +39,11 @@ def main():
         report_path = write_report(final_state)
         print(f"LangGraph smoke test completed. Report written to: {report_path}")
         # Exit code 0 if success flag is true, else 1.
-        sys.exit(0 if getattr(final_state, 'success', False) else 1)
+        if isinstance(final_state, dict):
+            success = bool(final_state.get("success", False))
+        else:
+            success = bool(getattr(final_state, "success", False))
+        sys.exit(0 if success else 1)
     except Exception:
         print("ERROR: Unexpected exception during execution:")
         traceback.print_exc()
