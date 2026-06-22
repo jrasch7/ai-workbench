@@ -1,9 +1,7 @@
 """Graph definition for LangGraph engineering loop.
 
-This is a minimal placeholder that defines a simple sequential graph using
-LangGraph's `StateGraph` if the library is available. If LangGraph is not
-installed, the module provides a fallback `run` function that raises a clear
-error explaining how to install the dependency.
+This module defines a deterministic LangGraph state machine that orchestrates the
+engineering loop: load context → plan → execute → test → analyze → report.
 """
 
 from __future__ import annotations
@@ -11,13 +9,15 @@ from __future__ import annotations
 try:
     from langgraph.graph import StateGraph
     from .state import LoopState
+    from .command_runner import run_command, CommandResult
 except ImportError:  # pragma: no cover
     StateGraph = None  # type: ignore
     LoopState = None  # type: ignore
+    run_command = None  # type: ignore
 
 
 def build_graph() -> StateGraph:
-    """Build a simple LangGraph state machine for the engineering loop.
+    """Build the LangGraph state machine for the engineering loop.
 
     The graph consists of the following nodes:
         - "load_context"
@@ -26,8 +26,7 @@ def build_graph() -> StateGraph:
         - "test"
         - "analyze"
         - "report"
-
-    Each node receives the ``LoopState`` and returns an updated instance.
+    Each node receives a ``LoopState`` and returns an updated instance.
     """
     if StateGraph is None:
         raise RuntimeError(
@@ -36,31 +35,56 @@ def build_graph() -> StateGraph:
 
     graph = StateGraph(LoopState)
 
-    # Placeholder node implementations – in a real spike they would contain
-    # actual logic; here we simply pass the state through.
-    def load_context(state: LoopState):
-        state.context = {"loaded": True}
-        return state
+    # Node implementations ---------------------------------------------------
+    def load_context(state: LoopState) -> LoopState:
+        from .context_loader import load_context as lc
+        return lc(state)
 
-    def plan(state: LoopState):
+    def plan(state: LoopState) -> LoopState:
+        # Simple static plan for the spike.
         state.plan = {"steps": ["execute", "test"]}
         return state
 
-    def execute(state: LoopState):
-        state.result = "execution result"
-        state.success = True
+    def execute(state: LoopState) -> LoopState:
+        # Run the compileall command using the safe command runner.
+        if run_command is None:
+            raise RuntimeError("Command runner unavailable.")
+        try:
+            result: CommandResult = run_command("python -m compileall aiw_langgraph")
+            state.commands.append({
+                "command": result.command,
+                "exit_code": result.exit_code,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "duration": result.duration,
+            })
+            # Determine success based on exit code.
+            state.success = result.exit_code == 0
+            if not state.success:
+                state.errors.append(result.stderr.strip() or "Compile failed")
+        except Exception as exc:
+            state.success = False
+            err_msg = str(exc)
+            state.errors.append(err_msg)
+            state.commands.append({"command": "python -m compileall aiw_langgraph", "error": err_msg})
         return state
 
-    def test(state: LoopState):
-        # Pretend tests passed
+    def test(state: LoopState) -> LoopState:
+        # In this spike, test step simply records that validation was performed.
+        validation = {
+            "name": "compileall",
+            "passed": state.success,
+            "details": "Compilation succeeded" if state.success else "Compilation errors",
+        }
+        state.validations.append(validation)
         return state
 
-    def analyze(state: LoopState):
-        # No failure analysis needed for the spike
+    def analyze(state: LoopState) -> LoopState:
+        # Placeholder for future failure analysis logic.
         return state
 
-    def report(state: LoopState):
-        # Reporting handled in `reporting.py`
+    def report(state: LoopState) -> LoopState:
+        # No action; reporting is handled by reporting.py.
         return state
 
     # Register nodes in order
@@ -85,8 +109,8 @@ def build_graph() -> StateGraph:
 def run() -> LoopState:
     """Execute the engineering loop and return the final ``LoopState``.
 
-    This function is used by the smoke‑test script. It builds the graph and
-    runs it with an empty initial state.
+    Used by the smoke‑test script. Builds the graph and runs it with an empty
+    initial state.
     """
     graph = build_graph()
     initial_state = LoopState(context={})

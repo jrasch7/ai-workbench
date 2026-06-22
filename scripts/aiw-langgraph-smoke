@@ -11,10 +11,13 @@ message indicating how to install the dependency.
 import sys
 import traceback
 from pathlib import Path
+import os
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+# Ensure we are executing from the repository root.
+os.chdir(REPO_ROOT)
 
 def main():
     try:
@@ -35,6 +38,8 @@ def main():
         final_state = run()
         report_path = write_report(final_state)
         print(f"LangGraph smoke test completed. Report written to: {report_path}")
+        # Exit code 0 if success flag is true, else 1.
+        sys.exit(0 if getattr(final_state, 'success', False) else 1)
     except Exception:
         print("ERROR: Unexpected exception during execution:")
         traceback.print_exc()

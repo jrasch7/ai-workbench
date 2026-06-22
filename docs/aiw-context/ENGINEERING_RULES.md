@@ -5,3 +5,4 @@
 - Keep each step small and testable.
 - Do not modify external projects.
 - Document any new dependencies.
+- Every engineering loop must produce executable evidence: commands, exit codes, logs and a report.
