@@ -52,3 +52,4 @@ reports/langgraph-smoke/*.md
 
 # AIW task runner logs
 reports/aiw-runs/*.log
+reports/aiw-cockpit/
