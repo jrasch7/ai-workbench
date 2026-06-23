@@ -1,15 +1,32 @@
-"""State definitions for LangGraph engineering loop."""
+"""aiw_langgraph.state
+
+Defines the RunState dataclass representing the metadata for a LangGraph run.
+"""
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Optional
 
 @dataclass
-class LoopState:
-    """Container for loop state data with detailed fields for engineering loop."""
-    context: Dict[str, Any] = field(default_factory=dict)
-    plan: Optional[Dict[str, Any]] = None
-    commands: List[Dict[str, Any]] = field(default_factory=list)  # each command execution metadata
-    validations: List[Dict[str, Any]] = field(default_factory=list)  # validation results
-    result: Any = None
-    success: bool = False
-    errors: List[str] = field(default_factory=list)
+class RunState:
+    id: str
+    title: str
+    status: str  # queued|running|succeeded|failed|cancelled|timed_out
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    task_path: Optional[str] = None
+    log_path: Optional[str] = None
+    exit_code: Optional[int] = None
+    pid: Optional[int] = None
+    timeout_seconds: int = 1800
+    cancel_requested: bool = False
+    last_log_size: int = 0
+    error: Optional[str] = None
+    # Additional fields from original implementation
+    level: Optional[str] = None
+    llm_enabled: Optional[bool] = None
+    llm_status: Optional[str] = None
+    model: Optional[str] = None
+    doc_status: Optional[str] = None
+    generated_file: Optional[str] = None
