@@ -1,0 +1,37 @@
+/* Dark premium UI */
+body {
+  margin: 0;
+  font-family: Arial, Helvetica, sans-serif;
+  background: #121212;
+  color: #e0e0e0;
+}
+.sidebar {
+  width: 200px;
+  background: #1e1e1e;
+  height: 100vh;
+  position: fixed;
+  padding: 1rem;
+}
+.sidebar h2 { margin-top:0; color:#fff; }
+.sidebar ul { list-style:none; padding:0; }
+.sidebar li { padding:0.5rem; cursor:pointer; }
+.sidebar li.active, .sidebar li:hover { background:#333; }
+.main { margin-left:220px; padding:1rem; }
+header { display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; }
+header h1 { margin:0; font-size:1.5rem; color:#fff; }
+.badge { background:#0066ff; color:#fff; padding:0.2rem 0.5rem; border-radius:4px; font-size:0.8rem; }
+.status { font-size:0.9rem; color:#aaa; }
+.card-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:1rem; }
+.card { background:#1e1e1e; padding:1rem; border-radius:6px; }
+.table { width:100%; border-collapse:collapse; }
+.table th, .table td { padding:0.5rem; border-bottom:1px solid #333; }
+.table th { text-align:left; color:#bbb; }
+.tab { display:none; }
+.tab.active { display:block; }
+button { background:#0066ff; color:#fff; border:none; padding:0.4rem 0.8rem; border-radius:4px; cursor:pointer; }
+button:hover { background:#0055dd; }
+.checklist { list-style:none; padding:0; }
+.checklist li { margin:0.3rem 0; }
+.checklist .passed { color:#4caf50; }
+.checklist .failed { color:#f44336; }
+.checklist .warning { color:#ff9800; }
