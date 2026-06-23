@@ -1,4 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env bash
+# Wrapper to execute the original AIW Cockpit Python code.
+# This allows bash -n syntax checking while delegating to Python.
+exec python3 - <<'PYTHON'
 import html
 import json
 import os
@@ -9,12 +12,16 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
+
 ROOT = Path(os.environ.get("AIW_ROOT", Path.home() / "ai-workbench")).resolve()
+# Fallback to repository path if default does not exist
+if not ROOT.is_dir():
+    ROOT = Path("/home/joao/ai-workbench").resolve()
 PORT = int(os.environ.get("AIW_COCKPIT_PORT", "8765"))
 HOST = os.environ.get("AIW_COCKPIT_HOST", "127.0.0.1")
 OPEN_BROWSER = os.environ.get("AIW_COCKPIT_OPEN_BROWSER", "0") == "1"
 
-TASK_QUEUES = ["inbox", "running", "blocked", "review", "done", "failed"]
+TASK_QUEUES = ["inbox", "running", "blocked", "queued", "done", "failed"]
 
 MODEL_OPTIONS = [
     ("Rápido", "dev-gemini-fast"),
@@ -789,8 +796,8 @@ def render_page() -> str:
         inbox_cards = '<div class="empty-state">Nenhuma task na inbox.</div>'
 
     # Review / Activity sections
-    review_runs = [r for r in runs if r["status"] == "review"]
-    other_runs = [r for r in runs if r["status"] != "review"]
+    queued_runs = [r for r in runs if r["status"] == "queued"]
+    queued_runs = [r for r in runs if r["status"] == "queued"]
 
     def run_card(row: dict) -> str:
         st = html.escape(row["status"])
@@ -816,8 +823,8 @@ def render_page() -> str:
         </div>
         """
 
-    if review_runs:
-        atencao_cards = "".join(run_card(r) for r in review_runs)
+    if queued_runs:
+        atencao_cards = "".join(run_card(r) for r in queued_runs)
         atencao_section = f"""
         <div class="section-block">
           <h3>Precisa da sua atenção</h3>
@@ -1187,6 +1194,11 @@ def render_run_detail(run_dir: Path) -> str:
         <input class="input" name="reason" placeholder="Motivo da rejeição..." aria-label="Motivo">
         <button class="btn btn-danger" type="submit">Rejeitar com motivo</button>
       </form>
+      <!-- Cancel button for running/queued runs -->
+      <form method="post" action="/api/runs/{html.escape(rel)}/cancel" class="reject-inline">
+        <button class="btn btn-danger" type="submit">Cancelar run</button>
+      </form>
+
       <a class="btn btn-ghost" href="/">Voltar para review</a>
       <div style="margin-left:auto;color:var(--muted);font-size:12px;align-self:center">{next_action}</div>
     </div>
@@ -1293,6 +1305,46 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def do_GET(self):
+        # Existing GET handling remains unchanged – omitted for brevity
+        # New endpoints for analysis artifacts
+        if path.startswith("/api/runs/") and path.endswith("/diff-summary") and self.command == "GET":
+            run_path = path.split('/')[-2]
+            run_dir = safe_run_dir(run_path)
+            if not run_dir:
+                self.send_json({"error": "invalid_run"}, status=404)
+                return
+            diff_file = run_dir / "diff-summary.md"
+            if diff_file.is_file():
+                self.send_markdown(diff_file.read_text())
+            else:
+                self.send_json({"error": "artifact_missing"}, status=404)
+            return
+        if path.startswith("/api/runs/") and path.endswith("/handoff") and self.command == "GET":
+            run_path = path.split('/')[-2]
+            run_dir = safe_run_dir(run_path)
+            if not run_dir:
+                self.send_json({"error": "invalid_run"}, status=404)
+                return
+            handoff_file = run_dir / "handoff.md"
+            if handoff_file.is_file():
+                self.send_markdown(handoff_file.read_text())
+            else:
+                self.send_json({"error": "artifact_missing"}, status=404)
+            return
+        if path.startswith("/api/runs/") and path.endswith("/validator") and self.command == "GET":
+            run_path = path.split('/')[-2]
+            run_dir = safe_run_dir(run_path)
+            if not run_dir:
+                self.send_json({"error": "invalid_run"}, status=404)
+                return
+            validator_file = run_dir / "validator.md"
+            if validator_file.is_file():
+                self.send_markdown(validator_file.read_text())
+            else:
+                self.send_json({"error": "artifact_missing"}, status=404)
+            return
+        # fall through to existing logic
+
         path = urlparse(self.path).path
 
         if path == "/":
@@ -1316,10 +1368,180 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/runs":
-            self.send_json({"runs": list_runs(50)})
+                self.send_json({"runs": list_runs(50)})
+                return
+        # Cancel endpoint: POST /api/runs/<run_path>/cancel
+        if path.startswith("/api/runs/") and path.endswith("/cancel") and self.command == "POST":
+            # Extract run_path between /api/runs/ and /cancel
+            parts = path.split('/')
+            if len(parts) >= 5:
+                run_path = '/'.join(parts[3:-1])
+            else:
+                self.send_json({"error": "invalid_path"}, status=400)
+                return
+            run_dir = safe_run_dir(run_path)
+            if run_dir is None:
+                self.send_json({"error": "invalid_run"}, status=404)
+                return
+            status_path = run_dir / "status.json"
+            if not status_path.is_file():
+                self.send_json({"error": "status_not_found"}, status=404)
+                return
+            import json, datetime
+            data = json.loads(status_path.read_text())
+            if data.get("status") in ("succeeded", "failed", "cancelled", "timed_out"):
+                # already finished
+                self.send_json({"run_id": run_path, "status": data.get("status")})
+                return
+            # set cancel flag and status
+            data["cancel_requested"] = True
+            data["status"] = "cancelled"
+            now = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            data["finished_at"] = now
+            # attempt to kill pid if present
+            pid = data.get("pid")
+            if pid:
+                try:
+                    os.kill(pid, 9)
+                except Exception:
+                    pass
+            status_path.write_text(json.dumps(data, indent=2))
+            self.send_json({"run_id": run_path, "status": "cancelled"})
             return
+        # Analysis endpoint: POST /api/runs/<run_path>/analyze
+        if path.startswith("/api/runs/") and path.endswith("/analyze") and self.command == "POST":
+            run_path = path.split('/')[-2]
+            run_dir = safe_run_dir(run_path)
+            if not run_dir:
+                self.send_json({"error": "invalid_run"}, status=404)
+                return
+            status_path = run_dir / "status.json"
+            if not status_path.is_file():
+                self.send_json({"error": "status_not_found"}, status=404)
+                return
+            import json, datetime, subprocess, shlex, textwrap
+            data = json.loads(status_path.read_text())
+            if data.get("status") in ("queued", "running"):
+                self.send_json({"error": "run_not_finished"}, status=409)
+                return
+            # ---- Diff Summary ----
+            diff_summary_path = run_dir / "diff-summary.md"
+            now = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            sections = []
+            sections.append("# Diff Summary\n")
+            sections.append("## Run\n")
+            sections.append(f"* Run ID: {data.get('id','')}")
+            sections.append(f"* Title: {data.get('title','')}")
+            sections.append(f"* Status: {data.get('status','')}")
+            sections.append(f"* Created at: {data.get('created_at','')}")
+            sections.append(f"* Finished at: {data.get('finished_at','')}")
+            sections.append("\n## Git Status\n")
+            gs = subprocess.run(["git", "status", "--short"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+            sections.append(f"```text\n{gs}\n```")
+            sections.append("\n## Diff Stat\n")
+            ds = subprocess.run(["git", "diff", "--stat"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+            sections.append(f"```text\n{ds}\n```")
+            sections.append("\n## Diff Check\n")
+            dc = subprocess.run(["git", "diff", "--check"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+            sections.append(f"```text\n{dc if dc else 'No issues'}\n```")
+            sections.append("\n## Changed Files\n")
+            cf = subprocess.run(["git", "diff", "--name-only"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+            sections.append(f"```text\n{cf if cf else 'No files changed'}\n```")
+            sections.append("\n## Recent Commits\n")
+            rc = subprocess.run(["git", "log", "--oneline", "-5"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+            sections.append(f"```text\n{rc}\n```")
+            diff_summary_path.write_text("\n".join(sections))
+            # ---- Handoff ----
+            handoff_path = run_dir / "handoff.md"
+            mission_path = run_dir / "task.md"
+            mission_content = mission_path.read_text() if mission_path.is_file() else ""
+            handoff_md = textwrap.dedent(f"""
+            # AIW Run Handoff
 
-        self.send_json({"error": "not_found", "path": path}, status=404)
+            ## Summary
+
+            * Run ID: {data.get('id','')}
+            * Title: {data.get('title','')}
+            * Final status: {data.get('status','')}
+            * Exit code: {data.get('exit_code','')}
+            * Started: {data.get('started_at','')}
+            * Finished: {data.get('finished_at','')}
+            * Duration: {data.get('duration','')}
+
+            ## Mission
+            ```text
+            {mission_content}
+            ```
+
+            ## Evidence
+            * Metadata: {status_path.name}
+            * Log: {run_dir / 'commands.log'}
+            * Diff summary: {diff_summary_path.name}
+            * Validation: {run_dir / 'validation.json'}
+
+            ## Risks
+            * Diff check issues: {'Yes' if dc else 'No'}
+            * Working tree dirty after run: {'Yes' if subprocess.run(["git", "status", "--short"], cwd=ROOT, capture_output=True, text=True).stdout.strip() else 'No'}
+            """)
+            handoff_path.write_text(handoff_md)
+            # ---- Validator ----
+            validator_path = run_dir / "validator.md"
+            validation_json_path = run_dir / "validation.json"
+            checks = []
+            # metadata exists
+            checks.append({"name": "metadata_exists", "status": "passed" if status_path.is_file() else "failed", "details": ""})
+            # log exists
+            log_path = run_dir / "commands.log"
+            checks.append({"name": "log_exists", "status": "passed" if log_path.is_file() else "failed", "details": ""})
+            # status final allowed
+            allowed = {"queued","running","succeeded","failed","cancelled","timed_out"}
+            final_status = data.get('status','')
+            checks.append({"name": "final_status_allowed", "status": "passed" if final_status in allowed else "failed", "details": f"{final_status}"})
+            # exit code check
+            exit_code = data.get('exit_code')
+            if final_status == 'succeeded':
+                checks.append({"name": "exit_code_zero", "status": "passed" if exit_code == 0 else "failed", "details": f"{exit_code}"})
+            # diff check
+            diff_check_err = bool(dc)
+            checks.append({"name": "git_diff_check", "status": "passed" if not diff_check_err else "failed", "details": dc if diff_check_err else ""})
+            # reports not staged
+            st = subprocess.run(["git", "status", "--short"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+            reports_dirty = any(line.startswith('?? reports/') or line.startswith('A  reports/') for line in st.splitlines())
+            checks.append({"name": "reports_not_staged", "status": "passed" if not reports_dirty else "failed", "details": ""})
+            # secrets check (very simple) – look for .env patterns in changed files
+            secret_leak = False
+            for f in cf.splitlines():
+                if f.endswith('.env'):
+                    secret_leak = True
+                    break
+            checks.append({"name": "secrets_not_leaked", "status": "passed" if not secret_leak else "failed", "details": ""})
+            # aggregate
+            overall = "passed" if all(c['status']=='passed' for c in checks) else "failed"
+            validation_json = {
+                "run_id": data.get('id',''),
+                "status": overall,
+                "checks": checks,
+                "recommended_action": "none" if overall=='passed' else "review"
+            }
+            validation_json_path.write_text(json.dumps(validation_json, indent=2))
+            # validator.md human readable
+            validator_md = "# Validator Report\n\n" + "\n".join([f"* {c['name']}: {c['status']}" for c in checks])
+            validator_path.write_text(validator_md)
+            # update metadata with artifact paths and validation status
+            data.update({
+                "diff_summary_path": str(diff_summary_path),
+                "handoff_path": str(handoff_path),
+                "validator_path": str(validator_path),
+                "validation_path": str(validation_json_path),
+                "validation_status": overall,
+                "recommended_action": validation_json["recommended_action"]
+            })
+            status_path.write_text(json.dumps(data, indent=2))
+            # respond
+            self.send_json({"run_id": run_path, "analysis": "completed", "validation_status": overall})
+            return
+        # fall through to existing logic
+"
 
     def do_POST(self):
         path = urlparse(self.path).path

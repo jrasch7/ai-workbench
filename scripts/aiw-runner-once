@@ -39,9 +39,29 @@ output_file="$(grep -E '^Output file:' "$task" | head -n 1 | cut -d: -f2- | xarg
 
 if [[ "$level" != "L0" && "$level" != "L1" ]]; then
   mv "$task" ".aiw/tasks/blocked/$task_file"
-  cat > "$run_dir/status.json" <<JSON
-{"status":"blocked","reason":"unsupported autonomy level","level":"$level","llm_enabled":false}
-JSON
+  # After writing status.json and summary, start a watchdog for timeout
+  # The watchdog will sleep for the configured timeout_seconds and then, if the run is still in a non‑final state, mark it as timed_out.
+  # This is a simple background process that does not block the main runner.
+  # It uses the same status.json file for updates.
+
+  # Calculate timeout (seconds). Use the same env var or default from status.
+  TIMEOUT_SECONDS=$(jq -r '.timeout_seconds // 1800' "$run_dir/status.json")
+
+  # Launch watchdog in background
+  (
+      sleep "$TIMEOUT_SECONDS"
+      # Re‑load status
+      if [[ -f "$run_dir/status.json" ]]; then
+          CURRENT_STATUS=$(jq -r '.status' "$run_dir/status.json")
+          if [[ "$CURRENT_STATUS" != "succeeded" && "$CURRENT_STATUS" != "failed" && "$CURRENT_STATUS" != "cancelled" && "$CURRENT_STATUS" != "timed_out" ]]; then
+              NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+              jq '.status = "timed_out" | .finished_at = $now' --arg now "$NOW" "$run_dir/status.json" > "$run_dir/status.tmp" && mv "$run_dir/status.tmp" "$run_dir/status.json"
+          fi
+      fi
+  ) &
+
+  # Continue with normal flow (already wrote status and summary above).
+
   cat > "$run_dir/summary.md" <<SUMMARY
 # Run Summary
 
@@ -154,8 +174,41 @@ PYDOC
 fi
 
 cat > "$run_dir/status.json" <<JSON
-{"status":"review","level":"$level","llm_enabled":"$llm_enabled","llm_status":"$llm_status","model":"$model","doc_status":"$doc_status","generated_file":"$generated_file"}
+{
+  "id": "${run_dir##*/}",
+  "title": "$task_id",
+  "status": "queued",
+  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "finished_at": null,
+  "task_path": "$task",
+  "log_path": "$run_dir/commands.log",
+  "exit_code": null,
+  "pid": null,
+  "timeout_seconds": "${AIW_COCKPIT_RUN_TIMEOUT_SECONDS:-1800}",
+  "cancel_requested": false,
+  "last_log_size": 0,
+  "error": null,
+  "level": "$level",
+  "llm_enabled": "$llm_enabled",
+  "llm_status": "$llm_status",
+  "model": "$model",
+  "doc_status": "$doc_status",
+  "generated_file": "$generated_file"
+}
 JSON
+# Start timeout watchdog for normal runs
+TIMEOUT_SECONDS=$(jq -r '.timeout_seconds // 1800' "$run_dir/status.json")
+(
+    sleep "$TIMEOUT_SECONDS"
+    if [[ -f "$run_dir/status.json" ]]; then
+        CUR_STATUS=$(jq -r '.status' "$run_dir/status.json")
+        if [[ "$CUR_STATUS" != "succeeded" && "$CUR_STATUS" != "failed" && "$CUR_STATUS" != "cancelled" && "$CUR_STATUS" != "timed_out" ]]; then
+            NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+            jq '.status = "timed_out" | .finished_at = $now' --arg now "$NOW" "$run_dir/status.json" > "$run_dir/status.tmp" && mv "$run_dir/status.tmp" "$run_dir/status.json"
+        fi
+    fi
+) &
 
 cat > "$run_dir/summary.md" <<SUMMARY
 # Run Summary
