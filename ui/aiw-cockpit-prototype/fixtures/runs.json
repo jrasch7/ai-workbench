@@ -1,0 +1,87 @@
+[
+  {
+    "run_id": "run-001",
+    "agent": "Hermes Executor",
+    "mission": "Validate PR #7 docs-only",
+    "status": "approved",
+    "started_at": "2026-06-23T16:00:00Z",
+    "validation": "passed",
+    "checks": [
+      {"name": "git diff --check", "result": "passed"},
+      {"name": "scope guard", "result": "passed"},
+      {"name": "secret scan", "result": "passed"}
+    ],
+    "log_excerpt": "Validation completed successfully.",
+    "diff_summary": "No code changes.",
+    "handoff": "Ready for merge.",
+    "analysis": {"status": "approved", "comments": "Documentation-only PR validated."}
+  },
+  {
+    "run_id": "run-002",
+    "agent": "Validator",
+    "mission": "Run security scan",
+    "status": "pending",
+    "started_at": "2026-06-24T10:15:00Z",
+    "validation": "failed",
+    "checks": [
+      {"name": "git diff --check", "result": "passed"},
+      {"name": "scope guard", "result": "passed"},
+      {"name": "secret scan", "result": "failed"}
+    ],
+    "log_excerpt": "Secret token detected in config.",
+    "diff_summary": "Potential secret in .env.example.",
+    "handoff": "Require remediation.",
+    "analysis": {"status": "rejected", "comments": "Found secret, need fix."}
+  },
+  {
+    "run_id": "run-003",
+    "agent": "Context Builder",
+    "mission": "Compact context for run-001",
+    "status": "completed",
+    "started_at": "2026-06-25T08:30:00Z",
+    "validation": "passed",
+    "checks": [
+      {"name": "git diff --check", "result": "passed"},
+      {"name": "scope guard", "result": "passed"},
+      {"name": "secret scan", "result": "passed"}
+    ],
+    "log_excerpt": "Context compacted to 3KB.",
+    "diff_summary": "N/A",
+    "handoff": "Ready for next step.",
+    "analysis": {"status": "approved", "comments": "Context resilience OK."}
+  },
+  {
+    "run_id": "run-004",
+    "agent": "Hermes Executor",
+    "mission": "Deploy prototype UI",
+    "status": "error",
+    "started_at": "2026-06-26T14:45:00Z",
+    "validation": "failed",
+    "checks": [
+      {"name": "git diff --check", "result": "passed"},
+      {"name": "scope guard", "result": "passed"},
+      {"name": "secret scan", "result": "passed"}
+    ],
+    "log_excerpt": "Port 8787 already in use.",
+    "diff_summary": "N/A",
+    "handoff": "Retry with different port.",
+    "analysis": {"status": "failed", "comments": "Deployment error."}
+  },
+  {
+    "run_id": "run-005",
+    "agent": "Integrator",
+    "mission": "Prepare handoff docs",
+    "status": "completed",
+    "started_at": "2026-06-27T09:20:00Z",
+    "validation": "passed",
+    "checks": [
+      {"name": "git diff --check", "result": "passed"},
+      {"name": "scope guard", "result": "passed"},
+      {"name": "secret scan", "result": "passed"}
+    ],
+    "log_excerpt": "Handoff documentation generated.",
+    "diff_summary": "Added handoff.md.",
+    "handoff": "Ready for review.",
+    "analysis": {"status": "approved", "comments": "Handoff ready."}
+  }
+]
