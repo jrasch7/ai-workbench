@@ -141,7 +141,28 @@ function renderAgents(){document.getElementById('content').innerHTML='<h2>Agents
   ['Hermes Executor','Validator','Integrator','Context Builder','OpenRouter','Local/Ollama futuro'].map(name=>`<div class="card"><strong>${name}</strong></div>`).join('')+'</div>';}
 function renderProviders(){document.getElementById('content').innerHTML='<h2>Providers (mocked)</h2><div class="card-grid">'+
   ['OpenRouter','Local/Ollama','Azure','AWS'].map(name=>`<div class="card"><strong>${name}</strong></div>`).join('')+'</div>';}
-function renderContext(){document.getElementById('content').innerHTML='<h2>Context Resilience</h2>'+`<ul class="checklist">${[0,1,2,3,4,5,6,7].map(i=>`<li class="${i===0?'passed':'warning'}">CR-${i}</li>`).join('')}</ul>`;}
+function renderContext(){
+  const content = document.getElementById('content');
+  const html = `
+    <h2>Context Resilience</h2>
+    <ul class="checklist">
+      <li class="passed">Compact summary</li>
+      <li class="passed">Resume prompt</li>
+      <li class="passed">Run state persisted</li>
+      <li class="passed">Fallback model</li>
+      <li class="passed">/new policy</li>
+    </ul>
+    <div class="card-grid">
+      <div class="card"><strong>Compact summary</strong><br>${run?.analysis?.comments || 'N/A'}</div>
+      <div class="card"><strong>Resume prompt</strong><br>Ready for next run.</div>
+      <div class="card"><strong>Run state persisted</strong><br>${run?.status || 'N/A'}</div>
+      <div class="card"><strong>Fallback model</strong><br>none</div>
+      <div class="card"><strong>/new policy</strong><br>Use /new after context pressure.</div>
+    </div>
+  `;
+  content.innerHTML = html;
+}
+
 function renderSettings(){document.getElementById('content').innerHTML='<h2>Settings (placeholder)</h2>';}
 
 // Init
