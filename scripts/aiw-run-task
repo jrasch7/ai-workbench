@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+
+# aiw-run-task: Execute a Hermes task from a markdown file with logging.
+# Usage: ./scripts/aiw-run-task path/to/task.md
+
+set -euo pipefail
+
+# Ensure exactly one argument
+if [[ $# -ne 1 ]]; then
+  echo "Usage: $0 <task-markdown-file>" >&2
+  exit 1
+fi
+
+task_file="$1"
+
+# Verify the file exists
+if [[ ! -f "$task_file" ]]; then
+  echo "Error: Task file '$task_file' does not exist." >&2
+  exit 2
+fi
+
+# Resolve repository root (assumes script is within repo)
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+# Activate virtual environment if present
+if [[ -f ".venv/bin/activate" ]]; then
+  # shellcheck source=/dev/null
+  source ".venv/bin/activate"
+fi
+
+# Ensure reports directory exists
+log_dir="reports/aiw-runs"
+mkdir -p "$log_dir"
+
+# Timestamp for log file
+timestamp=$(date -u +"%Y-%m-%dT%H-%M-%SZ")
+log_file="$log_dir/run-${timestamp}.log"
+
+# Execute Hermes with yolo, capture stdout and stderr
+# Note: hermes CLI is assumed to be in PATH
+{
+  echo "--- Hermes command start ---"
+  hermes --yolo chat -q "$(cat "$task_file")"
+  echo "--- Hermes command end ---"
+} > "$log_file" 2>&1
+
+# Print log path for user
+echo "Log written to: $log_file"
+
+# Exit with same code as Hermes (captured via PIPESTATUS)
+exit ${PIPESTATUS[0]}
