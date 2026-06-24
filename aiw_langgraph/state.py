@@ -30,3 +30,13 @@ class RunState:
     model: Optional[str] = None
     doc_status: Optional[str] = None
     generated_file: Optional[str] = None
+    # Additional runtime fields with safe defaults for the engineering loop
+    context: dict = field(default_factory=dict)
+    plan: dict = field(default_factory=dict)
+    commands: list = field(default_factory=list)
+    errors: list = field(default_factory=list)
+    success: bool = False
+    validations: list = field(default_factory=list)
+
+# Backwards‑compatible alias for older modules that still import LoopState.
+LoopState = RunState

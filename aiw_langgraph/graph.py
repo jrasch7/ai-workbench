@@ -49,24 +49,23 @@ def build_graph() -> StateGraph:
         # Run the compileall command using the safe command runner.
         if run_command is None:
             raise RuntimeError("Command runner unavailable.")
-        try:
-            result: CommandResult = run_command("python -m compileall aiw_langgraph")
-            state.commands.append({
-                "command": result.command,
-                "exit_code": result.exit_code,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "duration": result.duration,
-            })
-            # Determine success based on exit code.
-            state.success = result.exit_code == 0
-            if not state.success:
-                state.errors.append(result.stderr.strip() or "Compile failed")
-        except Exception as exc:
+        cmd_str = "python -m compileall aiw_langgraph"
+        res = run_command(cmd_str)
+        # Record command details
+        state.commands.append({
+            "command": cmd_str,
+            "exit_code": res.get("exit_code"),
+            "stdout": res.get("stdout", ""),
+            "stderr": res.get("stderr", ""),
+            "duration": res.get("duration", 0),
+        })
+        # Determine success based on exit code.
+        if res.get("exit_code") == 0:
+            state.success = True
+        else:
             state.success = False
-            err_msg = str(exc)
-            state.errors.append(err_msg)
-            state.commands.append({"command": "python -m compileall aiw_langgraph", "error": err_msg})
+            err_msg = res.get("stderr", "Compile failed")
+            state.errors.append(err_msg.strip() or "Compile failed")
         return state
 
     def test(state: LoopState) -> LoopState:
@@ -113,6 +112,6 @@ def run() -> LoopState:
     initial state.
     """
     graph = build_graph()
-    initial_state = LoopState(context={})
+    initial_state = LoopState(id='smoke', title='LangGraph Smoke', status='queued', context={})
     compiled = graph.compile()
     return compiled.invoke(initial_state)

@@ -104,3 +104,6 @@ def run_command(command: str, cwd: str = None, timeout: int = 600) -> Dict[str, 
         return {"exit_code": -2, "stdout": te.stdout or "", "stderr": te.stderr or "", "duration": timeout}
     except Exception as exc:
         return {"exit_code": -3, "stdout": "", "stderr": str(exc), "duration": time.time() - start}
+
+# Simple alias for type‑hint compatibility with older code.
+CommandResult = dict
