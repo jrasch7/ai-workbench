@@ -49,3 +49,4 @@ scripts/aiw.bak.*
 !.aiw/state/.gitkeep
 .aiw/lab/
 reports/langgraph-smoke/*.md
+reports/provider-smoke/*.md
