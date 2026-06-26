@@ -45,5 +45,30 @@ model_list:
       model: gemini/gemini-2.5-flash
       api_key: os.environ/GEMINI_API_KEY
 
+
+  - model_name: dev-nvidia-nemotron
+    litellm_params:
+      model: openai/nvidia/llama-3.3-nemotron-super-49b-v1
+      api_base: https://integrate.api.nvidia.com/v1
+      api_key: os.environ/NVIDIA_API_KEY
+
+  - model_name: dev-hf-kimi-code
+    litellm_params:
+      model: openai/moonshotai/Kimi-K2.7-Code:deepinfra
+      api_base: https://router.huggingface.co/v1
+      api_key: os.environ/HF_TOKEN
+
+  - model_name: dev-hf-deepseek-v4-pro
+    litellm_params:
+      model: openai/deepseek-ai/DeepSeek-V4-Pro
+      api_base: https://router.huggingface.co/v1
+      api_key: os.environ/HF_TOKEN
+
+  - model_name: dev-hf-minimax-m3
+    litellm_params:
+      model: openai/MiniMaxAI/MiniMax-M3
+      api_base: https://router.huggingface.co/v1
+      api_key: os.environ/HF_TOKEN
+
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
