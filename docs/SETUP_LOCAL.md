@@ -98,13 +98,13 @@ O LiteLLM expõe o alias interno `dev-coder`. O OpenHands usa `openai/dev-coder`
 ## Fluxo validado
 
 ```text
-OpenHands GUI → LiteLLM local → OpenRouter → sandbox Docker → arquivo criado no workspace
+OpenHands GUI → LiteLLM local → `dev-coder` → pool operacional validado → sandbox Docker → arquivo criado no workspace
 ```
 
 ## Observações importantes
 
-- O OpenRouter funcionou melhor via `api_base: https://openrouter.ai/api/v1` usando provider OpenAI-compatible.
+- Histórico: OpenRouter permanece disponível como provider de laboratório/fallback, mas não é o backbone operacional atual.
 - O adapter direto `openrouter/...` no LiteLLM apresentou instabilidade/reset de conexão neste ambiente.
-- Modelos grátis do OpenRouter podem retornar `429` por limite upstream.
+- Modelos grátis/laboratório podem retornar `429` por limite upstream.
 - Free tier serve para validar a arquitetura, mas não deve ser tratado como base confiável para produção.
 - Para uso sério, o projeto deve evoluir para fallbacks de modelos/provedores e pelo menos um agregador confiável com crédito.

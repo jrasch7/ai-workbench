@@ -35,7 +35,7 @@ Validações atuais:
 ./scripts/aiw gateway
 ./scripts/aiw models
 ./scripts/aiw smoke dev-coder
-./scripts/aiw matrix dev-openrouter-free dev-coder
+./scripts/model-pool-smoke
 ```
 
 ## Separação entre tiers
@@ -130,7 +130,7 @@ Uso:
 Decisão atual:
 
 - `dev-coder` é o alias oficial de trabalho para código;
-- atualmente está roteado para Gemini via `gemini/gemini-2.5-flash`;
+- atualmente está roteado para Hugging Face Router com `moonshotai/Kimi-K2.7-Code:deepinfra`;
 - o uso externo no OpenHands deve continuar sendo `openai/dev-coder`;
 - o provedor por baixo pode mudar sem alterar o fluxo operacional.
 
@@ -219,7 +219,7 @@ Fallback deve ser por papel, não por marca.
 Exemplo conceitual:
 
 ```text
-dev-coder -> provider principal de código -> provider secundário -> OpenRouter fallback
+dev-coder -> provider principal de código -> fallback operacional -> provider de laboratório
 dev-review -> provider principal de revisão -> provider secundário
 dev-architect -> provider forte de raciocínio -> provider premium sob demanda
 ```
@@ -229,7 +229,7 @@ Free tier pode ser fallback de laboratório, não fallback operacional crítico.
 ## Decisão atual de roteamento
 
 ```text
-dev-coder           -> alias oficial de código, atualmente roteado para Gemini
+dev-coder           -> alias oficial de código, atualmente roteado para Hugging Face Router / Kimi Code
 dev-gemini-coder    -> alias explícito para testar Gemini
 dev-openrouter-free -> laboratório/fallback não crítico
 ```

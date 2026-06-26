@@ -51,7 +51,7 @@ dev-coder
 ./scripts/aiw smoke dev-coder
 ```
 
-`dev-coder` é o alias operacional para tarefas de código. Atualmente ele está roteado para Gemini.
+`dev-coder` é o alias operacional para tarefas de código. Atualmente ele está roteado para Hugging Face Router com Kimi Code.
 
 Aliases com nome de provedor, como `dev-gemini-coder` e `dev-openrouter-free`, existem para teste, comparação e laboratório.
 
@@ -73,7 +73,7 @@ Se retornar `429`, timeout ou erro de provider, o problema está no modelo/prove
 ### Testar matriz de modelos via LiteLLM
 
 ```bash
-./scripts/aiw matrix dev-openrouter-free dev-coder
+./scripts/model-pool-smoke
 ```
 
 Use este comando para validar mais de um alias de modelo sem envolver OpenHands.

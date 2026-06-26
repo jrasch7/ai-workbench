@@ -2,7 +2,7 @@
 
 Este documento registra validações reais do OpenHands usando o AI Workbench.
 
-## Validação Gemini via dev-coder
+## Validação OpenHands via dev-coder
 
 Ambiente:
 
@@ -11,7 +11,7 @@ PC: DESKTOP-S2AARAD
 Modelo no OpenHands: openai/dev-coder
 Gateway: LiteLLM
 Alias LiteLLM: dev-coder
-Provider atual: Gemini
+Provider atual: pool operacional validado via LiteLLM
 ```
 
 Validação executada:
@@ -31,7 +31,7 @@ git status --short limpo.
 Conclusão:
 
 ```text
-OpenHands -> LiteLLM -> dev-coder -> Gemini funcionando.
+OpenHands -> LiteLLM -> dev-coder -> pool operacional validado funcionando.
 ```
 
 ## Regra operacional

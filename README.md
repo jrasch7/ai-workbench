@@ -69,7 +69,7 @@ O primeiro pipeline funcional validado foi:
 OpenHands GUI
 → modelo openai/dev-coder
 → LiteLLM local
-→ OpenRouter free
+→ pool operacional validado via aliases LiteLLM
 → sandbox Docker
 → criação real de arquivo no workspace
 ```
@@ -85,7 +85,7 @@ Com o conteúdo:
 ```md
 # Status
 
-AI Workbench conectado ao OpenRouter via LiteLLM.
+AI Workbench conectado ao LiteLLM via aliases estáveis, atualmente roteados para Hugging Face Router e NVIDIA NIM.
 ```
 
 ## Estrutura do projeto
@@ -152,9 +152,13 @@ http://host.docker.internal:4000
 A ideia futura é expandir os perfis de modelo:
 
 ```text
-dev-fast      → tarefas simples e baratas
+dev-fast      → tarefas simples e fallback leve
+dev-balanced  → raciocínio geral e validação intermediária
+dev-large     → tarefas maiores e arquitetura
 dev-coder     → desenvolvimento padrão
 dev-review    → revisão e validação
+dev-architect → decisões estruturais
+dev-fallback  → contingência operacional
 dev-premium   → arquitetura, refatorações grandes e tarefas críticas
 ```
 
@@ -178,7 +182,7 @@ Status atual do projeto:
 * Docker Engine no WSL2 funcionando;
 * OpenHands rodando localmente;
 * LiteLLM rodando em container;
-* OpenRouter integrado via LiteLLM;
+* aliases operacionais roteados para pool validado;
 * modelo `openai/dev-coder` validado na GUI;
 * sandbox Docker funcionando;
 * criação de arquivo real validada;
@@ -192,8 +196,8 @@ Status atual do projeto:
 * [x] Instalar Docker Engine no WSL2
 * [x] Instalar e validar OpenHands
 * [x] Instalar e validar LiteLLM
-* [x] Integrar Groq
-* [x] Integrar OpenRouter
+* [x] Integrar pool Hugging Face Router / NVIDIA NIM
+* [x] Integrar OpenRouter como provider de laboratório/fallback
 * [x] Validar tool calling via LiteLLM
 * [x] Validar OpenHands criando arquivo no sandbox
 * [x] Consolidar `scripts/aiw`
