@@ -1,18 +1,21 @@
 model_list:
   - model_name: dev-fast
     litellm_params:
-      model: groq/llama-3.1-8b-instant
-      api_key: os.environ/GROQ_API_KEY
+      model: openai/MiniMaxAI/MiniMax-M3
+      api_base: https://router.huggingface.co/v1
+      api_key: os.environ/HF_TOKEN
 
   - model_name: dev-balanced
     litellm_params:
-      model: groq/qwen/qwen3-32b
-      api_key: os.environ/GROQ_API_KEY
+      model: openai/deepseek-ai/DeepSeek-V4-Pro
+      api_base: https://router.huggingface.co/v1
+      api_key: os.environ/HF_TOKEN
 
   - model_name: dev-large
     litellm_params:
-      model: groq/openai/gpt-oss-120b
-      api_key: os.environ/GROQ_API_KEY
+      model: openai/nvidia/llama-3.3-nemotron-super-49b-v1
+      api_base: https://integrate.api.nvidia.com/v1
+      api_key: os.environ/NVIDIA_API_KEY
 
   - model_name: dev-openrouter-free
     litellm_params:
@@ -22,8 +25,9 @@ model_list:
 
   - model_name: dev-coder
     litellm_params:
-      model: gemini/gemini-2.5-flash
-      api_key: os.environ/GEMINI_API_KEY
+      model: openai/moonshotai/Kimi-K2.7-Code:deepinfra
+      api_base: https://router.huggingface.co/v1
+      api_key: os.environ/HF_TOKEN
 
   - model_name: dev-gemini-fast
     litellm_params:
@@ -37,13 +41,15 @@ model_list:
 
   - model_name: dev-review
     litellm_params:
-      model: gemini/gemini-2.5-flash
-      api_key: os.environ/GEMINI_API_KEY
+      model: openai/deepseek-ai/DeepSeek-V4-Pro
+      api_base: https://router.huggingface.co/v1
+      api_key: os.environ/HF_TOKEN
 
   - model_name: dev-architect
     litellm_params:
-      model: gemini/gemini-2.5-flash
-      api_key: os.environ/GEMINI_API_KEY
+      model: openai/nvidia/llama-3.3-nemotron-super-49b-v1
+      api_base: https://integrate.api.nvidia.com/v1
+      api_key: os.environ/NVIDIA_API_KEY
 
 
   - model_name: dev-nvidia-nemotron
@@ -65,6 +71,12 @@ model_list:
       api_key: os.environ/HF_TOKEN
 
   - model_name: dev-hf-minimax-m3
+    litellm_params:
+      model: openai/MiniMaxAI/MiniMax-M3
+      api_base: https://router.huggingface.co/v1
+      api_key: os.environ/HF_TOKEN
+
+  - model_name: dev-fallback
     litellm_params:
       model: openai/MiniMaxAI/MiniMax-M3
       api_base: https://router.huggingface.co/v1
