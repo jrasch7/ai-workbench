@@ -1,114 +1,146 @@
-# Role Aliases — AI Workbench
+# AIW Role Aliases
 
-Este documento define os aliases oficiais de modelo por papel dentro do AI Workbench.
+## Objetivo
 
-## Principio
+Este documento define os aliases operacionais de modelos usados pelo AI Workbench.
 
-A operacao da bancada deve usar aliases por funcao, nao por provedor.
+A regra principal é:
 
-O usuario e os agentes devem pedir `dev-coder`, `dev-review` ou `dev-architect`.
+> Usuários, agentes, cockpit e integrações devem pedir aliases por papel, não nomes crus de provedores.
 
-O LiteLLM decide qual provedor esta por baixo.
+Exemplos corretos:
 
-## Aliases operacionais
+- `dev-coder`
+- `dev-review`
+- `dev-architect`
+- `dev-fast`
+- `dev-fallback`
 
-### dev-coder
+O LiteLLM decide qual provedor e modelo real está por baixo.
 
-Uso:
+## Estado atual
 
-- implementacao;
-- edicao de codigo;
-- correcao focada;
-- scripts;
-- mudancas pequenas em arquivos reais.
+Os aliases estáveis foram roteados para o pool validado em 2026-06-26.
 
-Status atual:
+Commit de referência:
 
-- roteado para Gemini;
-- validado via `./scripts/aiw smoke dev-coder`;
-- usar no OpenHands como `openai/dev-coder`.
+- `8c67fa7 config: route stable LiteLLM aliases to validated pool`
+- `ae52192 test: smoke stable LiteLLM aliases`
 
-### dev-review
+Validação principal:
 
-Uso:
+    ./scripts/model-pool-smoke
 
-- revisao de diff;
-- validacao;
-- analise de risco;
-- checagem de regressao;
-- leitura critica de entrega de executor.
+Resultado esperado:
 
-Status atual:
+    OK: LiteLLM operational alias pool smoke passed
 
-- roteado para Gemini;
-- validado via matrix;
-- deve ser usado por agentes validadores.
+## Mapa operacional atual
 
-### dev-architect
+| Alias | Papel | Modelo/provedor atual | Uso recomendado |
+| --- | --- | --- | --- |
+| `dev-fast` | rápido / barato / fallback leve | Hugging Face Router → `MiniMaxAI/MiniMax-M3` | tarefas simples, respostas rápidas, fallback comum |
+| `dev-balanced` | balanceado | Hugging Face Router → `deepseek-ai/DeepSeek-V4-Pro` | raciocínio geral, validação intermediária |
+| `dev-large` | forte / grande | NVIDIA NIM → `nvidia/llama-3.3-nemotron-super-49b-v1` | tarefas maiores, arquitetura, análise mais pesada |
+| `dev-coder` | código | Hugging Face Router → `moonshotai/Kimi-K2.7-Code:deepinfra` | implementação, refatoração, leitura de código |
+| `dev-review` | revisão | Hugging Face Router → `deepseek-ai/DeepSeek-V4-Pro` | review, validação, auditoria técnica |
+| `dev-architect` | arquitetura | NVIDIA NIM → `nvidia/llama-3.3-nemotron-super-49b-v1` | desenho de sistema, decisões estruturais |
+| `dev-fallback` | fallback operacional | Hugging Face Router → `MiniMaxAI/MiniMax-M3` | contingência quando outro alias falhar |
 
-Uso:
+## Aliases por provedor
 
-- planejamento;
-- decomposicao de tarefa;
-- analise de arquitetura;
-- tradeoffs;
-- criacao de plano para executor.
+Além dos aliases operacionais, existem aliases crus por provedor para diagnóstico e benchmark.
 
-Status atual:
+| Alias cru | Modelo/provedor |
+| --- | --- |
+| `dev-nvidia-nemotron` | NVIDIA NIM → `nvidia/llama-3.3-nemotron-super-49b-v1` |
+| `dev-hf-kimi-code` | Hugging Face Router → `moonshotai/Kimi-K2.7-Code:deepinfra` |
+| `dev-hf-deepseek-v4-pro` | Hugging Face Router → `deepseek-ai/DeepSeek-V4-Pro` |
+| `dev-hf-minimax-m3` | Hugging Face Router → `MiniMaxAI/MiniMax-M3` |
 
-- roteado para Gemini;
-- validado via matrix;
-- deve ser usado antes de tarefas grandes ou arriscadas.
+Esses aliases crus são úteis para smoke, benchmark e troubleshooting, mas não devem ser usados como padrão por agentes.
 
-## Aliases de laboratorio e comparacao
+## Regra de uso
 
-### dev-gemini-coder
+### Para tarefas normais
 
-Alias explicito para testar Gemini diretamente.
+Use:
 
-Nao deve ser o alias principal do fluxo operacional.
+    dev-coder
+    dev-review
+    dev-architect
+    dev-fast
+    dev-fallback
 
-### dev-openrouter-free
+### Para OpenAI-compatible clients
 
-Alias explicito para testar OpenRouter free tier.
+Quando uma ferramenta exigir prefixo OpenAI-compatible, use:
 
-Pode falhar por rate limit, provider indisponivel ou instabilidade upstream.
+    openai/dev-coder
+    openai/dev-review
+    openai/dev-architect
+    openai/dev-fast
+    openai/dev-fallback
 
-Nao deve ser usado como base critica.
+### Para benchmark ou diagnóstico
 
-## Regra de uso no OpenHands
+Use aliases crus:
 
-Na configuracao do OpenHands, usar preferencialmente:
+    dev-nvidia-nemotron
+    dev-hf-kimi-code
+    dev-hf-deepseek-v4-pro
+    dev-hf-minimax-m3
 
-```text
-openai/dev-coder
-```
+## Regras para agentes
 
-Para fluxos futuros, podemos usar:
+Agentes não devem:
 
-```text
-openai/dev-review
-openai/dev-architect
-```
+- chamar provedores diretamente;
+- depender de Gemini, Groq, OpenRouter, NVIDIA ou Hugging Face no prompt;
+- alterar `.env`;
+- usar nome cru de provider como default;
+- assumir que `dev-coder` sempre será o mesmo modelo.
 
-## Validacao obrigatoria
+Agentes devem:
 
-Antes de usar agente em projeto real:
+- pedir o papel desejado;
+- usar alias estável;
+- rodar smoke antes de integrações sensíveis;
+- registrar falhas com evidência;
+- preservar fallback.
 
-```bash
-./scripts/aiw doctor
-```
+## Comandos de validação
 
-```bash
-./scripts/aiw gateway
-```
+Validar pool operacional completo:
 
-```bash
-./scripts/aiw matrix dev-coder dev-review dev-architect
-```
+    ./scripts/model-pool-smoke
 
-## Decisao estrategica
+Validar alias individual:
 
-A bancada deve trocar provedores por baixo sem mudar o fluxo de trabalho.
+    ./scripts/model-smoke dev-coder
+    ./scripts/model-smoke dev-review
+    ./scripts/model-smoke dev-architect
 
-Se amanha `dev-coder` sair de Gemini e for para outro modelo, o usuario e os agentes continuam usando `dev-coder`.
+Testar conversa curta:
+
+    ./scripts/model-ask dev-coder "Responda em uma frase curta: AIW OK"
+
+Listar modelos expostos pelo LiteLLM:
+
+    ./scripts/aiw models
+
+## Decisão operacional
+
+O AIW deve tratar `dev-coder`, `dev-review`, `dev-architect`, `dev-fast`, `dev-balanced`, `dev-large` e `dev-fallback` como a interface pública do pool de modelos.
+
+A camada abaixo desses aliases pode mudar sem quebrar Hermes, Cockpit, OpenHands, scripts ou agentes.
+
+## Próxima regra antes do Hermes
+
+Antes de conectar Hermes ao AIW runtime:
+
+1. `./scripts/model-pool-smoke` deve passar;
+2. Hermes deve usar aliases estáveis;
+3. Hermes não deve apontar diretamente para provider cru;
+4. o fallback precisa estar documentado;
+5. falhas de provider devem gerar evidência.
