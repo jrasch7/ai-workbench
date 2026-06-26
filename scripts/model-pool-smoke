@@ -4,15 +4,18 @@ set -euo pipefail
 AIW_ROOT="${AIW_ROOT:-$HOME/ai-workbench}"
 
 MODELS=(
-  dev-nvidia-nemotron
-  dev-hf-kimi-code
-  dev-hf-deepseek-v4-pro
-  dev-hf-minimax-m3
+  dev-fast
+  dev-balanced
+  dev-large
+  dev-coder
+  dev-review
+  dev-architect
+  dev-fallback
 )
 
 cd "$AIW_ROOT"
 
-echo "AIW LiteLLM model pool smoke"
+echo "AIW LiteLLM operational alias pool smoke"
 echo "root: $AIW_ROOT"
 echo
 
@@ -22,4 +25,4 @@ for model in "${MODELS[@]}"; do
   echo
 done
 
-echo "OK: LiteLLM model pool smoke passed"
+echo "OK: LiteLLM operational alias pool smoke passed"
