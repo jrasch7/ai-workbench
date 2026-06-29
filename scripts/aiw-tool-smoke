@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+exec python3 - <<'PYTHON'
+import os
+import sys
+import json
+import urllib.request
+import urllib.error
+from pathlib import Path
+
+ROOT = Path(os.environ.get("AIW_ROOT", Path.cwd())).resolve()
+sys.path.insert(0, str(ROOT))
+from aiw_runtime.schemas import DIRECTORY_LIST_SCHEMA
+
+def get_litellm_url():
+    return os.environ.get("LITELLM_API_BASE", "http://localhost:4000")
+
+def get_litellm_key():
+    return os.environ.get("LITELLM_MASTER_KEY", "sk-1234")
+
+def main():
+    model = os.environ.get("AIW_MODEL", "dev-coder")
+    print(f"Testing tool calling with model: {model}")
+    
+    url = f"{get_litellm_url()}/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {get_litellm_key()}"
+    }
+    
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant. Please use the directory_list tool to list the current directory '.'."}
+        ],
+        "tools": [DIRECTORY_LIST_SCHEMA],
+        "tool_choice": "auto"
+    }
+    
+    req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req) as response:
+            resp_data = json.loads(response.read().decode('utf-8'))
+            message = resp_data["choices"][0]["message"]
+            if message.get("tool_calls"):
+                print("SUCCESS: Model returned tool_calls:")
+                print(json.dumps(message["tool_calls"], indent=2))
+            else:
+                print("FAILURE: Model did NOT return tool_calls. Output:")
+                print(message.get("content"))
+    except urllib.error.HTTPError as e:
+        print(f"HTTP Error: {e.code}")
+        print(e.read().decode('utf-8'))
+    except Exception as e:
+        print(f"Error: {e}")
+
+if __name__ == "__main__":
+    main()
+PYTHON
