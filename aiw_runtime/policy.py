@@ -26,9 +26,7 @@ def validate_path(path_str: str) -> Path:
 
     return resolved
 
-def validate_write_path(path_str: str) -> Path:
-    """Bloqueios adicionais para escrita."""
-    resolved = validate_path(path_str)
+def _validate_common_write(resolved: Path, allowed_top_levels: list[str]) -> Path:
     root = get_root()
     rel = resolved.relative_to(root)
 
@@ -46,16 +44,17 @@ def validate_write_path(path_str: str) -> Path:
         if top_level in blocked_dirs:
             raise ValueError(f"Escrita bloqueada no diretório protegido: {top_level}")
 
-        # Permitir apenas diretórios seguros
-        # 'docs/', '.aiw/generated/', '.aiw/runs/', 'reports/'
+        # Permitir apenas diretórios seguros configurados
         allowed = False
-        if top_level in ["docs", "reports"]:
+        if top_level in allowed_top_levels:
             allowed = True
+        # Casos especiais de subdiretório
         elif top_level == ".aiw" and len(parts) > 1 and parts[1] in ["generated", "runs"]:
-            allowed = True
+            if ".aiw/generated" in allowed_top_levels or ".aiw/runs" in allowed_top_levels or ".aiw/*" in allowed_top_levels:
+                allowed = True
 
         if not allowed:
-            raise ValueError(f"Escrita não autorizada fora dos diretórios permitidos (docs/, .aiw/generated/, .aiw/runs/, reports/).")
+            raise ValueError(f"Escrita não autorizada fora dos diretórios permitidos ({', '.join(allowed_top_levels)}).")
 
     # Bloquear arquivos binários por extensão (básico)
     binary_exts = {".jpg", ".png", ".gif", ".pdf", ".exe", ".bin", ".so", ".dll", ".pyc", ".zip", ".tar", ".gz"}
@@ -63,6 +62,18 @@ def validate_write_path(path_str: str) -> Path:
         raise ValueError("Escrita em arquivos binários bloqueada.")
 
     return resolved
+
+def validate_write_path(path_str: str) -> Path:
+    """Bloqueios adicionais para file_write/file_patch em áreas seguras."""
+    resolved = validate_path(path_str)
+    allowed = ["docs", "reports", ".aiw/*"]
+    return _validate_common_write(resolved, allowed)
+
+def validate_project_patch_path(path_str: str) -> Path:
+    """Bloqueios para project_patch_preview (código-fonte controlado)."""
+    resolved = validate_path(path_str)
+    allowed = ["aiw_runtime", "scripts", "tests", "docs", ".aiw/generated", ".aiw/generated/tool-smoke"]
+    return _validate_common_write(resolved, allowed)
 
 def validate_shell_command(command_str: str) -> list[str]:
     """

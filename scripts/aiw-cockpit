@@ -1411,6 +1411,54 @@ def render_run_detail(run_dir: Path) -> str:
         </div>
         """
 
+        patch_ids = []
+        for t in tools:
+            res = t.get("result", {})
+            if res.get("tool") == "project_patch_preview" and res.get("ok"):
+                patch_ids.append(res.get("patch_id"))
+
+        patches_html = ""
+        if patch_ids:
+            patches_list = ""
+            for pid in patch_ids:
+                patch_file = ROOT / ".aiw" / "patches" / f"{pid}.json"
+                if patch_file.exists():
+                    pdata = read_json(patch_file)
+                    p_path = pdata.get("path", "")
+                    p_status = pdata.get("status", "")
+                    p_reason = pdata.get("reason", "")
+                    p_diff = pdata.get("diff", "")
+
+                    apply_btn = ""
+                    if p_status == "preview":
+                        apply_btn = f'''<form method="post" action="/runner/patch/apply" style="display:inline"><input type="hidden" name="patch_id" value="{pid}"><input type="hidden" name="run_path" value="{rel}"><button class="btn btn-run" style="padding:4px 8px;font-size:12px" type="submit">Aplicar</button></form>'''
+                    elif p_status == "applied":
+                        apply_btn = f'''<form method="post" action="/runner/patch/rollback" style="display:inline"><input type="hidden" name="patch_id" value="{pid}"><input type="hidden" name="run_path" value="{rel}"><button class="btn btn-danger" style="padding:4px 8px;font-size:12px" type="submit">Rollback</button></form>'''
+
+                    patches_list += f"""
+                    <div style="border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:8px;background:var(--panel2)">
+                        <div style="display:flex;justify-content:space-between;margin-bottom:8px;align-items:center">
+                            <strong style="color:var(--text)">{html.escape(p_path)}</strong>
+                            <div>
+                                <span class="tag status-{p_status}" style="margin-right:8px">{p_status}</span>
+                                {apply_btn}
+                            </div>
+                        </div>
+                        <div style="color:var(--muted);font-size:13px;margin-bottom:8px">Motivo: {html.escape(p_reason)}</div>
+                        <details>
+                            <summary style="cursor:pointer;color:var(--muted);font-size:12px">Ver diff técnico</summary>
+                            <pre style="margin-top:8px;background:var(--bg);padding:8px;border-radius:4px;font-size:12px;overflow-x:auto;color:var(--text)">{html.escape(p_diff)}</pre>
+                        </details>
+                    </div>
+                    """
+            if patches_list:
+                patches_html = f"""
+                <div class="priority-block">
+                  <h3>Alterações propostas</h3>
+                  {patches_list}
+                </div>
+                """
+
     # Action bar
     next_action = ""
     if status_label == "review":
@@ -1524,6 +1572,7 @@ def render_run_detail(run_dir: Path) -> str:
 
       {objective_block}
       {result_block}
+      {patches_html}
       {tools_html}
       {timeline_html}
       {file_block}
@@ -1846,6 +1895,32 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/action/reject":
             ok, output = run_action("reject", run_path, reason)
             redirect = f"/run?path={quote(run_path)}"
+        elif path == "/runner/patch/apply":
+            patch_id = form.get("patch_id", [""])[0]
+            run_path = form.get("run_path", [""])[0]
+            if patch_id:
+                if str(ROOT) not in sys.path:
+                    sys.path.insert(0, str(ROOT))
+                from aiw_runtime.tools import project_patch_apply
+                res = project_patch_apply(patch_id)
+                ok = res.get("ok", False)
+                output = res.get("error", "Unknown error")
+            else:
+                ok, output = False, "Missing patch_id"
+            redirect = f"/run?path={quote(run_path)}" if run_path else "/"
+        elif path == "/runner/patch/rollback":
+            patch_id = form.get("patch_id", [""])[0]
+            run_path = form.get("run_path", [""])[0]
+            if patch_id:
+                if str(ROOT) not in sys.path:
+                    sys.path.insert(0, str(ROOT))
+                from aiw_runtime.tools import project_patch_rollback
+                res = project_patch_rollback(patch_id)
+                ok = res.get("ok", False)
+                output = res.get("error", "Unknown error")
+            else:
+                ok, output = False, "Missing patch_id"
+            redirect = f"/run?path={quote(run_path)}" if run_path else "/"
         else:
             self.send_json({"error": "not_found", "path": path}, status=404)
             return

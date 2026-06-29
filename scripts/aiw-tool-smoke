@@ -15,7 +15,11 @@ from pathlib import Path
 ROOT = Path(os.environ.get("AIW_ROOT", Path.cwd())).resolve()
 sys.path.insert(0, str(ROOT))
 
-from aiw_runtime.tools import directory_list, file_read, shell_exec, file_write, file_patch
+from aiw_runtime.tools import (
+    directory_list, file_read, shell_exec,
+    file_write, file_patch,
+    project_patch_preview, project_patch_apply, project_patch_rollback
+)
 
 def run_test(name, func, expected_ok, **kwargs):
     print(f"Testing {name}...", end=" ")
@@ -34,6 +38,7 @@ def main():
     test_dir = ROOT / ".aiw" / "generated" / "tool-smoke"
     test_dir.mkdir(parents=True, exist_ok=True)
     test_file = test_dir / "write-test.md"
+    project_test = test_dir / "project-write-base.md"
 
     if test_file.exists():
         test_file.unlink()
@@ -48,6 +53,27 @@ def main():
     rel_test_file = str(test_file.relative_to(ROOT))
     all_passed &= run_test("file_write success", file_write, True, path=rel_test_file, content="alpha beta gamma\n", overwrite=True)
     all_passed &= run_test("file_patch success", file_patch, True, path=rel_test_file, old_text="beta", new_text="BETA", expected_replacements=1)
+
+    # Project patch tests
+    rel_proj_test = str(project_test.relative_to(ROOT))
+    all_passed &= run_test("file_write project base", file_write, True, path=rel_proj_test, content="alpha beta gamma\n", overwrite=True)
+
+    print("Testing project_patch_preview success...", end=" ")
+    res_preview = project_patch_preview(path=rel_proj_test, old_text="beta", new_text="BETA", expected_replacements=1, reason="smoke preview")
+    if res_preview.get("ok"):
+        print("PASS")
+        patch_id = res_preview.get("patch_id")
+        all_passed &= run_test("project_patch_apply success", project_patch_apply, True, patch_id=patch_id)
+        all_passed &= run_test("project_patch_rollback success", project_patch_rollback, True, patch_id=patch_id)
+    else:
+        print(f"FAIL (got {res_preview.get('ok')})")
+        print(json.dumps(res_preview, indent=2))
+        all_passed = False
+
+    # Project patch Fail paths
+    all_passed &= run_test("project_patch_preview wrong repl", project_patch_preview, False, path="aiw_runtime/__init__.py", old_text="__all__", new_text="__all__", expected_replacements=999, reason="expected failure")
+    all_passed &= run_test("project_patch_preview in .env", project_patch_preview, False, path=".env", old_text="x", new_text="y", expected_replacements=1, reason="must fail")
+    all_passed &= run_test("project_patch_preview outside repo", project_patch_preview, False, path="../outside.py", old_text="x", new_text="y", expected_replacements=1, reason="must fail")
 
     # Fail paths
     all_passed &= run_test("file_write in .env", file_write, False, path=".env", content="x", overwrite=True)

@@ -4,8 +4,10 @@ import json
 import subprocess
 import time
 import shutil
+import uuid
+import difflib
 from pathlib import Path
-from .policy import validate_path, validate_write_path, validate_shell_command, get_root
+from .policy import validate_path, validate_write_path, validate_project_patch_path, validate_shell_command, get_root
 
 def directory_list(path: str = ".", max_depth: int = 2, limit: int = 100):
     try:
@@ -168,9 +170,150 @@ def file_patch(path: str, old_text: str, new_text: str, expected_replacements: i
     except Exception as e:
         return {"ok": False, "tool": "file_patch", "error": str(e)}
 
+def project_patch_preview(path: str, old_text: str, new_text: str, expected_replacements: int = 1, reason: str = ""):
+    try:
+        resolved_path = validate_project_patch_path(path)
+
+        if not resolved_path.exists():
+            return {"ok": False, "tool": "project_patch_preview", "error": "Arquivo não existe."}
+
+        content = resolved_path.read_text(encoding="utf-8")
+        occurrences = content.count(old_text)
+
+        if occurrences != expected_replacements:
+            return {
+                "ok": False,
+                "tool": "project_patch_preview",
+                "error": f"Encontradas {occurrences} ocorrências de old_text, mas esperado {expected_replacements}. Substituição abortada."
+            }
+
+        new_content = content.replace(old_text, new_text)
+
+        # Generate unified diff
+        diff_lines = list(difflib.unified_diff(
+            content.splitlines(keepends=True),
+            new_content.splitlines(keepends=True),
+            fromfile=path,
+            tofile=path,
+            n=3
+        ))
+        diff_text = "".join(diff_lines)
+
+        patch_id = time.strftime("%Y%m%dT%H%M%SZ-") + uuid.uuid4().hex[:8]
+        patches_dir = get_root() / ".aiw" / "patches"
+        patches_dir.mkdir(parents=True, exist_ok=True)
+
+        patch_data = {
+            "patch_id": patch_id,
+            "path": str(resolved_path.relative_to(get_root())),
+            "old_text": old_text,
+            "new_text": new_text,
+            "reason": reason,
+            "diff": diff_text,
+            "replacements": occurrences,
+            "status": "preview",
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        }
+
+        patch_file = patches_dir / f"{patch_id}.json"
+        patch_file.write_text(json.dumps(patch_data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        return {
+            "ok": True,
+            "tool": "project_patch_preview",
+            "patch_id": patch_id,
+            "path": patch_data["path"],
+            "replacements": occurrences,
+            "diff": diff_text,
+            "status": "preview"
+        }
+    except Exception as e:
+        return {"ok": False, "tool": "project_patch_preview", "error": str(e)}
+
+def project_patch_apply(patch_id: str):
+    try:
+        patch_file = get_root() / ".aiw" / "patches" / f"{patch_id}.json"
+        if not patch_file.exists():
+            return {"ok": False, "tool": "project_patch_apply", "error": "Patch não encontrado."}
+
+        patch_data = json.loads(patch_file.read_text(encoding="utf-8"))
+        if patch_data.get("status") != "preview":
+            return {"ok": False, "tool": "project_patch_apply", "error": f"Patch status inválido: {patch_data.get('status')}"}
+
+        path_str = patch_data["path"]
+        resolved_path = validate_project_patch_path(path_str)
+
+        content = resolved_path.read_text(encoding="utf-8")
+        old_text = patch_data["old_text"]
+        new_text = patch_data["new_text"]
+
+        occurrences = content.count(old_text)
+        if occurrences != patch_data["replacements"]:
+            return {"ok": False, "tool": "project_patch_apply", "error": "Conteúdo original mudou. Rollback virtual de patch abortado."}
+
+        backup_path = _create_backup(resolved_path)
+        new_content = content.replace(old_text, new_text)
+        resolved_path.write_text(new_content, encoding="utf-8")
+
+        patch_data["status"] = "applied"
+        patch_data["backup_path"] = backup_path
+        patch_data["applied_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        patch_file.write_text(json.dumps(patch_data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        return {
+            "ok": True,
+            "tool": "project_patch_apply",
+            "patch_id": patch_id,
+            "path": path_str,
+            "backup_path": backup_path,
+            "status": "applied"
+        }
+    except Exception as e:
+        return {"ok": False, "tool": "project_patch_apply", "error": str(e)}
+
+def project_patch_rollback(patch_id: str):
+    try:
+        patch_file = get_root() / ".aiw" / "patches" / f"{patch_id}.json"
+        if not patch_file.exists():
+            return {"ok": False, "tool": "project_patch_rollback", "error": "Patch não encontrado."}
+
+        patch_data = json.loads(patch_file.read_text(encoding="utf-8"))
+        if patch_data.get("status") != "applied":
+            return {"ok": False, "tool": "project_patch_rollback", "error": f"Patch não está aplicado. Status atual: {patch_data.get('status')}"}
+
+        path_str = patch_data["path"]
+        resolved_path = validate_project_patch_path(path_str)
+
+        backup_str = patch_data.get("backup_path")
+        if not backup_str:
+            return {"ok": False, "tool": "project_patch_rollback", "error": "Nenhum backup encontrado para este patch."}
+
+        backup_path = get_root() / backup_str
+        if not backup_path.exists():
+            return {"ok": False, "tool": "project_patch_rollback", "error": "Arquivo de backup não encontrado fisicamente."}
+
+        shutil.copy2(backup_path, resolved_path)
+
+        patch_data["status"] = "rolled_back"
+        patch_data["rolled_back_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        patch_file.write_text(json.dumps(patch_data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        return {
+            "ok": True,
+            "tool": "project_patch_rollback",
+            "patch_id": patch_id,
+            "path": path_str,
+            "status": "rolled_back"
+        }
+    except Exception as e:
+        return {"ok": False, "tool": "project_patch_rollback", "error": str(e)}
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("tool", choices=["directory_list", "file_read", "shell_exec", "file_write", "file_patch"])
+    parser.add_argument("tool", choices=[
+        "directory_list", "file_read", "shell_exec", "file_write", "file_patch",
+        "project_patch_preview", "project_patch_apply", "project_patch_rollback"
+    ])
     parser.add_argument("--path", type=str)
     parser.add_argument("--max-depth", type=int, default=2)
     parser.add_argument("--limit", type=int, default=100)
@@ -185,6 +328,8 @@ if __name__ == "__main__":
     parser.add_argument("--old-text", type=str)
     parser.add_argument("--new-text", type=str)
     parser.add_argument("--expected-replacements", type=int, default=1)
+    parser.add_argument("--reason", type=str, default="")
+    parser.add_argument("--patch-id", type=str)
 
     args = parser.parse_args()
 
@@ -199,3 +344,9 @@ if __name__ == "__main__":
         print(json.dumps(file_write(args.path, args.content, overwrite_bool), indent=2))
     elif args.tool == "file_patch":
         print(json.dumps(file_patch(args.path, args.old_text, args.new_text, args.expected_replacements), indent=2))
+    elif args.tool == "project_patch_preview":
+        print(json.dumps(project_patch_preview(args.path, args.old_text, args.new_text, args.expected_replacements, args.reason), indent=2))
+    elif args.tool == "project_patch_apply":
+        print(json.dumps(project_patch_apply(args.patch_id), indent=2))
+    elif args.tool == "project_patch_rollback":
+        print(json.dumps(project_patch_rollback(args.patch_id), indent=2))

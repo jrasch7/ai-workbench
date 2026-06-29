@@ -82,4 +82,62 @@ FILE_PATCH_SCHEMA = {
     }
 }
 
-TOOLS = [DIRECTORY_LIST_SCHEMA, FILE_READ_SCHEMA, SHELL_EXEC_SCHEMA, FILE_WRITE_SCHEMA, FILE_PATCH_SCHEMA]
+PROJECT_PATCH_PREVIEW_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "project_patch_preview",
+        "description": "Cria uma proposta de alteração em código-fonte. A alteração não é aplicada imediatamente; requer aprovação posterior (apply).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Caminho relativo ao repo"},
+                "old_text": {"type": "string", "description": "Texto exato a ser substituído"},
+                "new_text": {"type": "string", "description": "Novo texto"},
+                "expected_replacements": {"type": "integer", "description": "Quantidade exata de ocorrências esperadas", "default": 1},
+                "reason": {"type": "string", "description": "Explicação curta sobre a mudança"}
+            },
+            "required": ["path", "old_text", "new_text", "expected_replacements", "reason"]
+        }
+    }
+}
+
+PROJECT_PATCH_APPLY_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "project_patch_apply",
+        "description": "Aplica uma proposta de patch (preview) gerada por project_patch_preview.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "patch_id": {"type": "string", "description": "O ID do patch gerado."}
+            },
+            "required": ["patch_id"]
+        }
+    }
+}
+
+PROJECT_PATCH_ROLLBACK_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "project_patch_rollback",
+        "description": "Desfaz (rollback) um patch que já foi aplicado via project_patch_apply, restaurando o backup gerado.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "patch_id": {"type": "string", "description": "O ID do patch aplicado."}
+            },
+            "required": ["patch_id"]
+        }
+    }
+}
+
+TOOLS = [
+    DIRECTORY_LIST_SCHEMA,
+    FILE_READ_SCHEMA,
+    SHELL_EXEC_SCHEMA,
+    FILE_WRITE_SCHEMA,
+    FILE_PATCH_SCHEMA,
+    PROJECT_PATCH_PREVIEW_SCHEMA,
+    PROJECT_PATCH_APPLY_SCHEMA,
+    PROJECT_PATCH_ROLLBACK_SCHEMA
+]

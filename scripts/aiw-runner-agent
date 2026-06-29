@@ -25,7 +25,11 @@ ROOT = Path(os.environ.get("AIW_ROOT", Path.cwd())).resolve()
 # Add root to sys.path to import aiw_runtime
 sys.path.insert(0, str(ROOT))
 from aiw_runtime.schemas import TOOLS
-from aiw_runtime.tools import directory_list, file_read, shell_exec, file_write, file_patch
+from aiw_runtime.tools import (
+    directory_list, file_read, shell_exec,
+    file_write, file_patch,
+    project_patch_preview, project_patch_apply, project_patch_rollback
+)
 
 def get_litellm_url():
     return os.environ.get("LITELLM_API_BASE", "http://localhost:4000")
@@ -42,18 +46,18 @@ def run_agent():
     if not tasks:
         print("NO_TASKS")
         sys.exit(0)
-        
+
     task_file = tasks[0]
     task_id = task_file.stem
     ts = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     run_dir = ROOT / ".aiw" / "runs" / f"{ts}-{task_id}"
     run_dir.mkdir(parents=True, exist_ok=True)
-    
+
     model = os.environ.get("AIW_MODEL", "dev-coder")
-    
+
     shutil.copy2(task_file, run_dir / "task.md")
     task_content = task_file.read_text(encoding="utf-8")
-    
+
     status = {
         "id": run_dir.name,
         "title": task_id,
@@ -65,39 +69,39 @@ def run_agent():
         "log_path": str(run_dir / "commands.log"),
         "model": model,
     }
-    
+
     with open(run_dir / "status.json", "w") as f:
         json.dump(status, f, indent=2)
-        
+
     messages = [
         {"role": "system", "content": "Você é o AIW Runner Agent. Você tem ferramentas disponíveis. Realize a tarefa usando as ferramentas, se necessário."},
         {"role": "user", "content": task_content}
     ]
-    
+
     commands_log = open(run_dir / "commands.log", "w", encoding="utf-8")
     tool_traces_log = open(run_dir / "tool-traces.log", "w", encoding="utf-8")
     tool_traces_jsonl = open(run_dir / "tool-traces.jsonl", "w", encoding="utf-8")
-    
+
     url = f"{get_litellm_url()}/v1/chat/completions"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {get_litellm_key()}"
     }
-    
+
     max_iterations = 10
     iteration = 0
-    
+
     try:
         while iteration < max_iterations:
             iteration += 1
-            
+
             payload = {
                 "model": model,
                 "messages": messages,
                 "tools": TOOLS,
                 "tool_choice": "auto"
             }
-            
+
             req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers, method="POST")
             try:
                 with urllib.request.urlopen(req) as response:
@@ -107,22 +111,22 @@ def run_agent():
                 commands_log.write(f"HTTP Error: {e.code} - {error_body}\n")
                 status["status"] = "failed"
                 break
-                
+
             message = resp_data["choices"][0]["message"]
             messages.append(message)
-            
+
             if message.get("content"):
                 commands_log.write(f"Agent: {message['content']}\n")
-                
+
             if not message.get("tool_calls"):
                 break
-                
+
             for tool_call in message["tool_calls"]:
                 tool_name = tool_call["function"]["name"]
                 args_str = tool_call["function"]["arguments"]
                 commands_log.write(f"Tool Call: {tool_name}({args_str})\n")
                 tool_traces_log.write(f"CALL {tool_name}: {args_str}\n")
-                
+
                 try:
                     args = json.loads(args_str)
                     if tool_name == "directory_list":
@@ -135,45 +139,51 @@ def run_agent():
                         res = file_write(**args)
                     elif tool_name == "file_patch":
                         res = file_patch(**args)
+                    elif tool_name == "project_patch_preview":
+                        res = project_patch_preview(**args)
+                    elif tool_name == "project_patch_apply":
+                        res = project_patch_apply(**args)
+                    elif tool_name == "project_patch_rollback":
+                        res = project_patch_rollback(**args)
                     else:
                         res = {"ok": False, "error": "Unknown tool"}
                 except Exception as e:
                     res = {"ok": False, "error": str(e)}
-                    
+
                 res_str = json.dumps(res, ensure_ascii=False)
                 tool_traces_log.write(f"RESULT: {res_str}\n")
                 commands_log.write(f"Tool Result: {res_str}\n")
                 tool_traces_jsonl.write(json.dumps({"call": tool_call, "result": res}) + "\n")
-                
+
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call["id"],
                     "name": tool_name,
                     "content": res_str
                 })
-                
+
         status["status"] = "succeeded"
     except Exception as e:
         commands_log.write(f"Internal error: {traceback.format_exc()}\n")
         status["status"] = "failed"
-        
+
     status["finished_at"] = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     with open(run_dir / "status.json", "w") as f:
         json.dump(status, f, indent=2)
-        
+
     with open(run_dir / "messages.json", "w") as f:
         json.dump(messages, f, indent=2, ensure_ascii=False)
-        
+
     with open(run_dir / "summary.md", "w", encoding="utf-8") as f:
         f.write("# Agent Run Summary\n\n")
         f.write(f"Task: {task_id}\n")
         f.write(f"Status: {status['status']}\n")
         f.write(f"Iterations: {iteration}\n")
-        
+
     commands_log.close()
     tool_traces_log.close()
     tool_traces_jsonl.close()
-    
+
     review_dir = ROOT / ".aiw" / "tasks" / "review"
     review_dir.mkdir(parents=True, exist_ok=True)
     shutil.move(str(task_file), str(review_dir / task_file.name))
