@@ -47,4 +47,39 @@ SHELL_EXEC_SCHEMA = {
     }
 }
 
-TOOLS = [DIRECTORY_LIST_SCHEMA, FILE_READ_SCHEMA, SHELL_EXEC_SCHEMA]
+FILE_WRITE_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "file_write",
+        "description": "Cria ou sobrescreve um arquivo (permitido apenas em caminhos autorizados).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Caminho relativo ao repo"},
+                "content": {"type": "string", "description": "Conteúdo do arquivo"},
+                "overwrite": {"type": "boolean", "description": "Se verdadeiro, cria backup e sobrescreve", "default": False}
+            },
+            "required": ["path", "content"]
+        }
+    }
+}
+
+FILE_PATCH_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "file_patch",
+        "description": "Substitui um texto exato em um arquivo (permitido apenas em caminhos autorizados).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Caminho relativo ao repo"},
+                "old_text": {"type": "string", "description": "Texto exato a ser substituído"},
+                "new_text": {"type": "string", "description": "Novo texto"},
+                "expected_replacements": {"type": "integer", "description": "Quantidade exata de ocorrências esperadas", "default": 1}
+            },
+            "required": ["path", "old_text", "new_text", "expected_replacements"]
+        }
+    }
+}
+
+TOOLS = [DIRECTORY_LIST_SCHEMA, FILE_READ_SCHEMA, SHELL_EXEC_SCHEMA, FILE_WRITE_SCHEMA, FILE_PATCH_SCHEMA]

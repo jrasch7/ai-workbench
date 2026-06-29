@@ -25,7 +25,7 @@ ROOT = Path(os.environ.get("AIW_ROOT", Path.cwd())).resolve()
 # Add root to sys.path to import aiw_runtime
 sys.path.insert(0, str(ROOT))
 from aiw_runtime.schemas import TOOLS
-from aiw_runtime.tools import directory_list, file_read, shell_exec
+from aiw_runtime.tools import directory_list, file_read, shell_exec, file_write, file_patch
 
 def get_litellm_url():
     return os.environ.get("LITELLM_API_BASE", "http://localhost:4000")
@@ -131,6 +131,10 @@ def run_agent():
                         res = file_read(**args)
                     elif tool_name == "shell_exec":
                         res = shell_exec(**args)
+                    elif tool_name == "file_write":
+                        res = file_write(**args)
+                    elif tool_name == "file_patch":
+                        res = file_patch(**args)
                     else:
                         res = {"ok": False, "error": "Unknown tool"}
                 except Exception as e:
