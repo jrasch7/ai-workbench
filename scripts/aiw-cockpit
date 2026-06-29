@@ -116,6 +116,21 @@ def short_git_head() -> str:
         return "-"
 
 
+def current_git_branch() -> str:
+    try:
+        proc = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        branch = proc.stdout.strip()
+        return branch or "-"
+    except Exception:
+        return "-"
+
+
 def list_patch_proposals(limit: int = 30) -> list[dict]:
     patches_dir = ROOT / ".aiw" / "patches"
     if not patches_dir.exists():
@@ -139,6 +154,19 @@ def list_patch_proposals(limit: int = 30) -> list[dict]:
     return proposals
 
 
+def diff_summary(diff_text: str) -> str:
+    if not diff_text:
+        return "Sem diff registrado."
+    added = 0
+    removed = 0
+    for line in diff_text.splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            added += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            removed += 1
+    return f"+{added} / -{removed} linhas"
+
+
 SENSITIVE_FIELD_PARTS = ("key", "token", "secret", "password", "api_key")
 SENSITIVE_VALUE_PARTS = (".env", "litellm_master_key", "api_key", "client_secret", "private_key")
 
@@ -155,6 +183,21 @@ def mask_text(value: object, limit: int = 900) -> str:
         return "[masked]"
     if len(text) > limit:
         return text[:limit].rstrip() + "..."
+    return text
+
+
+def sanitize_ui_text(value: object) -> str:
+    text = "" if value is None else str(value)
+    replacements = {
+        ".env": "[masked-env]",
+        "LITELLM_MASTER_KEY": "[masked-key]",
+        "litellm_master_key": "[masked-key]",
+        "api_key": "[masked-key]",
+        "client_secret": "[masked-secret]",
+        "private_key": "[masked-secret]",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
     return text
 
 
@@ -396,6 +439,134 @@ def render_tool_evidence_block(evidence: dict, rel: str) -> str:
     """
 
 
+def build_run_timeline(run_dir: Path, evidence: dict) -> list[dict]:
+    status = read_json(run_dir / "status.json")
+    events = []
+
+    created = status.get("created_at") or status.get("started_at") or ""
+    if (run_dir / "task.md").exists():
+        events.append({
+            "type": "task",
+            "time": created,
+            "status": "ok",
+            "summary": "Tarefa criada",
+            "raw": {"task_id": read_task_id(run_dir), "title": read_task_title(run_dir)},
+        })
+
+    if status.get("started_at") or status.get("model"):
+        events.append({
+            "type": "model",
+            "time": status.get("started_at", ""),
+            "status": "ok" if status.get("llm_status", "") not in ("failed", "error") else "erro",
+            "summary": f"Modelo iniciado: {status.get('model', '-')}",
+            "raw": mask_payload({"model": status.get("model"), "llm_status": status.get("llm_status")}),
+        })
+
+    messages_file = run_dir / "messages.json"
+    if messages_file.exists():
+        msgs = read_json(messages_file)
+        if isinstance(msgs, list):
+            for msg in msgs:
+                role = msg.get("role", "")
+                if role == "assistant" and msg.get("tool_calls"):
+                    events.append({
+                        "type": "model",
+                        "time": msg.get("created_at", ""),
+                        "status": "ok",
+                        "summary": "Modelo solicitou ferramentas",
+                        "raw": mask_payload(msg),
+                    })
+
+    for tool in evidence.get("tools", []):
+        name = tool["name"]
+        if name == "project_patch_preview":
+            summary = "Patch proposto"
+            event_type = "patch"
+        elif name == "project_patch_apply":
+            summary = "Patch aplicado"
+            event_type = "patch"
+        elif name == "project_patch_rollback":
+            summary = "Patch revertido"
+            event_type = "patch"
+        elif name == "offline_dry_run":
+            summary = "Run offline validado"
+            event_type = "offline"
+        else:
+            summary = f"Tool executada: {name}"
+            event_type = "tool"
+        events.append({
+            "type": event_type,
+            "time": "",
+            "status": "ok" if tool.get("ok") else "erro",
+            "summary": summary,
+            "raw": tool.get("raw", {}),
+        })
+
+    final_status = status.get("status", "")
+    if final_status:
+        final_summary = "Execução finalizada"
+        if final_status in ("failed", "timed_out") or "failed" in str(final_status):
+            final_summary = "Falha upstream / timeout"
+        events.append({
+            "type": "finish",
+            "time": status.get("finished_at", ""),
+            "status": final_status,
+            "summary": final_summary,
+            "raw": mask_payload(status),
+        })
+
+    if not events and (run_dir / "summary.md").exists():
+        events.append({
+            "type": "summary",
+            "time": "",
+            "status": "ok",
+            "summary": "Resumo disponível",
+            "raw": {"summary": read_summary_first_lines(run_dir)},
+        })
+
+    return events
+
+
+def render_run_timeline_block(events: list[dict]) -> str:
+    if not events:
+        return """
+        <div class="priority-block">
+          <h3>Timeline do run</h3>
+          <div class="empty-state">Nenhum evento encontrado para este run.</div>
+        </div>
+        """
+
+    items = ""
+    for event in events:
+        status = html.escape(str(event.get("status") or "-"))
+        status_cls = "status-done" if status in ("ok", "review", "succeeded", "succeeded_offline") else ("status-failed" if status in ("erro", "failed", "timed_out") else "status-running")
+        raw = safe_json_text(event.get("raw", {}), limit=1800)
+        time_line = html.escape(str(event.get("time") or "sem horário registrado"))
+        items += f"""
+        <div class="timeline-item">
+          <div class="timeline-dot"></div>
+          <div class="timeline-body">
+            <div class="timeline-head">
+              <strong>{html.escape(event.get("summary", "-"))}</strong>
+              <span class="tag {status_cls}">{status}</span>
+            </div>
+            <div class="timeline-meta">{html.escape(event.get("type", "-"))} · {time_line}</div>
+            <details>
+              <summary style="cursor:pointer;color:var(--muted);font-size:12px">Avançado</summary>
+              <pre style="margin-top:8px;border-radius:8px;background:var(--bg)">{html.escape(raw)}</pre>
+            </details>
+          </div>
+        </div>
+        """
+
+    return f"""
+    <div class="priority-block">
+      <h3>Timeline do run</h3>
+      <div class="timeline-list">{items}</div>
+    </div>
+    """
+
+
 def run_has_tool(run_dir: Path, tool_name: str) -> bool:
     traces = run_dir / "tool-traces.jsonl"
     if not traces.exists():
@@ -439,18 +610,81 @@ def classify_run(row: dict) -> dict:
 
 
 def context_health() -> dict:
+    docs_dir = ROOT / "docs"
     runbooks_dir = ROOT / "docs" / "runbooks"
+    architecture_dir = ROOT / "docs" / "architecture"
+    roadmap_dir = ROOT / "docs" / "roadmap"
+    model_bench_dir = ROOT / "docs" / "model-bench"
     runs_dir = ROOT / ".aiw" / "runs"
+    docs_count = len(list(docs_dir.rglob("*.md"))) if docs_dir.is_dir() else 0
+    runbook_files = sorted(runbooks_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True) if runbooks_dir.is_dir() else []
+    arch_files = list(architecture_dir.glob("*.md")) if architecture_dir.is_dir() else []
+    roadmap_files = list(roadmap_dir.glob("*.md")) if roadmap_dir.is_dir() else []
+    script_checks = [
+        "scripts/aiw-cockpit",
+        "scripts/aiw-runner-agent",
+        "scripts/aiw-tool-smoke",
+        "scripts/aiw-task-create",
+        "scripts/aiw-runner-once",
+    ]
+    runs = []
+    if runs_dir.exists():
+        runs = sorted([p for p in runs_dir.iterdir() if p.is_dir()], reverse=True)
+
+    last_offline = "-"
+    last_online = "-"
+    for run in runs:
+        evidence = build_tool_evidence(run)
+        status = read_json(run / "status.json").get("status", "unknown")
+        label = f"{run.name}: {status}"
+        if evidence["mode"] == "offline" and last_offline == "-":
+            last_offline = label
+        elif evidence["mode"] == "online" and last_online == "-":
+            last_online = label
+        if last_offline != "-" and last_online != "-":
+            break
+
+    checks_ok = [
+        (ROOT / "README.md").is_file(),
+        docs_dir.is_dir(),
+        runbooks_dir.is_dir(),
+        bool(arch_files),
+        (ROOT / "docs" / "MODEL_STRATEGY.md").is_file(),
+        (ROOT / "config" / "litellm.yaml").is_file(),
+        (ROOT / "aiw_runtime").is_dir(),
+        all((ROOT / s).is_file() for s in script_checks),
+    ]
+    score = sum(1 for ok in checks_ok if ok)
+    if score >= 7:
+        context_status = "Contexto bom"
+    elif score >= 5:
+        context_status = "Contexto incompleto"
+    else:
+        context_status = "Precisa atenção"
+
     return {
         "README": (ROOT / "README.md").is_file(),
-        "docs": (ROOT / "docs").is_dir(),
+        "docs": docs_dir.is_dir(),
+        "docs_count": docs_count,
         "runbooks": runbooks_dir.is_dir(),
-        "runbooks_count": len(list(runbooks_dir.glob("*.md"))) if runbooks_dir.is_dir() else 0,
+        "runbooks_count": len(runbook_files),
+        "recent_runbooks": [str(p.relative_to(ROOT)) for p in runbook_files[:5]],
+        "architecture_count": len(arch_files),
+        "roadmap_count": len(roadmap_files),
+        "model_strategy": (ROOT / "docs" / "MODEL_STRATEGY.md").is_file(),
+        "model_bench": model_bench_dir.is_dir(),
         "litellm_config": (ROOT / "config" / "litellm.yaml").is_file(),
         "aiw_runtime": (ROOT / "aiw_runtime").is_dir(),
+        "scripts_ok": all((ROOT / s).is_file() for s in script_checks),
+        "scripts_checked": script_checks,
         "pending_patches": len([p for p in list_patch_proposals(100) if p["status"] == "preview"]),
-        "recent_runs": len([p for p in runs_dir.iterdir() if p.is_dir()]) if runs_dir.exists() else 0,
+        "recent_runs": len(runs),
+        "last_offline": last_offline,
+        "last_online": last_online,
         "git_head": short_git_head(),
+        "branch": current_git_branch(),
+        "context_status": context_status,
+        "score": f"{score}/{len(checks_ok)}",
     }
 
 
@@ -809,6 +1043,39 @@ body {
   gap: 5px;
   flex-wrap: wrap;
 }
+.filter-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 14px;
+}
+.filter-btn {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255,255,255,0.035);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 12px;
+}
+.filter-btn.active, .filter-btn:hover {
+  border-color: var(--accent-border);
+  background: var(--accent-dim);
+  color: #c4b5fd;
+}
+.operational-run-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+.operational-run-grid .mini-run {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255,255,255,0.02);
+  margin: 0;
+  padding: 12px;
+}
 .health-grid {
   display: grid;
   gap: 9px;
@@ -863,6 +1130,58 @@ body {
 .patch-actions .btn {
   padding: 6px 11px;
   font-size: 12px;
+}
+.context-status {
+  border: 1px solid var(--accent-border);
+  border-radius: 16px;
+  background: var(--accent-dim);
+  color: #e8e3ff;
+  font-size: 16px;
+  font-weight: 800;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+}
+.context-recent-list {
+  color: var(--muted);
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  margin-top: 6px;
+}
+.timeline-list {
+  display: grid;
+  gap: 12px;
+}
+.timeline-item {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 10px;
+}
+.timeline-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #c4b5fd;
+  margin: 6px 0 0 4px;
+  box-shadow: 0 0 0 4px rgba(139,92,246,0.14);
+}
+.timeline-body {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel2);
+  padding: 12px 14px;
+}
+.timeline-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.timeline-meta {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 8px;
 }
 .evidence-summary {
   display: grid;
@@ -1444,6 +1763,15 @@ def render_page() -> str:
         cls = classify_run(row)
         title = html.escape(row["title"] if row["title"] != "-" else row["task_id"])
         run_path = html.escape(row["run"])
+        filter_flags = [
+            "all",
+            "legacy" if cls["mode"] == "Legado" else cls["mode"].lower(),
+            "tools" if cls["has_tools"] else "",
+            "patches" if cls["has_patch_preview"] else "",
+            "failed" if cls["failed"] or cls["failed_tool"] else "",
+            "applied" if cls["has_patch_apply"] else "",
+        ]
+        filter_data = " ".join([f for f in filter_flags if f])
         badges = [
             f'<span class="tag status-{html.escape(row["status"])}">{html.escape(row["status"])}</span>',
             f'<span class="tag">Tools {cls["tool_total"]}</span>' if cls["has_tools"] else "",
@@ -1454,7 +1782,7 @@ def render_page() -> str:
             '<span class="tag status-offline">Offline</span>' if cls["mode"] == "Offline" else "",
         ]
         return f"""
-        <div class="mini-run">
+        <div class="mini-run" data-run-filter="{html.escape(filter_data)}">
           <div class="mini-run-title"><a href="/run?path={quote(row['run'])}">{title}</a></div>
           <div class="mini-run-meta">{''.join(b for b in badges if b)}</div>
           <div class="card-doc" style="margin-top:7px;margin-bottom:0">{run_path}</div>
@@ -1473,29 +1801,39 @@ def render_page() -> str:
     online_runs = [r for r in runs if classify_run(r)["mode"] == "Online"]
     offline_runs = [r for r in runs if classify_run(r)["mode"] == "Offline"]
     legacy_runs = [r for r in runs if classify_run(r)["mode"] == "Legado"]
+    all_run_cards = "".join(mini_run_card(r) for r in runs[:18])
+    if not all_run_cards:
+        all_run_cards = '<div class="empty-state">Nenhum run encontrado.</div>'
 
     def patch_item(patch: dict) -> str:
         pid = html.escape(patch["patch_id"])
+        short_pid = html.escape(patch["patch_id"][:17])
         status = html.escape(patch["status"])
         path_value = html.escape(patch["path"] or "-")
         reason = html.escape(patch["reason"] or "Sem motivo registrado.")
         diff = html.escape(patch["diff"] or "")
         run_assoc = html.escape(patch["run_id"] or "sem run associado")
+        created = html.escape(patch.get("created_at") or "-")
+        diff_stats = html.escape(diff_summary(patch["diff"]))
         apply_btn = ""
         if patch["status"] == "preview":
             apply_btn = f'''<form method="post" action="/runner/patch/apply"><input type="hidden" name="patch_id" value="{pid}"><button class="btn btn-run" type="submit">Aplicar</button></form>'''
         elif patch["status"] == "applied":
             apply_btn = f'''<form method="post" action="/runner/patch/rollback"><input type="hidden" name="patch_id" value="{pid}"><button class="btn btn-danger" type="submit">Rollback</button></form>'''
         return f"""
-        <div class="patch-item">
+        <div class="patch-item" data-patch-filter="{status}">
           <div class="patch-head">
             <div>
               <div class="patch-path">{path_value}</div>
-              <div class="card-doc" style="margin:4px 0 0">{pid} · {run_assoc}</div>
+              <div class="card-doc" style="margin:4px 0 0">{short_pid} · {run_assoc}</div>
             </div>
             <span class="tag status-{status}">{status}</span>
           </div>
           <div class="patch-reason">{reason}</div>
+          <div class="card-meta">
+            <span class="tag">{created}</span>
+            <span class="tag">{diff_stats}</span>
+          </div>
           <details>
             <summary style="cursor:pointer;color:var(--muted);font-size:12px">Unified diff log</summary>
             <pre style="margin-top:8px;background:var(--bg);border-radius:8px">{diff}</pre>
@@ -1512,14 +1850,24 @@ def render_page() -> str:
         return '<span class="tag status-done">OK</span>' if ok else '<span class="tag status-failed">Ausente</span>'
 
     health_rows = f"""
+      <div class="context-status">{html.escape(health["context_status"])} · {html.escape(health["score"])}</div>
       <div class="health-row"><span>README</span>{health_tag(health["README"])}</div>
-      <div class="health-row"><span>docs/</span>{health_tag(health["docs"])}</div>
+      <div class="health-row"><span>docs/</span><span class="tag">{health["docs_count"]} docs</span></div>
       <div class="health-row"><span>docs/runbooks/</span><span class="tag">{health["runbooks_count"]} runbooks</span></div>
+      <div class="health-row"><span>Arquitetura</span><span class="tag">{health["architecture_count"]} arquivos</span></div>
+      <div class="health-row"><span>Roadmap</span><span class="tag">{health["roadmap_count"]} arquivos</span></div>
+      <div class="health-row"><span>Model strategy</span>{health_tag(health["model_strategy"])}</div>
+      <div class="health-row"><span>docs/model-bench/</span>{health_tag(health["model_bench"])}</div>
       <div class="health-row"><span>config/litellm.yaml</span>{health_tag(health["litellm_config"])}</div>
       <div class="health-row"><span>aiw_runtime/</span>{health_tag(health["aiw_runtime"])}</div>
+      <div class="health-row"><span>Scripts AIW principais</span>{health_tag(health["scripts_ok"])}</div>
       <div class="health-row"><span>Patches pendentes</span><span class="tag status-preview">{health["pending_patches"]}</span></div>
       <div class="health-row"><span>Runs recentes</span><span class="tag">{health["recent_runs"]}</span></div>
+      <div class="health-row"><span>Último run offline</span><span class="tag">{html.escape(health["last_offline"])}</span></div>
+      <div class="health-row"><span>Último run online</span><span class="tag">{html.escape(health["last_online"])}</span></div>
+      <div class="health-row"><span>Branch</span><span class="tag">{html.escape(health["branch"])}</span></div>
       <div class="health-row"><span>Git HEAD</span><span class="tag">{html.escape(health["git_head"])}</span></div>
+      <div class="health-row"><span>Runbooks recentes</span><span class="context-recent-list">{html.escape(" | ".join(health["recent_runbooks"]) or "-")}</span></div>
     """
 
     def run_card(row: dict) -> str:
@@ -1642,6 +1990,20 @@ def render_page() -> str:
       <div class="harness-grid">
         <div class="harness-panel">
           <h3>Execution Harness</h3>
+          <div class="filter-bar" data-filter-scope="runs">
+            <button class="filter-btn active" type="button" data-run-filter-btn="all">Todos</button>
+            <button class="filter-btn" type="button" data-run-filter-btn="online">Online</button>
+            <button class="filter-btn" type="button" data-run-filter-btn="offline">Offline</button>
+            <button class="filter-btn" type="button" data-run-filter-btn="legado">Legacy</button>
+            <button class="filter-btn" type="button" data-run-filter-btn="tools">Com tools</button>
+            <button class="filter-btn" type="button" data-run-filter-btn="patches">Com patches</button>
+            <button class="filter-btn" type="button" data-run-filter-btn="failed">Falhou</button>
+          </div>
+          <div class="operational-run-grid" id="operational-runs">
+            {all_run_cards}
+          </div>
+          <div class="empty-state" id="run-filter-empty" style="display:none;margin-top:12px">Nenhum run encontrado para este filtro.</div>
+          <h3 style="margin-top:18px">Trilhos recentes</h3>
           <div class="harness-columns">
             {harness_column("Online / Tool Runtime", online_runs, "Nenhum run online recente.")}
             {harness_column("Agent Offline", offline_runs, "Nenhum run offline recente.")}
@@ -1649,7 +2011,7 @@ def render_page() -> str:
           </div>
         </div>
         <div class="harness-panel">
-          <h3>Context / RAG Health</h3>
+          <h3>Context Pack Health</h3>
           <div class="health-grid">
             {health_rows}
           </div>
@@ -1657,9 +2019,16 @@ def render_page() -> str:
       </div>
       <div class="section-block">
         <h3>Alterações propostas</h3>
+        <div class="filter-bar" data-filter-scope="patches">
+          <button class="filter-btn active" type="button" data-patch-filter-btn="all">Todos</button>
+          <button class="filter-btn" type="button" data-patch-filter-btn="preview">Preview</button>
+          <button class="filter-btn" type="button" data-patch-filter-btn="applied">Applied</button>
+          <button class="filter-btn" type="button" data-patch-filter-btn="rolled_back">Rolled back</button>
+        </div>
         <div class="patch-list">
           {patches_panel}
         </div>
+        <div class="empty-state" id="patch-filter-empty" style="display:none;margin-top:12px">Nenhuma alteração proposta no momento.</div>
       </div>
     </div>
     """
@@ -1759,6 +2128,40 @@ def render_page() -> str:
       var clicked = event && event.currentTarget;
       if (clicked) clicked.classList.add('active');
     }}
+    function activateButton(button, selector) {{
+      document.querySelectorAll(selector).forEach(el => el.classList.remove('active'));
+      button.classList.add('active');
+    }}
+    function filterRuns(value, button) {{
+      activateButton(button, '[data-run-filter-btn]');
+      var shown = 0;
+      document.querySelectorAll('[data-run-filter]').forEach(card => {{
+        var flags = (card.getAttribute('data-run-filter') || '').split(' ');
+        var match = value === 'all' || flags.indexOf(value) >= 0;
+        card.style.display = match ? '' : 'none';
+        if (match) shown += 1;
+      }});
+      var empty = document.getElementById('run-filter-empty');
+      if (empty) empty.style.display = shown ? 'none' : '';
+    }}
+    function filterPatches(value, button) {{
+      activateButton(button, '[data-patch-filter-btn]');
+      var shown = 0;
+      document.querySelectorAll('[data-patch-filter]').forEach(card => {{
+        var status = card.getAttribute('data-patch-filter') || '';
+        var match = value === 'all' || status === value;
+        card.style.display = match ? '' : 'none';
+        if (match) shown += 1;
+      }});
+      var empty = document.getElementById('patch-filter-empty');
+      if (empty) empty.style.display = shown ? 'none' : '';
+    }}
+    document.querySelectorAll('[data-run-filter-btn]').forEach(btn => {{
+      btn.addEventListener('click', () => filterRuns(btn.getAttribute('data-run-filter-btn'), btn));
+    }});
+    document.querySelectorAll('[data-patch-filter-btn]').forEach(btn => {{
+      btn.addEventListener('click', () => filterPatches(btn.getAttribute('data-patch-filter-btn'), btn));
+    }});
   </script>
 </body>
 </html>"""
@@ -1967,7 +2370,7 @@ def render_file_block(title: str, content: str) -> str:
     return f"""
     <div class="file-block">
       <div class="file-head"><h4>{html.escape(title)}</h4></div>
-      <pre>{html.escape(content)}</pre>
+      <pre>{html.escape(sanitize_ui_text(content))}</pre>
     </div>
     """
 
@@ -2000,14 +2403,14 @@ def render_run_detail(run_dir: Path) -> str:
     objective_block = f"""
     <div class="priority-block">
       <h3>Objetivo</h3>
-      <div class="objective-text">{html.escape(objective) if objective else '<span style="color:var(--muted)">Não encontrado</span>'}</div>
+      <div class="objective-text">{html.escape(sanitize_ui_text(objective)) if objective else '<span style="color:var(--muted)">Não encontrado</span>'}</div>
     </div>
     """ if objective else ""
 
     result_block = f"""
     <div class="priority-block">
       <h3>Resultado</h3>
-      <div class="result-text"><pre style="background:none;padding:0;font-size:13px">{html.escape(result_text)}</pre></div>
+      <div class="result-text"><pre style="background:none;padding:0;font-size:13px">{html.escape(sanitize_ui_text(result_text))}</pre></div>
     </div>
     """ if result_text else ""
 
@@ -2022,46 +2425,19 @@ def render_run_detail(run_dir: Path) -> str:
 
     evidence = build_tool_evidence(run_dir)
     is_agent = evidence["mode"] in ("online", "offline")
-    timeline_html = ""
+    timeline_html = render_run_timeline_block(build_run_timeline(run_dir, evidence))
     tools_html = render_tool_evidence_block(evidence, rel)
     mode_str = "One-shot (Legado)"
+    patches_html = ""
 
     if is_agent:
         mode_str = "Agent Offline" if evidence["mode"] == "offline" else "Agent (Tool Runtime)"
-
-        messages_file = run_dir / "messages.json"
-        timeline = []
-        if messages_file.exists():
-            msgs = read_json(messages_file)
-            if isinstance(msgs, list):
-                for m in msgs:
-                    role = m.get("role", "")
-                    if role == "user":
-                        timeline.append("Tarefa criada / Prompt recebido")
-                    elif role == "assistant":
-                        if m.get("tool_calls"):
-                            timeline.append("Modelo chamou ferramentas")
-                        elif m.get("content"):
-                            timeline.append("Resposta final gerada")
-                    elif role == "tool":
-                        timeline.append(f"Tool {html.escape(m.get('name',''))} executada")
-
-        timeline_list = "".join([f'<li style="margin-bottom:6px;color:var(--muted)"><span style="color:var(--accent);margin-right:8px">●</span>{html.escape(t)}</li>' for t in timeline])
-        timeline_html = f"""
-        <div class="priority-block">
-          <h3>Linha do tempo</h3>
-          <ul style="list-style:none;padding:0;margin:0;font-size:13px">
-            {timeline_list}
-          </ul>
-        </div>
-        """
 
         patch_ids = []
         for t in evidence["tools"]:
             if t["name"] == "project_patch_preview" and t.get("patch_id"):
                 patch_ids.append(t.get("patch_id"))
 
-        patches_html = ""
         if patch_ids:
             patches_list = ""
             for pid in patch_ids:
