@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+if [[ -f ".env" ]]; then
+  set -a
+  source ".env"
+  set +a
+fi
+
+if [[ -z "${LITELLM_MASTER_KEY:-}" ]]; then
+  echo "ERROR: LITELLM_MASTER_KEY is not set. Load .env or export it before running." >&2
+  exit 2
+fi
 exec python3 - <<'PYTHON'
 import os
 import sys
@@ -15,7 +25,10 @@ def get_litellm_url():
     return os.environ.get("LITELLM_API_BASE", "http://localhost:4000")
 
 def get_litellm_key():
-    return os.environ.get("LITELLM_MASTER_KEY", "sk-1234")
+    api_key = os.environ.get("LITELLM_MASTER_KEY")
+    if not api_key:
+        raise SystemExit("ERROR: LITELLM_MASTER_KEY is not set")
+    return api_key
 
 def main():
     model = os.environ.get("AIW_MODEL", "dev-coder")
