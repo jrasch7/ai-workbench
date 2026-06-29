@@ -7,6 +7,7 @@ import json
 import os
 import socketserver
 import subprocess
+import sys
 import webbrowser
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -98,6 +99,96 @@ def list_runs(limit: int = 25) -> list[dict]:
             "summary": read_summary_first_lines(run),
         })
     return rows
+
+
+def short_git_head() -> str:
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        head = proc.stdout.strip()
+        return head or "-"
+    except Exception:
+        return "-"
+
+
+def list_patch_proposals(limit: int = 30) -> list[dict]:
+    patches_dir = ROOT / ".aiw" / "patches"
+    if not patches_dir.exists():
+        return []
+
+    proposals = []
+    for patch_file in sorted(patches_dir.glob("*.json"), reverse=True)[:limit]:
+        data = read_json(patch_file)
+        if not isinstance(data, dict):
+            continue
+        patch_id = data.get("patch_id") or patch_file.stem
+        proposals.append({
+            "patch_id": str(patch_id),
+            "path": str(data.get("path", "")),
+            "status": str(data.get("status", "unknown")),
+            "reason": str(data.get("reason", "")),
+            "diff": str(data.get("diff", "")),
+            "run_id": str(data.get("run_id") or data.get("run_path") or ""),
+            "created_at": str(data.get("created_at", "")),
+        })
+    return proposals
+
+
+def run_has_tool(run_dir: Path, tool_name: str) -> bool:
+    traces = run_dir / "tool-traces.jsonl"
+    if not traces.exists():
+        return False
+    try:
+        return tool_name in traces.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return False
+
+
+def classify_run(row: dict) -> dict:
+    run_dir = ROOT / row["run"]
+    status_data = read_json(run_dir / "status.json")
+    status = str(row.get("status", "unknown")).lower()
+    has_tools = (run_dir / "tool-traces.jsonl").exists()
+    is_offline = bool(status_data.get("offline")) or status_data.get("mode") == "offline" or "offline" in status
+    has_patch_preview = run_has_tool(run_dir, "project_patch_preview")
+    has_patch_apply = run_has_tool(run_dir, "project_patch_apply")
+    failed = status in ("failed", "rejected", "cancelled", "timed_out") or "failed" in status
+
+    if is_offline:
+        mode = "Offline"
+    elif has_tools:
+        mode = "Online"
+    else:
+        mode = "Legado"
+
+    return {
+        "mode": mode,
+        "has_tools": has_tools,
+        "has_patch_preview": has_patch_preview,
+        "has_patch_apply": has_patch_apply,
+        "failed": failed,
+    }
+
+
+def context_health() -> dict:
+    runbooks_dir = ROOT / "docs" / "runbooks"
+    runs_dir = ROOT / ".aiw" / "runs"
+    return {
+        "README": (ROOT / "README.md").is_file(),
+        "docs": (ROOT / "docs").is_dir(),
+        "runbooks": runbooks_dir.is_dir(),
+        "runbooks_count": len(list(runbooks_dir.glob("*.md"))) if runbooks_dir.is_dir() else 0,
+        "litellm_config": (ROOT / "config" / "litellm.yaml").is_file(),
+        "aiw_runtime": (ROOT / "aiw_runtime").is_dir(),
+        "pending_patches": len([p for p in list_patch_proposals(100) if p["status"] == "preview"]),
+        "recent_runs": len([p for p in runs_dir.iterdir() if p.is_dir()]) if runs_dir.exists() else 0,
+        "git_head": short_git_head(),
+    }
 
 
 def list_inbox_tasks(limit: int = 20) -> list[dict]:
@@ -396,6 +487,121 @@ body {
   font-size: 12px;
 }
 
+/* ── Execution Harness ── */
+.harness-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.9fr);
+  gap: 16px;
+  margin-bottom: 28px;
+}
+.harness-panel {
+  background: linear-gradient(160deg, rgba(34,197,94,0.045), rgba(18,22,34,0.92));
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 20px;
+}
+.harness-panel h3 {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.harness-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.harness-column {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255,255,255,0.02);
+  min-height: 180px;
+  padding: 12px;
+}
+.harness-column h4 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--text);
+}
+.mini-run {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  margin-top: 10px;
+}
+.mini-run:first-of-type {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 0;
+}
+.mini-run-title {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  margin-bottom: 7px;
+  word-break: break-word;
+}
+.mini-run-meta {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.health-grid {
+  display: grid;
+  gap: 9px;
+}
+.health-row {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  padding-bottom: 8px;
+}
+.health-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.patch-list {
+  display: grid;
+  gap: 12px;
+}
+.patch-item {
+  background: rgba(18,22,34,0.9);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 14px 16px;
+}
+.patch-head {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+.patch-path {
+  color: var(--text);
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  word-break: break-word;
+}
+.patch-reason {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.patch-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.patch-actions .btn {
+  padding: 6px 11px;
+  font-size: 12px;
+}
+
 /* ── Composer ── */
 .composer {
   background: linear-gradient(160deg, rgba(139,92,246,0.06) 0, rgba(18,22,34,0.9) 60%);
@@ -557,6 +763,10 @@ body {
 .tag.status-running { border-color: var(--accent-border); background: var(--accent-dim); color: #c4b5fd; }
 .tag.status-inbox { border-color: var(--line); background: rgba(255,255,255,0.04); color: var(--muted); }
 .tag.status-unknown { border-color: var(--line); background: rgba(255,255,255,0.04); color: var(--muted); }
+.tag.status-preview { border-color: var(--warn-border); background: var(--warn-dim); color: var(--warn); }
+.tag.status-applied { border-color: var(--ok-border); background: var(--ok-dim); color: var(--ok); }
+.tag.status-rolled_back { border-color: var(--line); background: rgba(255,255,255,0.04); color: var(--muted); }
+.tag.status-offline { border-color: #38bdf8; background: rgba(56,189,248,0.12); color: #7dd3fc; }
 .card-summary {
   color: var(--muted);
   font-size: 12px;
@@ -732,6 +942,8 @@ a:hover { text-decoration: underline; }
   .sidebar-logo { border: none; padding: 0 12px 0 0; margin: 0; }
   .main { padding: 20px 16px 40px; }
   .mission-grid { grid-template-columns: 1fr; }
+  .harness-grid { grid-template-columns: 1fr; }
+  .harness-columns { grid-template-columns: 1fr; }
   .cards { grid-template-columns: 1fr; }
 }
 """
@@ -742,6 +954,8 @@ def render_page() -> str:
     queues = payload["queues"]
     runs = payload["runs"]
     inbox_tasks = list_inbox_tasks()
+    patch_proposals = list_patch_proposals()
+    health = context_health()
 
     # Queue pills
     queue_pills = ""
@@ -769,6 +983,7 @@ def render_page() -> str:
     <nav class="nav-section">
       <div class="nav-label">Workspace</div>
       <button class="nav-item active" onclick="showSection('overview')"><span class="icon">◎</span>Overview</button>
+      <button class="nav-item" onclick="showSection('harness')"><span class="icon">▦</span>Bancada {badge(len(patch_proposals), 'warn')}</button>
       <button class="nav-item" onclick="showSection('nova')"><span class="icon">✦</span>Nova task</button>
     </nav>
     <nav class="nav-section">
@@ -892,6 +1107,87 @@ def render_page() -> str:
     review_runs = [r for r in runs if r["status"] in ("queued", "review")]
     other_runs = [r for r in runs if r["status"] not in ("queued", "review")]
 
+    def mini_run_card(row: dict) -> str:
+        cls = classify_run(row)
+        title = html.escape(row["title"] if row["title"] != "-" else row["task_id"])
+        run_path = html.escape(row["run"])
+        badges = [
+            f'<span class="tag status-{html.escape(row["status"])}">{html.escape(row["status"])}</span>',
+            '<span class="tag">Tools</span>' if cls["has_tools"] else "",
+            '<span class="tag status-preview">Patch Preview</span>' if cls["has_patch_preview"] else "",
+            '<span class="tag status-applied">Applied</span>' if cls["has_patch_apply"] else "",
+            '<span class="tag status-failed">Failed</span>' if cls["failed"] else "",
+            '<span class="tag status-offline">Offline</span>' if cls["mode"] == "Offline" else "",
+        ]
+        return f"""
+        <div class="mini-run">
+          <div class="mini-run-title"><a href="/run?path={quote(row['run'])}">{title}</a></div>
+          <div class="mini-run-meta">{''.join(b for b in badges if b)}</div>
+          <div class="card-doc" style="margin-top:7px;margin-bottom:0">{run_path}</div>
+        </div>
+        """
+
+    def harness_column(label: str, rows: list[dict], empty: str) -> str:
+        body = "".join(mini_run_card(r) for r in rows[:6]) if rows else f'<div class="empty-state" style="padding:20px 12px">{empty}</div>'
+        return f"""
+        <div class="harness-column">
+          <h4>{html.escape(label)}</h4>
+          {body}
+        </div>
+        """
+
+    online_runs = [r for r in runs if classify_run(r)["mode"] == "Online"]
+    offline_runs = [r for r in runs if classify_run(r)["mode"] == "Offline"]
+    legacy_runs = [r for r in runs if classify_run(r)["mode"] == "Legado"]
+
+    def patch_item(patch: dict) -> str:
+        pid = html.escape(patch["patch_id"])
+        status = html.escape(patch["status"])
+        path_value = html.escape(patch["path"] or "-")
+        reason = html.escape(patch["reason"] or "Sem motivo registrado.")
+        diff = html.escape(patch["diff"] or "")
+        run_assoc = html.escape(patch["run_id"] or "sem run associado")
+        apply_btn = ""
+        if patch["status"] == "preview":
+            apply_btn = f'''<form method="post" action="/runner/patch/apply"><input type="hidden" name="patch_id" value="{pid}"><button class="btn btn-run" type="submit">Aplicar</button></form>'''
+        elif patch["status"] == "applied":
+            apply_btn = f'''<form method="post" action="/runner/patch/rollback"><input type="hidden" name="patch_id" value="{pid}"><button class="btn btn-danger" type="submit">Rollback</button></form>'''
+        return f"""
+        <div class="patch-item">
+          <div class="patch-head">
+            <div>
+              <div class="patch-path">{path_value}</div>
+              <div class="card-doc" style="margin:4px 0 0">{pid} · {run_assoc}</div>
+            </div>
+            <span class="tag status-{status}">{status}</span>
+          </div>
+          <div class="patch-reason">{reason}</div>
+          <details>
+            <summary style="cursor:pointer;color:var(--muted);font-size:12px">Unified diff log</summary>
+            <pre style="margin-top:8px;background:var(--bg);border-radius:8px">{diff}</pre>
+          </details>
+          <div class="patch-actions">{apply_btn}</div>
+        </div>
+        """
+
+    patches_panel = "".join(patch_item(p) for p in patch_proposals)
+    if not patches_panel:
+        patches_panel = '<div class="empty-state">Nenhuma alteração proposta agora. Quando um agent gerar um project_patch_preview, ela aparece aqui.</div>'
+
+    def health_tag(ok: bool) -> str:
+        return '<span class="tag status-done">OK</span>' if ok else '<span class="tag status-failed">Ausente</span>'
+
+    health_rows = f"""
+      <div class="health-row"><span>README</span>{health_tag(health["README"])}</div>
+      <div class="health-row"><span>docs/</span>{health_tag(health["docs"])}</div>
+      <div class="health-row"><span>docs/runbooks/</span><span class="tag">{health["runbooks_count"]} runbooks</span></div>
+      <div class="health-row"><span>config/litellm.yaml</span>{health_tag(health["litellm_config"])}</div>
+      <div class="health-row"><span>aiw_runtime/</span>{health_tag(health["aiw_runtime"])}</div>
+      <div class="health-row"><span>Patches pendentes</span><span class="tag status-preview">{health["pending_patches"]}</span></div>
+      <div class="health-row"><span>Runs recentes</span><span class="tag">{health["recent_runs"]}</span></div>
+      <div class="health-row"><span>Git HEAD</span><span class="tag">{html.escape(health["git_head"])}</span></div>
+    """
+
     def run_card(row: dict) -> str:
         st = html.escape(row["status"])
         model = html.escape(row["model"])
@@ -1003,6 +1299,37 @@ def render_page() -> str:
     </div>
     """
 
+    harness_section = f"""
+    <div id="sec-harness" class="workspace-section" style="display:none">
+      <div class="page-header">
+        <h2>Bancada de Execução</h2>
+        <div class="sub">Harness visual para runs online, offline e legados, com patches propostos e saúde inicial de contexto.</div>
+      </div>
+      <div class="harness-grid">
+        <div class="harness-panel">
+          <h3>Execution Harness</h3>
+          <div class="harness-columns">
+            {harness_column("Online / Tool Runtime", online_runs, "Nenhum run online recente.")}
+            {harness_column("Agent Offline", offline_runs, "Nenhum run offline recente.")}
+            {harness_column("One-shot legado", legacy_runs, "Nenhum run legado recente.")}
+          </div>
+        </div>
+        <div class="harness-panel">
+          <h3>Context / RAG Health</h3>
+          <div class="health-grid">
+            {health_rows}
+          </div>
+        </div>
+      </div>
+      <div class="section-block">
+        <h3>Alterações propostas</h3>
+        <div class="patch-list">
+          {patches_panel}
+        </div>
+      </div>
+    </div>
+    """
+
     nova_section = f"""
     <div id="sec-nova" class="workspace-section" style="display:none">
       <div class="page-header">
@@ -1080,6 +1407,7 @@ def render_page() -> str:
     </aside>
     <main class="main">
       {overview_section}
+      {harness_section}
       {nova_section}
       {inbox_section}
       {running_section}

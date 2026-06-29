@@ -23,6 +23,7 @@ venv/
 # OS/editor
 .DS_Store
 Thumbs.db
+*:Zone.Identifier
 .vscode/
 .idea/
 
@@ -38,6 +39,9 @@ scripts/aiw.bak.*
 
 # AIW local runtime state
 .aiw/tasks/**/*.md
+.aiw/backups/
+.aiw/generated/
+.aiw/patches/
 .aiw/runs/**
 .aiw/state/**
 !.aiw/tasks/
