@@ -505,3 +505,11 @@ Antes de integrar Hermes, o AIW precisa consolidar:
 5. logging e evidências;
 6. Browser OS com Playwright;
 7. feedback loop no cockpit.
+
+## Estado implementado até 2026-06-29
+
+* **Cockpit Próprio:** Totalmente distanciado da dependência OpenHands/Hermes legada; UI responsiva e funcional com Evidence Console, Mission Control e Search integrados.
+* **Runtime Seguro:** Guardrails de sistema robustos in-memory (File OS limits, Path Traversal Blocks).
+* **Context Injection:** Injeções explícitas de RAG lexical/estático via flag de ambiente antes da run do agente.
+* **Patch Flow Seguro:** Fluxo estrito de preview -> Handoff User Approval na UI -> pply -> Fallback via auto-backup (ollback).
+* **Tool Evidence Console:** Log de granularidade absoluta na interface demonstrando input/output de tools (evitando caixas-pretas de agentes LLM).
