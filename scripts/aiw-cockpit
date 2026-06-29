@@ -2659,6 +2659,31 @@ def render_run_detail(run_dir: Path) -> str:
     </div>
     """ if objective else ""
 
+    context_used = ""
+    ctx_json_file = run_dir / "context-used.json"
+    if ctx_json_file.is_file():
+        try:
+            ctx_data = read_json(ctx_json_file)
+            sources = ctx_data.get("sources", [])
+            head = ctx_data.get("repo_head", "unknown")
+            sources_html = "".join(f"<li>{html.escape(s.get('path', ''))} - <span style='color:var(--muted)'>{html.escape(s.get('reason', ''))}</span></li>" for s in sources)
+
+            context_used = f"""
+            <div class="priority-block" style="background:var(--panel2); border:1px solid var(--line);">
+              <h3>Contexto usado pelo agente</h3>
+              <div style="font-size:13px;margin-bottom:8px;">
+                <strong>Status:</strong> Usado <br>
+                <strong>HEAD do contexto:</strong> {html.escape(head)} <br>
+                <strong>Fontes ({len(sources)}):</strong>
+                <ul style="margin-top:4px;padding-left:20px;">
+                  {sources_html}
+                </ul>
+              </div>
+            </div>
+            """
+        except:
+            pass
+
     result_block = f"""
     <div class="priority-block">
       <h3>Resultado</h3>
@@ -2843,6 +2868,7 @@ def render_run_detail(run_dir: Path) -> str:
       </div>
 
       {objective_block}
+      {context_used}
       {result_block}
       {patches_html}
       {tools_html}

@@ -210,24 +210,26 @@ Status atual do projeto:
 
 ### Fase 2 — Bancada própria de engenharia
 
-* [ ] Criar contexto base do AI Workbench
-* [ ] Criar agentes/papéis: executor, validator e integrator
-* [ ] Criar padrões de tarefa
-* [ ] Criar logs de execução
-* [ ] Criar fluxo de validação
-* [ ] Criar suporte a projetos reais
+* [x] Criar logs de execução
+* [x] Criar fluxo de validação
+* [x] Criar AIW Cockpit como workspace operacional bonito e funcional
+* [x] Criar contexto base do AI Workbench (Context Pack v1)
+* [x] Busca Lexical Local via cache de indexação
+* [x] Injeção de Context Pack no Agent Runner
+* [ ] Criar agentes/papéis específicos refinados: executor, validator e integrator
 * [ ] Criar profiles para Nivela, SisOpERP e outros projetos
-* [ ] Evoluir AIW Cockpit como workspace operacional bonito e funcional
 
 ### Fase 3 — Tool Runtime mínimo
 
-* [ ] Criar `directory_list`
-* [ ] Criar `file_read`
-* [ ] Criar `shell_exec` controlado
-* [ ] Registrar logs/evidências por tool call
-* [ ] Adicionar `file_write` restrito
-* [ ] Adicionar `file_patch` com diff auditável
-* [ ] Integrar tools ao AIW Cockpit
+* [x] Criar `directory_list`
+* [x] Criar `file_read`
+* [x] Criar `shell_exec` controlado
+* [x] Registrar logs/evidências por tool call
+* [x] Adicionar `file_write` restrito
+* [x] Adicionar `file_patch` com diff auditável
+* [x] Integrar tools ao AIW Cockpit
+* [x] Implementar Tool Evidence Console
+* [x] Fluxo de aprovação de patches seguro (Preview, Apply, Rollback)
 
 ### Fase 4 — Projetos reais
 
@@ -235,21 +237,15 @@ Status atual do projeto:
 * [ ] Integrar workspace do SisOpERP
 * [ ] Criar regras por projeto com `AGENTS.md`
 * [ ] Padronizar comandos de teste por projeto
-* [ ] Criar fluxo de worktree/branch/PR
-* [ ] Criar modo executor
-* [ ] Criar modo validador
-* [ ] Criar modo integrador
+* [ ] RAG lexical assistido melhorado / ranking de Context Pack
+* [ ] Multi-project workspace na Cockpit
 
 ### Fase 5 — Plataforma interna
 
+* [ ] Aprovação humana mais refinada
+* [ ] Integração futura Hermes somente quando fizer sentido
+* [ ] Autenticação e permissões de usuários
 * [ ] Rodar em servidor/cloud
-* [ ] Adicionar autenticação
-* [ ] Adicionar controle de usuários
-* [ ] Adicionar permissões por projeto
-* [ ] Adicionar histórico de execuções
-* [ ] Adicionar integração com GitHub
-* [ ] Adicionar integração com Slack/Discord/Linear/Jira se necessário
-* [ ] Criar ambiente para uso por futuros funcionários
 
 ## Filosofia
 

@@ -1,10 +1,24 @@
 #!/usr/bin/env bash
 offline="${AIW_AGENT_OFFLINE:-0}"
-if [[ "${1:-}" == "--offline" ]]; then
-  export AIW_AGENT_OFFLINE=1
-  offline="1"
-  shift
-fi
+use_context="${AIW_USE_CONTEXT_PACK:-0}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --offline)
+      export AIW_AGENT_OFFLINE=1
+      offline="1"
+      shift
+      ;;
+    --use-context-pack)
+      export AIW_USE_CONTEXT_PACK=1
+      use_context="1"
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
 
 if [[ "$offline" != "1" && "$offline" != "true" && "$offline" != "yes" ]]; then
   if [[ -f ".env" ]]; then
@@ -39,6 +53,12 @@ from aiw_runtime.tools import (
     file_write, file_patch,
     project_patch_preview, project_patch_apply, project_patch_rollback
 )
+try:
+    from aiw_context.indexer import build_agent_context, best_effort_rebuild
+except ImportError:
+    build_agent_context = None
+    best_effort_rebuild = None
+
 
 def get_litellm_url():
     return os.environ.get("LITELLM_API_BASE", "http://localhost:4000")
@@ -66,6 +86,15 @@ def run_agent():
 
     shutil.copy2(task_file, run_dir / "task.md")
     task_content = task_file.read_text(encoding="utf-8")
+
+    use_ctx = os.environ.get("AIW_USE_CONTEXT_PACK", "").lower() in ("1", "true", "yes", "on")
+    if use_ctx and build_agent_context:
+        ctx_data = build_agent_context(ROOT)
+        if ctx_data.get("enabled"):
+            task_content = ctx_data["text"] + "\n\n" + task_content
+            (run_dir / "context-used.json").write_text(json.dumps(ctx_data["json"], indent=2, ensure_ascii=False), encoding="utf-8")
+            (run_dir / "context-used.md").write_text(ctx_data["md"], encoding="utf-8")
+
 
     status = {
         "id": run_dir.name,
@@ -257,6 +286,10 @@ def run_agent():
     review_dir = ROOT / ".aiw" / "tasks" / "review"
     review_dir.mkdir(parents=True, exist_ok=True)
     shutil.move(str(task_file), str(review_dir / task_file.name))
+
+    if best_effort_rebuild:
+        best_effort_rebuild(ROOT, run_dir)
+
     print(f"STATUS: REVIEW\nTASK_ID: {task_id}\nRUN_DIR: {run_dir}")
 
 if __name__ == "__main__":

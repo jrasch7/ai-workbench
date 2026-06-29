@@ -48,14 +48,14 @@ def read_text_safe(path: Path) -> str:
 
 def _build_search_index(root: Path, branch: str, head: str, out_path: Path):
     docs = []
-    
+
     def add_doc(dtype: str, title: str, path: Path, rel_path: str, snippet: str, terms: list[str]):
         if is_sensitive_path(rel_path) or is_sensitive_path(title):
             return
         # Basic check for sensitive values in snippet before caching
         if any(p in snippet.lower() for p in SENSITIVE_VALUE_PARTS):
             snippet = "[masked]"
-        
+
         try:
             stat = path.stat()
             mtime = int(stat.st_mtime)
@@ -63,7 +63,7 @@ def _build_search_index(root: Path, branch: str, head: str, out_path: Path):
         except:
             mtime = 0
             size = 0
-            
+
         docs.append({
             "id": rel_path,
             "type": dtype,
@@ -104,13 +104,13 @@ def _build_search_index(root: Path, branch: str, head: str, out_path: Path):
                     if line.startswith("# "):
                         title = line[2:].strip()
                         break
-            
+
             # index run summary
             summary_path = run_path / "summary.md"
             if summary_path.is_file():
                 text = read_text_safe(summary_path)
                 add_doc("run", title, summary_path, str(summary_path.relative_to(root)), text[:400].replace("\n", " "), ["run", "summary", run_path.name.lower()])
-                
+
             # index commands.log
             commands_path = run_path / "commands.log"
             if commands_path.is_file():
@@ -122,7 +122,7 @@ def _build_search_index(root: Path, branch: str, head: str, out_path: Path):
             if traces_path.is_file():
                 text = read_text_safe(traces_path)
                 add_doc("run", f"{title} (Tools)", traces_path, str(traces_path.relative_to(root)), text[:400].replace("\n", " "), ["run", "tools", "traces"])
-                
+
             # index messages.json
             msgs_path = run_path / "messages.json"
             if msgs_path.is_file():
@@ -151,7 +151,7 @@ def _build_search_index(root: Path, branch: str, head: str, out_path: Path):
             if not tpath.is_file(): continue
             text = read_text_safe(tpath)
             add_doc("task", tpath.name, tpath, str(tpath.relative_to(root)), text[:400].replace("\n", " "), ["task", "report"])
-            
+
     # internal tasks (.aiw/tasks)
     aiw_tasks = root / ".aiw" / "tasks"
     if aiw_tasks.exists():
@@ -168,7 +168,7 @@ def _build_search_index(root: Path, branch: str, head: str, out_path: Path):
         "document_count": len(docs),
         "documents": docs
     }
-    
+
     out_path.write_text(json.dumps(index_data, indent=2, ensure_ascii=False))
     return index_data
 
@@ -179,24 +179,24 @@ def _build_context_pack(root: Path, branch: str, head: str, out_path: Path):
     arch_dir = docs_dir / "architecture"
     runs_dir = root / ".aiw" / "runs"
     patches_dir = root / ".aiw" / "patches"
-    
+
     docs_count = len(list(docs_dir.rglob("*.md"))) if docs_dir.is_dir() else 0
     runbooks_count = len(list(runbooks_dir.glob("*.md"))) if runbooks_dir.is_dir() else 0
     arch_count = len(list(arch_dir.glob("*.md"))) if arch_dir.is_dir() else 0
     runs_count = len([p for p in runs_dir.iterdir() if p.is_dir()]) if runs_dir.is_dir() else 0
     patches_count = len(list(patches_dir.glob("*.json"))) if patches_dir.is_dir() else 0
     readme_ok = (root / "README.md").is_file()
-    
+
     sources = []
     if readme_ok:
         text = read_text_safe(root / "README.md")
         sources.append({"type": "readme", "path": "README.md", "title": "README", "summary": text[:100].replace("\n", " ")})
-        
+
     if runbooks_dir.is_dir():
         for p in runbooks_dir.glob("*.md"):
             text = read_text_safe(p)
             sources.append({"type": "runbook", "path": str(p.relative_to(root)), "title": p.name, "summary": text[:100].replace("\n", " ")})
-            
+
     if arch_dir.is_dir():
         for p in arch_dir.glob("*.md"):
             text = read_text_safe(p)
@@ -230,20 +230,20 @@ def _build_context_pack(root: Path, branch: str, head: str, out_path: Path):
             "notes": []
         }
     }
-    
+
     out_path.write_text(json.dumps(pack_data, indent=2, ensure_ascii=False))
     return pack_data
 
 def rebuild_indexes(root_path: Path) -> dict:
     ctx_dir = root_path / ".aiw" / "context"
     ctx_dir.mkdir(parents=True, exist_ok=True)
-    
+
     branch = current_git_branch(root_path)
     head = short_git_head(root_path)
-    
+
     idx_path = ctx_dir / "search-index.json"
     pack_path = ctx_dir / "context-pack.json"
-    
+
     try:
         _build_search_index(root_path, branch, head, idx_path)
         _build_context_pack(root_path, branch, head, pack_path)
@@ -268,3 +268,76 @@ def get_context_pack(root_path: Path) -> dict | None:
         return json.loads(pack_path.read_text(encoding="utf-8"))
     except:
         return None
+
+
+def build_agent_context(root_path: Path) -> dict:
+    pack = get_context_pack(root_path)
+    if not pack:
+        res = rebuild_indexes(root_path)
+        pack = get_context_pack(root_path)
+
+    if not pack:
+        return {'enabled': False, 'text': '', 'json': {}, 'md': ''}
+
+    sources = []
+    text_blocks = []
+
+    def add_source(spath, reason):
+        p = root_path / spath
+        if p.is_file():
+            text = read_text_safe(p)
+            sources.append({
+                "type": "doc",
+                "path": spath,
+                "title": p.name,
+                "reason": reason
+            })
+            text_blocks.append(f"--- File: {spath} ---\n{text[:2000]}")
+
+    add_source("README.md", "Main project documentation")
+
+    if (root_path / "docs" / "MODEL_STRATEGY.md").is_file():
+        add_source("docs/MODEL_STRATEGY.md", "Model strategy")
+
+    runbooks_dir = root_path / "docs" / "runbooks"
+    if runbooks_dir.is_dir():
+        for rb in sorted(runbooks_dir.glob("*.md"))[:3]:
+            add_source(str(rb.relative_to(root_path)), "Runbook reference")
+
+    arch_dir = root_path / "docs" / "architecture"
+    if arch_dir.is_dir():
+        for ar in sorted(arch_dir.glob("*.md"))[:2]:
+            add_source(str(ar.relative_to(root_path)), "Architecture reference")
+
+    context_json = {
+        "enabled": True,
+        "source": "context-pack",
+        "pack_created_at": pack.get("created_at"),
+        "repo_head": pack.get("repo", {}).get("head", ""),
+        "sources": sources
+    }
+
+    md_lines = ["# Contexto usado\n\n## Fontes\n"]
+    for s in sources:
+        md_lines.append(f"- {s['path']}")
+    md_lines.append("\n## Observações\nContexto injetado via best-effort selection.")
+
+    final_text = "== CONTEXT PACK ==\nThe following files are provided as project context:\n\n" + "\n\n".join(text_blocks) + "\n== END CONTEXT PACK ==\n"
+
+    return {
+        "enabled": True,
+        "text": final_text,
+        "json": context_json,
+        "md": "\n".join(md_lines)
+    }
+
+def best_effort_rebuild(root_path: Path, run_dir: Path):
+    try:
+        res = rebuild_indexes(root_path)
+        status = "succeeded" if res.get("ok") else "failed"
+        log = f"Context index rebuild: {status}\n{res}"
+    except Exception as e:
+        log = f"Context index rebuild: failed\n{e}"
+
+    if run_dir and run_dir.exists():
+        (run_dir / "context_rebuild.log").write_text(log)
