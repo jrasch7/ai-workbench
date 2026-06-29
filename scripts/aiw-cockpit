@@ -609,6 +609,114 @@ def classify_run(row: dict) -> dict:
     }
 
 
+
+def local_lexical_search(query: str) -> list[dict]:
+    results = []
+    q_lower = query.lower()
+
+    def add_res(rtype, title, label, snip, url, score):
+        if SENSITIVE_VALUE_PARTS and any(s in snip.lower() for s in SENSITIVE_VALUE_PARTS):
+            snip = mask_text(snip)
+        results.append({
+            "type": rtype, "title": title, "path_label": label,
+            "snippet": mask_text(snip, 150), "url": url, "score": score
+        })
+
+    # Search runs (summary.md, tool-traces.jsonl, commands.log)
+    runs_dir = ROOT / ".aiw" / "runs"
+    if runs_dir.exists():
+        for run_path in runs_dir.iterdir():
+            if not run_path.is_dir(): continue
+            rel_run = str(run_path.relative_to(ROOT))
+            score = 0
+            snip = ""
+            title = read_task_title(run_path)
+
+            if q_lower in title.lower(): score += 10
+
+            for fname in ["summary.md", "tool-traces.jsonl", "commands.log"]:
+                fpath = run_path / fname
+                if fpath.exists():
+                    try:
+                        c = fpath.read_text(encoding="utf-8", errors="replace")
+                        idx = c.lower().find(q_lower)
+                        if idx >= 0:
+                            score += 5
+                            if not snip:
+                                snip = c[max(0, idx-40):idx+100].replace("\n", " ")
+                    except Exception:
+                        pass
+            if score > 0:
+                add_res("run", title, f"Run {run_path.name}", snip or "...", f"/run?path={quote(rel_run)}", score)
+
+    # Search tasks
+    tasks_dir = ROOT / ".aiw" / "tasks"
+    if tasks_dir.exists():
+        for queue in TASK_QUEUES:
+            q_dir = tasks_dir / queue
+            if q_dir.exists():
+                for tpath in q_dir.glob("*.md"):
+                    score = 0
+                    try:
+                        c = tpath.read_text(encoding="utf-8", errors="replace")
+                        if q_lower in tpath.name.lower(): score += 10
+                        idx = c.lower().find(q_lower)
+                        if idx >= 0:
+                            score += 5
+                            snip = c[max(0, idx-40):idx+100].replace("\n", " ")
+                            add_res("task", tpath.name, f"Task {queue}", snip, "/", score)
+                    except Exception: pass
+
+    # Search patches
+    patches_dir = ROOT / ".aiw" / "patches"
+    if patches_dir.exists():
+        for ppath in patches_dir.glob("*.json"):
+            try:
+                data = read_json(ppath)
+                if not isinstance(data, dict): continue
+                score = 0
+                if q_lower in ppath.name.lower(): score += 10
+                p_path = str(data.get("path","")).lower()
+                if q_lower in p_path: score += 5
+                reason = str(data.get("reason",""))
+                idx = reason.lower().find(q_lower)
+                snip = ""
+                if idx >= 0:
+                    score += 5
+                    snip = reason[max(0, idx-40):idx+100]
+                diff = str(data.get("diff",""))
+                idx2 = diff.lower().find(q_lower)
+                if idx2 >= 0:
+                    score += 5
+                    if not snip: snip = diff[max(0, idx2-40):idx2+100]
+                if score > 0:
+                    add_res("patch", f"Patch {ppath.stem}", "Patch", snip, "/", score)
+            except Exception: pass
+
+    # Search docs and README
+    docs_to_search = [ROOT / "README.md"]
+    docs_dir = ROOT / "docs"
+    if docs_dir.exists():
+        docs_to_search.extend(docs_dir.rglob("*.md"))
+
+    for dpath in docs_to_search:
+        if not dpath.is_file(): continue
+        if dpath.name.startswith("."): continue
+        score = 0
+        try:
+            if q_lower in dpath.name.lower(): score += 10
+            c = dpath.read_text(encoding="utf-8", errors="replace")
+            idx = c.lower().find(q_lower)
+            if idx >= 0:
+                score += 5
+                snip = c[max(0, idx-40):idx+100].replace("\n", " ")
+                add_res("doc", dpath.name, str(dpath.relative_to(ROOT)), snip, "/", score)
+        except Exception: pass
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results[:50]
+
+
 def context_health() -> dict:
     docs_dir = ROOT / "docs"
     runbooks_dir = ROOT / "docs" / "runbooks"
@@ -655,14 +763,29 @@ def context_health() -> dict:
         all((ROOT / s).is_file() for s in script_checks),
     ]
     score = sum(1 for ok in checks_ok if ok)
+    indexable_docs = docs_count + (1 if (ROOT / "README.md").is_file() else 0)
+    indexable_runs = len(runs)
+    indexable_patches = len(list((ROOT / ".aiw" / "patches").glob("*.json"))) if (ROOT / ".aiw" / "patches").exists() else 0
+    cache_dir = ROOT / ".aiw" / "context"
+    last_index_update = "-"
+    if cache_dir.exists():
+        try:
+            import datetime
+            last_index_update = str(datetime.datetime.fromtimestamp(cache_dir.stat().st_mtime))
+        except Exception: pass
+
     if score >= 7:
-        context_status = "Contexto bom"
+        context_status = "Busca local disponível" if indexable_docs > 0 else "Sem cache, usando varredura direta"
     elif score >= 5:
         context_status = "Contexto incompleto"
     else:
         context_status = "Precisa atenção"
 
     return {
+        "indexable_docs": indexable_docs,
+        "indexable_runs": indexable_runs,
+        "indexable_patches": indexable_patches,
+        "last_index_update": last_index_update,
         "README": (ROOT / "README.md").is_file(),
         "docs": docs_dir.is_dir(),
         "docs_count": docs_count,
@@ -1852,6 +1975,10 @@ def render_page() -> str:
     health_rows = f"""
       <div class="context-status">{html.escape(health["context_status"])} · {html.escape(health["score"])}</div>
       <div class="health-row"><span>README</span>{health_tag(health["README"])}</div>
+      <div class="health-row"><span>Docs indexáveis</span><span class="tag">{health["indexable_docs"]}</span></div>
+      <div class="health-row"><span>Runs indexáveis</span><span class="tag">{health["indexable_runs"]}</span></div>
+      <div class="health-row"><span>Patches indexáveis</span><span class="tag">{health["indexable_patches"]}</span></div>
+      <div class="health-row"><span>Última at. do índice</span><span class="tag">{health["last_index_update"]}</span></div>
       <div class="health-row"><span>docs/</span><span class="tag">{health["docs_count"]} docs</span></div>
       <div class="health-row"><span>docs/runbooks/</span><span class="tag">{health["runbooks_count"]} runbooks</span></div>
       <div class="health-row"><span>Arquitetura</span><span class="tag">{health["architecture_count"]} arquivos</span></div>
@@ -1972,6 +2099,29 @@ def render_page() -> str:
       {mission_panel}
       <div class="queue-bar">{queue_pills}</div>
       {roadmap_panel}
+
+    <div class="system-panel" style="margin-top:16px">
+      <h3>Projetos e tarefas (Workspace)</h3>
+      <div class="signal-list">
+        <div class="signal-row"><span class="signal-name">Projeto Atual</span><span class="tag">AI Workbench</span></div>
+        <div class="signal-row"><span class="signal-name">Branch Atual</span><span class="tag">{html.escape(health["branch"])}</span></div>
+        <div class="signal-row"><span class="signal-name">Git HEAD</span><span class="tag">{html.escape(health["git_head"])}</span></div>
+        <div class="signal-row"><span class="signal-name">Total de Runs</span><span class="tag">{len(runs)}</span></div>
+        <div class="signal-row"><span class="signal-name">Tasks na Inbox</span><span class="tag">{inbox_count}</span></div>
+      </div>
+    </div>
+
+
+      <div class="section-block">
+        <h3>Buscar no workspace</h3>
+        <div style="display:flex;gap:10px;margin-bottom:12px">
+          <input type="text" id="search-input" class="input" placeholder="Buscar em runs, tasks, docs..." style="flex:1" onkeyup="if(event.key==='Enter') performSearch()">
+          <button class="btn btn-primary" onclick="performSearch()">Buscar</button>
+        </div>
+        <div id="search-results" class="cards" style="display:none;margin-bottom:14px"></div>
+        <div id="search-empty" class="empty-state" style="display:none;margin-bottom:14px">Nenhum item encontrado com estes filtros.</div>
+      </div>
+
       {atencao_section}
       {recent_section}
       <div class="api-links">
@@ -1998,6 +2148,7 @@ def render_page() -> str:
             <button class="filter-btn" type="button" data-run-filter-btn="tools">Com tools</button>
             <button class="filter-btn" type="button" data-run-filter-btn="patches">Com patches</button>
             <button class="filter-btn" type="button" data-run-filter-btn="failed">Falhou</button>
+            <button class="filter-btn" type="button" onclick="clearFilters()" style="margin-left:auto">Limpar filtros</button>
           </div>
           <div class="operational-run-grid" id="operational-runs">
             {all_run_cards}
@@ -2134,6 +2285,7 @@ def render_page() -> str:
     }}
     function filterRuns(value, button) {{
       activateButton(button, '[data-run-filter-btn]');
+      try {{ localStorage.setItem('aiw_run_filter', value); }} catch(e) {{}}
       var shown = 0;
       document.querySelectorAll('[data-run-filter]').forEach(card => {{
         var flags = (card.getAttribute('data-run-filter') || '').split(' ');
@@ -2146,6 +2298,7 @@ def render_page() -> str:
     }}
     function filterPatches(value, button) {{
       activateButton(button, '[data-patch-filter-btn]');
+      try {{ localStorage.setItem('aiw_patch_filter', value); }} catch(e) {{}}
       var shown = 0;
       document.querySelectorAll('[data-patch-filter]').forEach(card => {{
         var status = card.getAttribute('data-patch-filter') || '';
@@ -2156,6 +2309,68 @@ def render_page() -> str:
       var empty = document.getElementById('patch-filter-empty');
       if (empty) empty.style.display = shown ? 'none' : '';
     }}
+        async function performSearch() {{
+      const q = document.getElementById('search-input').value;
+      try {{ localStorage.setItem('aiw_search_q', q); }} catch(e) {{}}
+      if(q.length < 2) {{
+          document.getElementById('search-results').style.display = 'none';
+          document.getElementById('search-empty').style.display = 'none';
+          return;
+      }}
+      const res = await fetch('/api/search?q=' + encodeURIComponent(q));
+      const data = await res.json();
+      const container = document.getElementById('search-results');
+      if(data.count === 0) {{
+          container.style.display = 'none';
+          document.getElementById('search-empty').style.display = 'block';
+          return;
+      }}
+      container.style.display = 'grid';
+      document.getElementById('search-empty').style.display = 'none';
+      container.innerHTML = data.results.map(r => `
+        <div class="card">
+          <div class="card-title"><a href="${{r.url}}">${{r.title}}</a></div>
+          <div class="card-meta"><span class="tag">${{r.type}}</span><span class="tag">${{r.path_label}}</span></div>
+          <div class="card-summary">${{r.snippet}}</div>
+        </div>
+      `).join('');
+    }}
+
+    function restoreFilters() {{
+      try {{
+        const runF = localStorage.getItem('aiw_run_filter') || 'all';
+        const patchF = localStorage.getItem('aiw_patch_filter') || 'all';
+        const searchQ = localStorage.getItem('aiw_search_q') || '';
+        const runBtn = document.querySelector(`[data-run-filter-btn="${{runF}}"]`);
+        if(runBtn) filterRuns(runF, runBtn);
+        const patchBtn = document.querySelector(`[data-patch-filter-btn="${{patchF}}"]`);
+        if(patchBtn) filterPatches(patchF, patchBtn);
+        if(searchQ) {{
+            const searchInput = document.getElementById('search-input');
+            if(searchInput) {{
+                searchInput.value = searchQ;
+                performSearch();
+            }}
+        }}
+      }} catch(e) {{}}
+    }}
+
+    function clearFilters() {{
+      try {{ localStorage.removeItem('aiw_run_filter'); }} catch(e) {{}}
+      try {{ localStorage.removeItem('aiw_patch_filter'); }} catch(e) {{}}
+      try {{ localStorage.removeItem('aiw_search_q'); }} catch(e) {{}}
+      const runBtn = document.querySelector('[data-run-filter-btn="all"]');
+      if(runBtn) filterRuns('all', runBtn);
+      const patchBtn = document.querySelector('[data-patch-filter-btn="all"]');
+      if(patchBtn) filterPatches('all', patchBtn);
+      const searchInput = document.getElementById('search-input');
+      if(searchInput) searchInput.value = '';
+      document.getElementById('search-results').style.display = 'none';
+      document.getElementById('search-empty').style.display = 'none';
+    }}
+
+    document.addEventListener('DOMContentLoaded', restoreFilters);
+
     document.querySelectorAll('[data-run-filter-btn]').forEach(btn => {{
       btn.addEventListener('click', () => filterRuns(btn.getAttribute('data-run-filter-btn'), btn));
     }});
@@ -2675,6 +2890,16 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(build_tool_evidence(run_dir))
             return
         # fall through to existing logic
+
+        if path.startswith("/api/search") and self.command == "GET":
+            query = parse_qs(urlparse(self.path).query)
+            q = query.get("q", [""])[0].strip()
+            if len(q) < 2:
+                self.send_json({"query": q, "count": 0, "results": []})
+                return
+            results = local_lexical_search(q)
+            self.send_json({"query": q, "count": len(results), "results": results})
+            return
 
         if path == "/":
             self.send_html(render_page())
