@@ -1,6 +1,6 @@
 # Troubleshooting — LiteLLM e OpenRouter
 
-Este documento registra problemas encontrados ao integrar LiteLLM, OpenRouter e OpenHands no AI Workbench.
+Este documento registra problemas encontrados ao integrar LiteLLM, OpenRouter e fluxos legados de laboratório no AI Workbench.
 
 ## 1. OpenRouter direto funciona, mas LiteLLM reseta conexão
 
@@ -30,7 +30,7 @@ Usar OpenRouter como endpoint OpenAI-compatible no `config/litellm.yaml`:
     api_key: os.environ/OPENROUTER_API_KEY
 ```
 
-O OpenHands deve continuar usando:
+Clientes OpenAI-compatible, quando necessários, devem usar:
 
 ```text
 openai/dev-coder
@@ -67,27 +67,29 @@ Solução séria futura:
 - Usar um agregador confiável com pequeno crédito.
 - Separar aliases por finalidade: `dev-fast`, `dev-coder`, `dev-review`, `dev-premium`.
 
-## 3. OpenHands usa o modelo errado
+## 3. Cliente OpenAI-compatible usa o modelo errado
 
 Sintoma:
 
-A UI mostra outro modelo no topo, por exemplo:
+A UI ou cliente mostra outro modelo no topo, por exemplo:
 
 ```text
 gpt-5.5
 ```
 
-Correção:
+Correção conceitual:
 
-Na configuração da UI do OpenHands:
+Usar o alias operacional pelo gateway LiteLLM:
 
 ```text
-Modelo personalizado: openai/dev-coder
-URL base: http://host.docker.internal:4000
-Chave API: valor de LITELLM_MASTER_KEY
+Modelo: openai/dev-coder
+Base URL: endpoint LiteLLM local acessível ao cliente
+API Key: chave local do gateway LiteLLM
 ```
 
-## 4. Sandbox não cria arquivos no workspace
+No fluxo principal do AIW, preferir Cockpit/scripts usando aliases por papel, como `dev-coder`, sem depender de UI externa.
+
+## 4. Sandbox legado não cria arquivos no workspace
 
 Sintoma:
 
@@ -117,13 +119,7 @@ cd ~/ai-workbench && ./scripts/aiw stop
 
 Se necessário:
 
-```bash
-docker rm -f openhands-app 2>/dev/null || true
-```
-
-```bash
-docker rm -f $(docker ps -aq --filter name=oh-agent-server) 2>/dev/null || true
-```
+Se o problema vier de containers legados, listar os containers antes de remover qualquer coisa e confirmar o escopo.
 
 ## 6. Validar gateway LiteLLM
 
@@ -134,7 +130,7 @@ cd ~/ai-workbench && ./scripts/aiw models
 Teste de chat:
 
 ```bash
-cd ~/ai-workbench && bash -lc 'set -a; source .env; set +a; curl --max-time 90 -sS http://localhost:4000/v1/chat/completions -H "Authorization: Bearer $LITELLM_MASTER_KEY" -H "Content-Type: application/json" --data-binary @/tmp/aiw-test.json | python3 -m json.tool'
+cd ~/ai-workbench && ./scripts/model-smoke dev-coder
 ```
 
 Resposta esperada:

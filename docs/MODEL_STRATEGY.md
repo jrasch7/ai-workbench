@@ -46,7 +46,7 @@ Uso permitido:
 
 - testar gateway;
 - validar scripts;
-- testar OpenHands;
+- testar AIW Cockpit/runner;
 - validar fluxo de smoke;
 - tarefas pequenas e descartáveis.
 
@@ -131,7 +131,7 @@ Decisão atual:
 
 - `dev-coder` é o alias oficial de trabalho para código;
 - atualmente está roteado para Hugging Face Router com `moonshotai/Kimi-K2.7-Code:deepinfra`;
-- o uso externo no OpenHands deve continuar sendo `openai/dev-coder`;
+- clientes OpenAI-compatible podem usar `openai/dev-coder` quando exigirem esse prefixo;
 - o provedor por baixo pode mudar sem alterar o fluxo operacional.
 
 Prioridade:
@@ -273,7 +273,7 @@ Antes de usar agente em Nivela ou SisOpERP Web:
 5. Rodar aiw models.
 6. Rodar aiw smoke no alias escolhido.
 7. Rodar aiw matrix nos aliases candidatos.
-8. Só então abrir OpenHands.
+8. Só então executar pelo AIW Cockpit/runner.
 ```
 
 ## Decisão estratégica

@@ -18,7 +18,7 @@ Use antes de iniciar uma sessão de trabalho.
 ./scripts/aiw doctor
 ```
 
-O comando valida Docker, Docker daemon, Docker Compose, arquivo .env, LITELLM_MASTER_KEY, OpenHands e LiteLLM quando estiver rodando.
+O comando valida Docker, Docker daemon, Docker Compose, arquivo .env, LITELLM_MASTER_KEY, LiteLLM e os scripts locais quando estiverem disponíveis.
 
 ### Subir apenas o gateway LiteLLM
 
@@ -26,7 +26,7 @@ O comando valida Docker, Docker daemon, Docker Compose, arquivo .env, LITELLM_MA
 ./scripts/aiw gateway
 ```
 
-Use quando quiser testar modelos antes de abrir o OpenHands.
+Use quando quiser testar modelos antes de executar tasks pelo Cockpit ou runner.
 
 ### Listar modelos expostos pelo LiteLLM
 
@@ -40,8 +40,10 @@ Aliases esperados:
 dev-fast
 dev-balanced
 dev-large
-dev-openrouter-free
 dev-coder
+dev-review
+dev-architect
+dev-fallback
 ```
 
 
@@ -61,7 +63,7 @@ Aliases com nome de provedor, como `dev-gemini-coder` e `dev-openrouter-free`, e
 ./scripts/aiw smoke dev-coder
 ```
 
-Use este comando depois de `gateway` e `models` para validar se o alias realmente responde chat, sem envolver OpenHands.
+Use este comando depois de `gateway` e `models` para validar se o alias realmente responde chat, sem envolver a interface.
 
 Resultado esperado:
 
@@ -69,14 +71,14 @@ Resultado esperado:
 OK: model smoke passed for dev-coder
 ```
 
-Se retornar `429`, timeout ou erro de provider, o problema está no modelo/provedor e não necessariamente no OpenHands.
+Se retornar `429`, timeout ou erro de provider, o problema está no modelo/provedor e não necessariamente no Cockpit ou runner.
 ### Testar matriz de modelos via LiteLLM
 
 ```bash
 ./scripts/model-pool-smoke
 ```
 
-Use este comando para validar mais de um alias de modelo sem envolver OpenHands.
+Use este comando para validar mais de um alias de modelo sem envolver a interface.
 
 Resultado esperado:
 
@@ -87,18 +89,16 @@ Failed: 0
 
 Se algum alias falhar, a falha deve ser tratada como problema de chave, provider, rate limit, timeout ou roteamento de modelo antes de culpar o agente.
 
-### Abrir workspace isolado
+### Abrir o AIW Cockpit
 
 ```bash
-./scripts/aiw start sandbox-test
+./scripts/aiw cockpit
 ```
 
-Use para testes descartáveis.
-
-O workspace fica em:
+Use para operar a bancada própria em:
 
 ```text
-~/ai-workbench/workspaces/sandbox-test
+http://127.0.0.1:8765
 ```
 
 ### Abrir o próprio repositório AI Workbench
@@ -109,7 +109,7 @@ O workspace fica em:
 
 Use para evoluir a própria bancada.
 
-O script prepara conversations, bash_events, exclusão local em .git/info/exclude, limpeza de containers antigos do OpenHands e LiteLLM ativo.
+Use quando o fluxo exigir workspace local controlado. O caminho principal de operação é o Cockpit/runner; comandos herdados de sandbox devem ser tratados como legado até serem substituídos pelo Tool Runtime próprio.
 
 ### Abrir o diretório atual como workspace
 
@@ -145,19 +145,13 @@ Use ao terminar a sessão ou quando um sandbox ficar preso.
 ./scripts/aiw logs
 ```
 
-## Configuração do OpenHands
+## OpenHands legado
 
-Na UI do OpenHands, usar:
-
-```text
-Modelo personalizado: openai/dev-coder
-URL base: http://host.docker.internal:4000
-Chave API: valor de LITELLM_MASTER_KEY
-```
+OpenHands não é caminho operacional do AIW. Referências antigas ficam como histórico/laboratório opcional e não devem ser usadas para validar a bancada principal.
 
 ## Problemas conhecidos
 
-### Sandbox preso em Waiting for sandbox
+### Sandbox legado preso em Waiting for sandbox
 
 Causas prováveis:
 
@@ -165,7 +159,7 @@ Causas prováveis:
 - permissão em conversations;
 - conversa antiga quebrada reaberta pela UI;
 - pasta temporária criada como root;
-- imagem ou runtime do OpenHands instável.
+- imagem ou runtime legado instável.
 
 Correção padrão:
 
@@ -249,4 +243,4 @@ A infra está pronta quando estes comandos passam:
 ./scripts/aiw status
 ```
 
-E quando ./scripts/aiw repo abre o OpenHands montando o repositório real sem erro de permissão.
+E quando `./scripts/aiw cockpit` inicia a interface própria em `127.0.0.1:8765` sem erro.

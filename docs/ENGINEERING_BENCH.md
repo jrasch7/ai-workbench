@@ -43,7 +43,8 @@ Base operacional previsível:
 - Ubuntu;
 - Docker;
 - Git;
-- OpenHands;
+- AIW Cockpit;
+- AIW Runner / Tool Runtime;
 - LiteLLM;
 - repositórios montados como workspace real.
 
@@ -112,7 +113,7 @@ Fontes de verdade:
 
 ## Diferença entre plataforma e modelo
 
-OpenHands é a camada operacional.
+AIW Cockpit + AIW Runner / Tool Runtime são a camada operacional.
 
 LiteLLM é o gateway.
 
@@ -130,7 +131,8 @@ O ambiente já validou:
 
 - LiteLLM local respondendo;
 - OpenRouter via LiteLLM;
-- OpenHands conectado ao LiteLLM;
+- AIW Cockpit recuperado como interface própria;
+- LiteLLM conectado aos aliases operacionais;
 - sandbox criando arquivo em workspace;
 - uso de workspace isolado;
 - uso de repositório real como workspace;

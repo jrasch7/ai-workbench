@@ -2,9 +2,11 @@
 
 ## Decisao
 
-Hermes passa a ser o candidato principal para a camada de agente do AI Workbench.
+O AI Workbench passa a priorizar uma bancada/interface propria: AIW Cockpit + runner/tool runtime local.
 
-OpenHands fica como laboratorio opcional, nao como nucleo operacional.
+Hermes fica como integracao futura e laboratorio controlado, nao como runtime do Cockpit agora.
+
+OpenHands fica como laboratorio historico opcional, nao como nucleo operacional.
 
 ## Motivo
 
@@ -12,7 +14,7 @@ O objetivo do AI Workbench e construir uma bancada de engenharia assistida por a
 
 OpenHands mostrou instabilidade em tarefas simples de edicao documental e nao entregou produtividade suficiente para ser o nucleo da plataforma.
 
-Hermes parece mais alinhado com a visao porque oferece:
+Hermes pode ser util como integracao futura porque oferece:
 
 - operacao via Telegram;
 - memoria persistente;
@@ -27,13 +29,15 @@ Hermes parece mais alinhado com a visao porque oferece:
 ## Arquitetura desejada
 
 ```text
-Telegram / CLI
--> Hermes
+AIW Cockpit
+-> AIW runner / tool runtime local
 -> AI Workbench contextos, skills e runbooks
--> LiteLLM ou provider configurado
--> Terminal / Git / testes / validacao
--> Handoff
+-> LiteLLM via aliases por papel
+-> workspace controlado / Git / testes / validacao
+-> evidencias / handoff
 ```
+
+Hermes pode consumir essa base futuramente, mas nao deve ser plugado no runtime/cockpit sem fase especifica, escopo pequeno e validacao.
 
 ## Papel do AI Workbench
 
@@ -49,14 +53,15 @@ O AI Workbench continua sendo a base operacional:
 - regras de Git;
 - criterios de seguranca.
 
-Hermes deve usar essa base, nao substituir tudo.
+Qualquer integracao futura, incluindo Hermes, deve usar essa base, nao substituir tudo.
 
 ## Fases
 
 ### H0 — Documentar decisao
 
 - Registrar por que OpenHands saiu do nucleo.
-- Registrar por que Hermes entra como candidato principal.
+- Registrar por que o AIW Cockpit/runner proprio vira nucleo.
+- Registrar Hermes como candidato futuro, nao integrado agora.
 - Definir riscos e criterios de teste.
 
 ### H1 — Instalacao isolada
@@ -133,7 +138,7 @@ Criar skills para:
 - Sempre validar git status e git diff.
 - Sempre limitar escopo da tarefa.
 
-## Primeiro criterio de sucesso
+## Primeiro criterio historico de sucesso
 
 Hermes deve conseguir executar uma tarefa que OpenHands falhou:
 
@@ -154,17 +159,19 @@ Resultados:
 - a alteracao foi revisada e commitada;
 - OpenHands havia falhado em tarefa equivalente de edicao documental.
 
-Conclusao:
+Conclusao historica:
 
 ```text
-Hermes substitui OpenHands como candidato principal da camada de agente.
+Hermes mostrou potencial como laboratorio controlado.
 OpenHands permanece apenas como laboratorio opcional.
 ```
 
 ## Decisao atual
 
-Seguir com Hermes como camada de agente candidata.
+Seguir com AIW Cockpit + runner/tool runtime local como nucleo operacional.
+
+Nao integrar Hermes ao runtime/cockpit agora.
 
 Manter OpenHands apenas como laboratorio.
 
-Continuar evoluindo o AI Workbench como base propria de engenharia.
+Continuar evoluindo o AI Workbench como base propria de engenharia inspirada em Manus, Devin e CodeAct.

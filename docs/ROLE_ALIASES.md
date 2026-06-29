@@ -133,7 +133,7 @@ Listar modelos expostos pelo LiteLLM:
 
 O AIW deve tratar `dev-coder`, `dev-review`, `dev-architect`, `dev-fast`, `dev-balanced`, `dev-large` e `dev-fallback` como a interface pública do pool de modelos.
 
-A camada abaixo desses aliases pode mudar sem quebrar Hermes, Cockpit, OpenHands, scripts ou agentes.
+A camada abaixo desses aliases pode mudar sem quebrar Cockpit, scripts, agentes ou futuras integrações controladas.
 
 ## Próxima regra antes do Hermes
 

@@ -168,7 +168,7 @@ Listar modelos:
 ./scripts/aiw models
 ```
 
-Testar chat do modelo sem OpenHands:
+Testar chat do modelo sem envolver a interface:
 
 ```bash
 ./scripts/aiw smoke dev-coder
@@ -180,16 +180,16 @@ Testar aliases operacionais por papel:
 ./scripts/aiw matrix dev-coder dev-review dev-architect
 ```
 
-Abrir bancada no repo atual:
+Abrir AIW Cockpit:
 
 ```bash
-./scripts/aiw current
+./scripts/aiw cockpit
 ```
 
-Abrir bancada no AI Workbench:
+Executar runner local uma vez:
 
 ```bash
-./scripts/aiw repo
+./scripts/aiw run-once
 ```
 
 Parar tudo:

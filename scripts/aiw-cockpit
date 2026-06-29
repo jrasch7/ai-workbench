@@ -1541,7 +1541,6 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"run_id": run_path, "analysis": "completed", "validation_status": overall})
             return
         # fall through to existing logic
-"
 
     def do_POST(self):
         path = urlparse(self.path).path
@@ -1622,3 +1621,4 @@ if __name__ == "__main__":
 
     with ThreadingTCPServer((HOST, PORT), Handler) as httpd:
         httpd.serve_forever()
+PYTHON

@@ -1,6 +1,8 @@
-# OpenHands Validation — AI Workbench
+# OpenHands Historical Validation — AI Workbench
 
-Este documento registra validações reais do OpenHands usando o AI Workbench.
+Este documento registra validações históricas do OpenHands usando o AI Workbench.
+
+OpenHands está depreciado como caminho operacional. A interface principal do AIW é a bancada própria, o AIW Cockpit, com runner/tool runtime local, LiteLLM e evidências auditáveis. Este arquivo permanece apenas como registro de laboratório e não deve orientar execução diária.
 
 ## Validação OpenHands via dev-coder
 
@@ -34,9 +36,9 @@ Conclusão:
 OpenHands -> LiteLLM -> dev-coder -> pool operacional validado funcionando.
 ```
 
-## Regra operacional
+## Regra operacional atual
 
-Antes de usar OpenHands em projeto real, validar:
+Para operar o AIW, validar:
 
 ```bash
 ./scripts/aiw doctor
@@ -46,20 +48,14 @@ Antes de usar OpenHands em projeto real, validar:
 ./scripts/aiw matrix dev-coder dev-review dev-architect
 ```
 
-Depois iniciar:
+Depois iniciar a interface própria:
 
 ```bash
-./scripts/aiw repo
+./scripts/aiw cockpit
 ```
 
-Na UI do OpenHands, usar:
-
-```text
-Model: openai/dev-coder
-Base URL: http://host.docker.internal:4000
-API Key: LITELLM_MASTER_KEY local
-```
+OpenHands não deve ser iniciado como caminho operacional.
 
 ## Hermes substituindo OpenHands no teste controlado
 
-O Hermes conseguiu criar arquivo fora do Git e será testado agora como agente principal.
+O teste controlado mostrou alternativas ao OpenHands. A direção atual é Cockpit próprio + runner/tool runtime local; Hermes não deve ser integrado ao runtime/cockpit sem fase específica e controlada.

@@ -2,9 +2,9 @@
 
 AI Workbench é uma bancada local de engenharia de software assistida por agentes de IA.
 
-O objetivo do projeto é construir uma infraestrutura própria, controlável e extensível para desenvolvimento de software com agentes autônomos, inspirada em plataformas como Devin e OpenHands Cloud/Enterprise, mas com foco em liberdade operacional, controle de custos, múltiplos provedores de LLM e adaptação profunda aos projetos reais do usuário.
+O objetivo do projeto é construir uma infraestrutura própria, controlável e extensível para desenvolvimento de software com agentes autônomos, inspirada em plataformas como Devin, Manus e ambientes CodeAct, mas com foco em liberdade operacional, controle de custos, múltiplos provedores de LLM e adaptação profunda aos projetos reais do usuário.
 
-Este projeto não é apenas uma instalação do OpenHands. A proposta é transformar o OpenHands em um cockpit de engenharia dentro de uma arquitetura própria, com LiteLLM como gateway central de modelos, Docker como runtime/sandbox e uma camada local de organização chamada AI Workbench.
+Este projeto não é uma instalação do OpenHands. A direção atual é construir uma bancada/interface própria, o AIW Cockpit, com LiteLLM como gateway central de modelos, runtime local controlado, evidências auditáveis e uma camada de organização chamada AI Workbench.
 
 ## Visão
 
@@ -36,45 +36,48 @@ O usuário trabalha simultaneamente em:
 
 Ferramentas como Cursor, Cline, Continue e Aider são úteis, mas funcionam mais como ferramentas individuais. O objetivo do AI Workbench é ir além: criar um cockpit unificado, com agentes capazes de produzir, validar e integrar trabalho real em projetos de software.
 
-## Arquitetura inicial
+## Arquitetura atual
 
-A arquitetura local inicial é composta por:
+A arquitetura local é composta por:
 
 ```text
 AI Workbench
-├── OpenHands
-│   └── Cockpit principal de agente de software
+├── AIW Cockpit
+│   └── Interface própria para criar tasks, acompanhar runs e revisar evidências
+│
+├── AIW Runner / Tool Runtime
+│   └── Execução local controlada, logs, validações e artefatos de run
 │
 ├── LiteLLM
-│   └── Gateway local para múltiplos modelos e provedores
+│   └── Gateway local para aliases de modelo por papel
 │
-├── OpenRouter
-│   └── Provedor inicial gratuito para validação do fluxo
+├── Provedores LLM
+│   └── Hugging Face Router, NVIDIA NIM, OpenRouter/Groq como laboratório ou fallback
 │
-├── Groq
-│   └── Provedor auxiliar para testes rápidos e tarefas leves
+├── LangGraph / contexto
+│   └── Orquestração determinística e recuperação de contexto
 │
 ├── Docker
-│   └── Runtime e sandbox dos agentes
+│   └── Base para sandbox/workspaces quando necessário
 │
 └── scripts/aiw
-    └── Comando local para iniciar, parar, verificar status e logs
+    └── Comando local para operar gateway, cockpit, tasks, runs e validações
 ```
 
 ## Fluxo validado
 
-O primeiro pipeline funcional validado foi:
+O pipeline operacional atual é:
 
 ```text
-OpenHands GUI
-→ modelo openai/dev-coder
-→ LiteLLM local
-→ pool operacional validado via aliases LiteLLM
-→ sandbox Docker
-→ criação real de arquivo no workspace
+AIW Cockpit / scripts
+→ task local
+→ AIW runner / tool runtime
+→ LiteLLM via alias operacional
+→ workspace controlado
+→ run com logs, evidências, validação e handoff
 ```
 
-O teste inicial criou com sucesso o arquivo:
+Um teste histórico validou que o gateway LiteLLM conseguia acionar modelo e criar arquivo em workspace:
 
 ```text
 workspaces/sandbox-test/project/STATUS.md
@@ -117,13 +120,15 @@ Exemplos:
 
 ```bash
 ./scripts/aiw start sandbox-test
+./scripts/aiw cockpit
+./scripts/aiw local-status
+./scripts/aiw run-once
 ./scripts/aiw status
 ./scripts/aiw logs
-./scripts/aiw logs openhands
 ./scripts/aiw stop
 ```
 
-A meta é que o usuário não precise memorizar comandos internos de Docker, LiteLLM, OpenHands ou variáveis de ambiente.
+A meta é que o usuário não precise memorizar comandos internos de Docker, LiteLLM, runtime local ou variáveis de ambiente.
 
 ## Modelos e provedores
 
@@ -133,23 +138,21 @@ O LiteLLM funciona como gateway local e expõe aliases internos como:
 dev-fast
 dev-balanced
 dev-large
-dev-openrouter-free
 dev-coder
+dev-review
+dev-architect
+dev-fallback
 ```
 
-O OpenHands se conecta ao LiteLLM usando modelo OpenAI-compatible:
+Clientes OpenAI-compatible, quando necessários, usam o prefixo `openai/`:
 
 ```text
 openai/dev-coder
 ```
 
-E URL base:
+O AIW Cockpit e os scripts devem preferir aliases por papel (`dev-coder`, `dev-review`, `dev-architect`) em vez de depender de nomes crus de provedores.
 
-```text
-http://host.docker.internal:4000
-```
-
-A ideia futura é expandir os perfis de modelo:
+Perfis de modelo:
 
 ```text
 dev-fast      → tarefas simples e fallback leve
@@ -180,31 +183,32 @@ Este projeto deve seguir regras rígidas de segurança:
 Status atual do projeto:
 
 * Docker Engine no WSL2 funcionando;
-* OpenHands rodando localmente;
 * LiteLLM rodando em container;
 * aliases operacionais roteados para pool validado;
-* modelo `openai/dev-coder` validado na GUI;
+* modelo `dev-coder` validado via scripts/gateway;
+* AIW Cockpit como interface própria em evolução;
+* runner local com tasks/runs/evidências;
 * sandbox Docker funcionando;
 * criação de arquivo real validada;
 * script `scripts/aiw` em consolidação;
-* próximo passo: transformar a bancada em um fluxo estável de uso diário.
+* próximo passo: evoluir o Tool Runtime mínimo estilo Manus/Devin/CodeAct.
 
 ## Roadmap
 
 ### Fase 1 — Fundação local
 
 * [x] Instalar Docker Engine no WSL2
-* [x] Instalar e validar OpenHands
 * [x] Instalar e validar LiteLLM
 * [x] Integrar pool Hugging Face Router / NVIDIA NIM
 * [x] Integrar OpenRouter como provider de laboratório/fallback
 * [x] Validar tool calling via LiteLLM
-* [x] Validar OpenHands criando arquivo no sandbox
+* [x] Validar criação de arquivo em workspace controlado
 * [x] Consolidar `scripts/aiw`
+* [x] Criar AIW Cockpit MVP
 * [x] Criar `.gitignore` seguro
 * [x] Publicar primeira versão no GitHub
 
-### Fase 2 — Bancada de engenharia
+### Fase 2 — Bancada própria de engenharia
 
 * [ ] Criar contexto base do AI Workbench
 * [ ] Criar agentes/papéis: executor, validator e integrator
@@ -213,8 +217,19 @@ Status atual do projeto:
 * [ ] Criar fluxo de validação
 * [ ] Criar suporte a projetos reais
 * [ ] Criar profiles para Nivela, SisOpERP e outros projetos
+* [ ] Evoluir AIW Cockpit como workspace operacional bonito e funcional
 
-### Fase 3 — Projetos reais
+### Fase 3 — Tool Runtime mínimo
+
+* [ ] Criar `directory_list`
+* [ ] Criar `file_read`
+* [ ] Criar `shell_exec` controlado
+* [ ] Registrar logs/evidências por tool call
+* [ ] Adicionar `file_write` restrito
+* [ ] Adicionar `file_patch` com diff auditável
+* [ ] Integrar tools ao AIW Cockpit
+
+### Fase 4 — Projetos reais
 
 * [ ] Integrar workspace do Nivela
 * [ ] Integrar workspace do SisOpERP
@@ -225,7 +240,7 @@ Status atual do projeto:
 * [ ] Criar modo validador
 * [ ] Criar modo integrador
 
-### Fase 4 — Plataforma interna
+### Fase 5 — Plataforma interna
 
 * [ ] Rodar em servidor/cloud
 * [ ] Adicionar autenticação
@@ -268,7 +283,7 @@ Core docs for operating the AI Workbench:
 - [Operational Workflow](docs/OPERATIONAL_WORKFLOW.md)
 - [Model Strategy](docs/MODEL_STRATEGY.md)
 - [Role Aliases](docs/ROLE_ALIASES.md)
-- [OpenHands Validation](docs/OPENHANDS_VALIDATION.md)
+- [OpenHands Historical Validation](docs/OPENHANDS_VALIDATION.md)
 - [Hermes Adoption Plan](docs/HERMES_ADOPTION_PLAN.md)
 - [Hermes Project Rules](HERMES.md)
 - [Hermes Telegram Investigation](docs/HERMES_TELEGRAM_INVESTIGATION.md)
@@ -282,4 +297,3 @@ Operational assets:
 - [SisOpERP Web Context](context/projects/SISOPERP_WEB.md)
 - [Task Templates](context/templates/)
 - [Agent Profiles](agents/)
-

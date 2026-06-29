@@ -9,7 +9,7 @@ Este guia descreve como subir o AI Workbench em um novo ambiente local.
 - Git configurado com acesso ao GitHub.
 - Docker Engine instalado dentro do Ubuntu.
 - `uv` instalado.
-- OpenHands instalado via `uv tool install openhands --python 3.12`.
+- Python 3 disponível para os scripts locais.
 
 ## Clonar o repositório
 
@@ -71,35 +71,29 @@ dev-openrouter-free
 dev-coder
 ```
 
-## Subir o OpenHands
+## Subir o AIW Cockpit
 
 ```bash
-./scripts/aiw start sandbox-test
+./scripts/aiw cockpit
 ```
 
-A UI do OpenHands deve abrir em:
+A interface própria do AIW deve abrir em:
 
 ```text
-http://127.0.0.1:3000
+http://127.0.0.1:8765
 ```
 
-## Configuração do modelo no OpenHands
-
-Na UI do OpenHands, use:
-
-```text
-Modelo personalizado: openai/dev-coder
-URL base: http://host.docker.internal:4000
-Chave API: valor de LITELLM_MASTER_KEY
-```
-
-O LiteLLM expõe o alias interno `dev-coder`. O OpenHands usa `openai/dev-coder` porque se conecta ao LiteLLM como endpoint OpenAI-compatible.
+O Cockpit é o caminho operacional principal para criar tasks, acompanhar runs, revisar evidências e evoluir a bancada própria.
 
 ## Fluxo validado
 
 ```text
-OpenHands GUI → LiteLLM local → `dev-coder` → pool operacional validado → sandbox Docker → arquivo criado no workspace
+AIW Cockpit / scripts → task local → AIW runner → LiteLLM `dev-coder` → run com evidências
 ```
+
+## OpenHands
+
+OpenHands fica depreciado neste fluxo. Pode permanecer como laboratório histórico ou comparação pontual, mas não é requisito de setup local e não deve ser usado como caminho operacional do AIW.
 
 ## Observações importantes
 
