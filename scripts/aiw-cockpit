@@ -11,7 +11,7 @@ import sys
 import webbrowser
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 
 ROOT = Path(os.environ.get("AIW_ROOT", Path.home() / "ai-workbench")).resolve()
@@ -139,6 +139,263 @@ def list_patch_proposals(limit: int = 30) -> list[dict]:
     return proposals
 
 
+SENSITIVE_FIELD_PARTS = ("key", "token", "secret", "password", "api_key")
+SENSITIVE_VALUE_PARTS = (".env", "litellm_master_key", "api_key", "client_secret", "private_key")
+
+
+def is_sensitive_name(name: object) -> bool:
+    lower = str(name).lower()
+    return any(part in lower for part in SENSITIVE_FIELD_PARTS)
+
+
+def mask_text(value: object, limit: int = 900) -> str:
+    text = "" if value is None else str(value)
+    lower = text.lower()
+    if any(part in lower for part in SENSITIVE_VALUE_PARTS):
+        return "[masked]"
+    if len(text) > limit:
+        return text[:limit].rstrip() + "..."
+    return text
+
+
+def mask_payload(value):
+    if isinstance(value, dict):
+        masked = {}
+        for key, item in value.items():
+            if is_sensitive_name(key):
+                masked[key] = "[masked]"
+            else:
+                masked[key] = mask_payload(item)
+        return masked
+    if isinstance(value, list):
+        return [mask_payload(item) for item in value[:80]]
+    if isinstance(value, str):
+        return mask_text(value, limit=1400)
+    return value
+
+
+def safe_json_text(value, limit: int = 1600) -> str:
+    try:
+        text = json.dumps(mask_payload(value), ensure_ascii=False, indent=2)
+    except Exception:
+        text = mask_text(value, limit=limit)
+    return mask_text(text, limit=limit)
+
+
+def parse_tool_arguments(raw_args) -> dict:
+    if isinstance(raw_args, dict):
+        return mask_payload(raw_args)
+    if not raw_args:
+        return {}
+    try:
+        parsed = json.loads(raw_args)
+        return mask_payload(parsed if isinstance(parsed, dict) else {"value": parsed})
+    except Exception:
+        return {"raw": mask_text(raw_args, limit=600)}
+
+
+def summarize_input(tool_name: str, args: dict) -> str:
+    path = args.get("path")
+    if path:
+        return f"Arquivo: {mask_text(path, limit=120)}"
+    command = args.get("command")
+    if command:
+        return f"Comando seguro: {mask_text(command, limit=160)}"
+    if tool_name == "directory_list":
+        return "Listagem de diretório"
+    return safe_json_text(args, limit=240) if args else "Sem entrada registrada"
+
+
+def summarize_output(tool_name: str, result: dict) -> str:
+    if not isinstance(result, dict):
+        return mask_text(result, limit=300)
+    if result.get("error"):
+        return mask_text(result.get("error"), limit=300)
+    if tool_name == "file_read":
+        content = result.get("content", "")
+        return f"Leu {len(str(content).encode('utf-8'))} bytes. Trecho: {mask_text(content, limit=220)}"
+    if tool_name == "directory_list":
+        entries = result.get("entries", [])
+        return f"Listou {len(entries)} entradas."
+    if tool_name == "shell_exec":
+        stdout = mask_text(result.get("stdout", ""), limit=220)
+        stderr = mask_text(result.get("stderr", ""), limit=220)
+        parts = [f"Exit code: {result.get('exit_code', '-')}"]
+        if stdout:
+            parts.append(f"stdout: {stdout}")
+        if stderr:
+            parts.append(f"stderr: {stderr}")
+        return " | ".join(parts)
+    if tool_name == "project_patch_preview":
+        return f"Patch {result.get('status', 'preview')} para {mask_text(result.get('path', ''), limit=140)}."
+    if tool_name in ("project_patch_apply", "project_patch_rollback"):
+        return f"Patch {result.get('patch_id', '-')} -> {result.get('status', '-')}"
+    diff = result.get("diff")
+    if diff:
+        return mask_text(diff, limit=260)
+    return safe_json_text(result, limit=320)
+
+
+def patch_status_for_id(patch_id: str) -> dict:
+    if not patch_id:
+        return {}
+    patch_file = ROOT / ".aiw" / "patches" / f"{patch_id}.json"
+    if patch_file.exists():
+        data = read_json(patch_file)
+        return mask_payload(data) if isinstance(data, dict) else {}
+    return {}
+
+
+def build_tool_evidence(run_dir: Path) -> dict:
+    traces_file = run_dir / "tool-traces.jsonl"
+    status_data = read_json(run_dir / "status.json")
+    tools = []
+    invalid_lines = 0
+
+    if traces_file.exists():
+        for line in traces_file.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.strip():
+                continue
+            try:
+                raw = json.loads(line)
+            except Exception:
+                invalid_lines += 1
+                continue
+
+            call = raw.get("call", {}) if isinstance(raw, dict) else {}
+            func = call.get("function", {}) if isinstance(call, dict) else {}
+            result = raw.get("result", {}) if isinstance(raw, dict) else {}
+            if "event" in raw and not func:
+                name = str(raw.get("event", "event"))
+                args = {"event": raw.get("event"), "evidence": raw.get("evidence", [])}
+                result = {"ok": bool(raw.get("ok", False)), "tool": name, "run_id": raw.get("run_id")}
+            else:
+                name = str(func.get("name") or (result.get("tool") if isinstance(result, dict) else "") or "unknown")
+                args = parse_tool_arguments(func.get("arguments", {}))
+
+            result = mask_payload(result if isinstance(result, dict) else {"value": result})
+            ok = bool(result.get("ok", False))
+            patch_id = str(result.get("patch_id", "") or "")
+            patch_data = patch_status_for_id(patch_id)
+            patch_status = str(patch_data.get("status") or result.get("status") or "")
+
+            tools.append({
+                "name": name,
+                "ok": ok,
+                "status": "sucesso" if ok else "erro",
+                "args": args,
+                "input_summary": summarize_input(name, args),
+                "output_summary": summarize_output(name, result),
+                "error": mask_text(result.get("error", ""), limit=300),
+                "result": result,
+                "raw": mask_payload(raw),
+                "patch_id": patch_id,
+                "patch_status": patch_status,
+                "patch_path": str(patch_data.get("path") or result.get("path") or args.get("path") or ""),
+                "patch_reason": str(patch_data.get("reason") or args.get("reason") or ""),
+                "diff": str(patch_data.get("diff") or result.get("diff") or ""),
+            })
+
+    patches_proposed = len([t for t in tools if t["name"] == "project_patch_preview" and t.get("patch_id")])
+    patches_applied = len([t for t in tools if t["name"] == "project_patch_apply" or t.get("patch_status") == "applied"])
+    failed_tools = len([t for t in tools if not t["ok"]])
+    is_offline = bool(status_data.get("offline")) or status_data.get("mode") == "offline" or any(t["name"] == "offline_dry_run" for t in tools)
+    mode = "offline" if is_offline else ("online" if traces_file.exists() else "legacy")
+
+    return {
+        "run": str(run_dir.relative_to(ROOT)),
+        "mode": mode,
+        "total": len(tools),
+        "successes": len(tools) - failed_tools,
+        "failures": failed_tools,
+        "patches_proposed": patches_proposed,
+        "patches_applied": patches_applied,
+        "invalid_lines": invalid_lines,
+        "tools": tools,
+    }
+
+
+def render_tool_evidence_block(evidence: dict, rel: str) -> str:
+    metrics = f"""
+    <div class="evidence-summary">
+      <div class="evidence-metric"><span>Modo</span><strong>{html.escape(evidence["mode"])}</strong></div>
+      <div class="evidence-metric"><span>Total</span><strong>{evidence["total"]}</strong></div>
+      <div class="evidence-metric"><span>Sucessos</span><strong>{evidence["successes"]}</strong></div>
+      <div class="evidence-metric"><span>Falhas</span><strong>{evidence["failures"]}</strong></div>
+      <div class="evidence-metric"><span>Patches</span><strong>{evidence["patches_proposed"]}</strong></div>
+      <div class="evidence-metric"><span>Aplicados</span><strong>{evidence["patches_applied"]}</strong></div>
+    </div>
+    """
+
+    cards = ""
+    for tool in evidence["tools"]:
+        status_cls = "status-done" if tool["ok"] else "status-failed"
+        status_lbl = "sucesso" if tool["ok"] else "erro"
+        raw_json = safe_json_text(tool.get("raw", {}), limit=3000)
+        result_json = safe_json_text(tool.get("result", {}), limit=2200)
+        patch_actions = ""
+        if tool["name"] == "project_patch_preview" and tool.get("patch_id"):
+            pid = html.escape(tool["patch_id"])
+            patch_status = tool.get("patch_status") or "preview"
+            if patch_status == "preview":
+                patch_actions = f'''<form method="post" action="/runner/patch/apply" style="display:inline"><input type="hidden" name="patch_id" value="{pid}"><input type="hidden" name="run_path" value="{html.escape(rel)}"><button class="btn btn-run" style="padding:6px 10px;font-size:12px" type="submit">Aplicar</button></form>'''
+            elif patch_status == "applied":
+                patch_actions = f'''<form method="post" action="/runner/patch/rollback" style="display:inline"><input type="hidden" name="patch_id" value="{pid}"><input type="hidden" name="run_path" value="{html.escape(rel)}"><button class="btn btn-danger" style="padding:6px 10px;font-size:12px" type="submit">Rollback</button></form>'''
+
+        patch_line = ""
+        if tool["name"].startswith("project_patch") or tool.get("patch_id"):
+            patch_line = f"""
+            <div class="tool-evidence-field">
+              <strong>Patch</strong>
+              {html.escape(tool.get("patch_path") or "-")} · {html.escape(tool.get("patch_status") or "-")}
+              <div style="margin-top:6px">{patch_actions}</div>
+            </div>
+            """
+
+        cards += f"""
+        <div class="tool-evidence-card">
+          <div class="tool-evidence-head">
+            <div>
+              <div class="tool-evidence-title">Tool: {html.escape(tool["name"])}</div>
+              <div class="tool-evidence-sub">{html.escape(tool.get("patch_reason") or tool["input_summary"])}</div>
+            </div>
+            <span class="tag {status_cls}">{status_lbl}</span>
+          </div>
+          <div class="tool-evidence-grid">
+            <div class="tool-evidence-field"><strong>Entrada</strong>{html.escape(tool["input_summary"])}</div>
+            <div class="tool-evidence-field"><strong>Resultado</strong>{html.escape(tool["output_summary"])}</div>
+            {patch_line}
+            <div class="tool-evidence-field"><strong>Erro</strong>{html.escape(tool["error"] or "-")}</div>
+          </div>
+          <details style="margin-top:10px">
+            <summary style="cursor:pointer;color:var(--muted);font-size:12px">Avançado</summary>
+            <div style="margin-top:8px">
+              <div class="tool-evidence-sub" style="margin-bottom:4px">Resultado sanitizado</div>
+              <pre style="border-radius:8px;background:var(--bg);margin-bottom:8px">{html.escape(result_json)}</pre>
+              <div class="tool-evidence-sub" style="margin-bottom:4px">Raw técnico sanitizado</div>
+              <pre style="border-radius:8px;background:var(--bg)">{html.escape(raw_json)}</pre>
+            </div>
+          </details>
+        </div>
+        """
+
+    if not cards:
+        cards = '<div class="empty-state">Nenhuma ferramenta usada neste run.</div>'
+
+    invalid_note = ""
+    if evidence.get("invalid_lines"):
+        invalid_note = f'<div class="signal-note">Linhas inválidas ignoradas: {evidence["invalid_lines"]}</div>'
+
+    return f"""
+    <div class="priority-block">
+      <h3>Evidências das ferramentas</h3>
+      {metrics}
+      <div class="tool-evidence-list">{cards}</div>
+      {invalid_note}
+    </div>
+    """
+
+
 def run_has_tool(run_dir: Path, tool_name: str) -> bool:
     traces = run_dir / "tool-traces.jsonl"
     if not traces.exists():
@@ -153,11 +410,13 @@ def classify_run(row: dict) -> dict:
     run_dir = ROOT / row["run"]
     status_data = read_json(run_dir / "status.json")
     status = str(row.get("status", "unknown")).lower()
-    has_tools = (run_dir / "tool-traces.jsonl").exists()
+    evidence = build_tool_evidence(run_dir)
+    has_tools = evidence["total"] > 0 or (run_dir / "tool-traces.jsonl").exists()
     is_offline = bool(status_data.get("offline")) or status_data.get("mode") == "offline" or "offline" in status
-    has_patch_preview = run_has_tool(run_dir, "project_patch_preview")
-    has_patch_apply = run_has_tool(run_dir, "project_patch_apply")
+    has_patch_preview = evidence["patches_proposed"] > 0 or run_has_tool(run_dir, "project_patch_preview")
+    has_patch_apply = evidence["patches_applied"] > 0 or run_has_tool(run_dir, "project_patch_apply")
     failed = status in ("failed", "rejected", "cancelled", "timed_out") or "failed" in status
+    failed_tool = evidence["failures"] > 0
 
     if is_offline:
         mode = "Offline"
@@ -172,6 +431,10 @@ def classify_run(row: dict) -> dict:
         "has_patch_preview": has_patch_preview,
         "has_patch_apply": has_patch_apply,
         "failed": failed,
+        "failed_tool": failed_tool,
+        "tool_total": evidence["total"],
+        "patches_proposed": evidence["patches_proposed"],
+        "patches_applied": evidence["patches_applied"],
     }
 
 
@@ -601,6 +864,75 @@ body {
   padding: 6px 11px;
   font-size: 12px;
 }
+.evidence-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.evidence-metric {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255,255,255,0.025);
+  padding: 12px 14px;
+}
+.evidence-metric span {
+  color: var(--muted);
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.evidence-metric strong {
+  display: block;
+  font-size: 18px;
+  margin-top: 2px;
+}
+.tool-evidence-list {
+  display: grid;
+  gap: 12px;
+}
+.tool-evidence-card {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel2);
+  padding: 14px 16px;
+}
+.tool-evidence-head {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+.tool-evidence-title {
+  color: var(--text);
+  font-weight: 800;
+}
+.tool-evidence-sub {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.tool-evidence-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 10px;
+}
+.tool-evidence-field {
+  border-top: 1px solid rgba(255,255,255,0.06);
+  color: var(--muted);
+  font-size: 12px;
+  padding-top: 8px;
+  word-break: break-word;
+}
+.tool-evidence-field strong {
+  color: var(--text);
+  display: block;
+  font-size: 11px;
+  margin-bottom: 3px;
+  text-transform: uppercase;
+}
 
 /* ── Composer ── */
 .composer {
@@ -944,6 +1276,7 @@ a:hover { text-decoration: underline; }
   .mission-grid { grid-template-columns: 1fr; }
   .harness-grid { grid-template-columns: 1fr; }
   .harness-columns { grid-template-columns: 1fr; }
+  .tool-evidence-grid { grid-template-columns: 1fr; }
   .cards { grid-template-columns: 1fr; }
 }
 """
@@ -1113,9 +1446,10 @@ def render_page() -> str:
         run_path = html.escape(row["run"])
         badges = [
             f'<span class="tag status-{html.escape(row["status"])}">{html.escape(row["status"])}</span>',
-            '<span class="tag">Tools</span>' if cls["has_tools"] else "",
-            '<span class="tag status-preview">Patch Preview</span>' if cls["has_patch_preview"] else "",
+            f'<span class="tag">Tools {cls["tool_total"]}</span>' if cls["has_tools"] else "",
+            f'<span class="tag status-preview">Patches {cls["patches_proposed"]}</span>' if cls["has_patch_preview"] else "",
             '<span class="tag status-applied">Applied</span>' if cls["has_patch_apply"] else "",
+            '<span class="tag status-failed">Failed Tool</span>' if cls["failed_tool"] else "",
             '<span class="tag status-failed">Failed</span>' if cls["failed"] else "",
             '<span class="tag status-offline">Offline</span>' if cls["mode"] == "Offline" else "",
         ]
@@ -1454,6 +1788,24 @@ def safe_run_dir(raw_path: str) -> Path | None:
     return run_dir
 
 
+def resolve_run_ref(raw_ref: str) -> Path | None:
+    run_ref = unquote(raw_ref or "").strip("/")
+    if not run_ref or ".." in run_ref or run_ref.startswith("/"):
+        return None
+    if run_ref.startswith(".aiw/runs/"):
+        return safe_run_dir(run_ref)
+
+    runs_root = (ROOT / ".aiw" / "runs").resolve()
+    run_dir = (runs_root / run_ref).resolve()
+    try:
+        run_dir.relative_to(runs_root)
+    except ValueError:
+        return None
+    if not run_dir.exists() or not run_dir.is_dir():
+        return None
+    return run_dir
+
+
 def read_text_file(path: Path, limit: int = 20000) -> str:
     if not path.exists() or not path.is_file():
         return ""
@@ -1668,52 +2020,14 @@ def render_run_detail(run_dir: Path) -> str:
         </div>
         """
 
-    is_agent = (run_dir / "tool-traces.jsonl").exists()
+    evidence = build_tool_evidence(run_dir)
+    is_agent = evidence["mode"] in ("online", "offline")
     timeline_html = ""
-    tools_html = ""
+    tools_html = render_tool_evidence_block(evidence, rel)
     mode_str = "One-shot (Legado)"
 
     if is_agent:
-        mode_str = "Agent (Tool Runtime)"
-        traces_file = run_dir / "tool-traces.jsonl"
-        tools = []
-        if traces_file.exists():
-            for line in traces_file.read_text(encoding="utf-8").splitlines():
-                if not line.strip(): continue
-                try:
-                    tools.append(json.loads(line))
-                except:
-                    pass
-
-        tools_list = ""
-        for t in tools:
-            call = t.get("call", {})
-            func = call.get("function", {})
-            name = func.get("name", "unknown")
-            args = func.get("arguments", "{}")
-            res = t.get("result", {})
-            ok_status = res.get("ok", False)
-            res_str = json.dumps(res, ensure_ascii=False)[:100]
-            status_cls = "status-done" if ok_status else "status-failed"
-            status_lbl = "OK" if ok_status else "Erro"
-
-            tools_list += f"""
-            <div style="border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:8px;background:var(--panel2)">
-                <div style="display:flex;justify-content:space-between;margin-bottom:8px">
-                    <strong style="color:var(--text)">{html.escape(name)}</strong>
-                    <span class="tag {status_cls}">{status_lbl}</span>
-                </div>
-                <div style="color:var(--muted);font-size:12px;font-family:monospace;margin-bottom:4px">Args: {html.escape(args)}</div>
-                <div style="color:var(--muted);font-size:12px;font-family:monospace">Result: {html.escape(res_str)}...</div>
-            </div>
-            """
-
-        tools_html = f"""
-        <div class="priority-block">
-          <h3>Ferramentas usadas ({len(tools)})</h3>
-          {tools_list or '<div style="color:var(--muted)">Nenhuma ferramenta usada.</div>'}
-        </div>
-        """
+        mode_str = "Agent Offline" if evidence["mode"] == "offline" else "Agent (Tool Runtime)"
 
         messages_file = run_dir / "messages.json"
         timeline = []
@@ -1743,10 +2057,9 @@ def render_run_detail(run_dir: Path) -> str:
         """
 
         patch_ids = []
-        for t in tools:
-            res = t.get("result", {})
-            if res.get("tool") == "project_patch_preview" and res.get("ok"):
-                patch_ids.append(res.get("patch_id"))
+        for t in evidence["tools"]:
+            if t["name"] == "project_patch_preview" and t.get("patch_id"):
+                patch_ids.append(t.get("patch_id"))
 
         patches_html = ""
         if patch_ids:
@@ -1976,6 +2289,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_markdown(validator_file.read_text())
             else:
                 self.send_json({"error": "artifact_missing"}, status=404)
+            return
+        if path.startswith("/api/runs/") and path.endswith("/evidence") and self.command == "GET":
+            run_ref = path[len("/api/runs/"):-len("/evidence")]
+            run_dir = resolve_run_ref(run_ref)
+            if not run_dir:
+                self.send_json({"error": "invalid_run"}, status=404)
+                return
+            self.send_json(build_tool_evidence(run_dir))
             return
         # fall through to existing logic
 
