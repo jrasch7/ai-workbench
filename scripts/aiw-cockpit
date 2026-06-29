@@ -22,6 +22,11 @@ PORT = int(os.environ.get("AIW_COCKPIT_PORT", "8765"))
 HOST = os.environ.get("AIW_COCKPIT_HOST", "127.0.0.1")
 OPEN_BROWSER = os.environ.get("AIW_COCKPIT_OPEN_BROWSER", "0") == "1"
 
+import sys
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from aiw_context import rebuild_indexes, get_search_index, get_context_pack
+
 TASK_QUEUES = ["inbox", "running", "blocked", "queued", "done", "failed"]
 
 MODEL_OPTIONS = [
@@ -763,29 +768,29 @@ def context_health() -> dict:
         all((ROOT / s).is_file() for s in script_checks),
     ]
     score = sum(1 for ok in checks_ok if ok)
-    indexable_docs = docs_count + (1 if (ROOT / "README.md").is_file() else 0)
-    indexable_runs = len(runs)
-    indexable_patches = len(list((ROOT / ".aiw" / "patches").glob("*.json"))) if (ROOT / ".aiw" / "patches").exists() else 0
-    cache_dir = ROOT / ".aiw" / "context"
-    last_index_update = "-"
-    if cache_dir.exists():
-        try:
-            import datetime
-            last_index_update = str(datetime.datetime.fromtimestamp(cache_dir.stat().st_mtime))
-        except Exception: pass
 
-    if score >= 7:
-        context_status = "Busca local disponível" if indexable_docs > 0 else "Sem cache, usando varredura direta"
-    elif score >= 5:
-        context_status = "Contexto incompleto"
+    idx = get_search_index(ROOT)
+    if idx:
+        indexable_docs = idx.get("document_count", 0)
+        indexable_runs = len([d for d in idx.get("documents", []) if d["type"] == "run"])
+        indexable_patches = len([d for d in idx.get("documents", []) if d["type"] == "patch"])
+        last_index_update = idx.get("created_at", "-")
+        idx_head = idx.get("repo_head", "")
+        current_head = short_git_head()
+        if idx_head and current_head and idx_head != current_head:
+            context_status = "Índice desatualizado"
+        else:
+            context_status = "Índice pronto"
+        source_label = "cache"
     else:
-        context_status = "Precisa atenção"
+        indexable_docs = docs_count + (1 if (ROOT / "README.md").is_file() else 0)
+        indexable_runs = len(runs)
+        indexable_patches = len(list((ROOT / ".aiw" / "patches").glob("*.json"))) if (ROOT / ".aiw" / "patches").exists() else 0
+        last_index_update = "-"
+        context_status = "Sem índice, usando varredura direta"
+        source_label = "direct"
 
     return {
-        "indexable_docs": indexable_docs,
-        "indexable_runs": indexable_runs,
-        "indexable_patches": indexable_patches,
-        "last_index_update": last_index_update,
         "README": (ROOT / "README.md").is_file(),
         "docs": docs_dir.is_dir(),
         "docs_count": docs_count,
@@ -807,7 +812,12 @@ def context_health() -> dict:
         "git_head": short_git_head(),
         "branch": current_git_branch(),
         "context_status": context_status,
+        "source_label": source_label,
         "score": f"{score}/{len(checks_ok)}",
+        "indexable_docs": indexable_docs,
+        "indexable_runs": indexable_runs,
+        "indexable_patches": indexable_patches,
+        "last_index_update": last_index_update,
     }
 
 
@@ -1973,7 +1983,11 @@ def render_page() -> str:
         return '<span class="tag status-done">OK</span>' if ok else '<span class="tag status-failed">Ausente</span>'
 
     health_rows = f"""
-      <div class="context-status">{html.escape(health["context_status"])} · {html.escape(health["score"])}</div>
+            <div class="context-status">{html.escape(health["context_status"])} · {html.escape(health["score"])}</div>
+      <div style="margin-bottom:12px;display:flex;justify-content:space-between">
+        <a href="/api/context/pack" target="_blank" class="api-link" style="font-size:12px">Ver fontes de contexto</a>
+        <button class="btn btn-ghost" onclick="rebuildContextIndex(event)" style="padding:4px 8px;font-size:11px">Reconstruir índice</button>
+      </div>
       <div class="health-row"><span>README</span>{health_tag(health["README"])}</div>
       <div class="health-row"><span>Docs indexáveis</span><span class="tag">{health["indexable_docs"]}</span></div>
       <div class="health-row"><span>Runs indexáveis</span><span class="tag">{health["indexable_runs"]}</span></div>
@@ -2118,6 +2132,7 @@ def render_page() -> str:
           <input type="text" id="search-input" class="input" placeholder="Buscar em runs, tasks, docs..." style="flex:1" onkeyup="if(event.key==='Enter') performSearch()">
           <button class="btn btn-primary" onclick="performSearch()">Buscar</button>
         </div>
+        <div style="color:var(--muted);font-size:11px;margin-bottom:8px" id="search-source"></div>
         <div id="search-results" class="cards" style="display:none;margin-bottom:14px"></div>
         <div id="search-empty" class="empty-state" style="display:none;margin-bottom:14px">Nenhum item encontrado com estes filtros.</div>
       </div>
@@ -2309,7 +2324,27 @@ def render_page() -> str:
       var empty = document.getElementById('patch-filter-empty');
       if (empty) empty.style.display = shown ? 'none' : '';
     }}
-        async function performSearch() {{
+            async function rebuildContextIndex(event) {{
+      const btn = event.currentTarget;
+      const oldText = btn.innerText;
+      btn.innerText = "Reconstruindo...";
+      btn.disabled = true;
+      try {{
+        const res = await fetch('/api/context/rebuild', {{method: 'POST'}});
+        const data = await res.json();
+        if(res.ok) {{
+           location.reload();
+        }} else {{
+           alert("Erro: " + data.error);
+        }}
+      }} catch(e) {{
+        alert("Erro de rede.");
+      }}
+      btn.innerText = oldText;
+      btn.disabled = false;
+    }}
+
+    async function performSearch() {{
       const q = document.getElementById('search-input').value;
       try {{ localStorage.setItem('aiw_search_q', q); }} catch(e) {{}}
       if(q.length < 2) {{
@@ -2320,6 +2355,8 @@ def render_page() -> str:
       const res = await fetch('/api/search?q=' + encodeURIComponent(q));
       const data = await res.json();
       const container = document.getElementById('search-results');
+      const sourceLabel = document.getElementById('search-source');
+      if (sourceLabel) sourceLabel.innerText = data.source === 'cache' ? 'Fonte: Cache' : 'Fonte: Varredura Direta';
       if(data.count === 0) {{
           container.style.display = 'none';
           document.getElementById('search-empty').style.display = 'block';
@@ -2897,8 +2934,49 @@ class Handler(BaseHTTPRequestHandler):
             if len(q) < 2:
                 self.send_json({"query": q, "count": 0, "results": []})
                 return
+
+            q_lower = q.lower()
+            idx = get_search_index(ROOT)
+            if idx:
+                results = []
+                for doc in idx.get("documents", []):
+                    score = 0
+                    if q_lower in doc.get("title", "").lower(): score += 5
+                    if q_lower in doc.get("path", "").lower(): score += 3
+                    if q_lower in doc.get("snippet", "").lower(): score += 1
+
+                    if score > 0:
+                        url = "/"
+                        if doc["type"] == "run":
+                            url = f"/run?path={quote(doc['path'])}"
+                        results.append({
+                            "type": doc["type"],
+                            "title": doc["title"],
+                            "path_label": doc.get("id", ""),
+                            "snippet": doc.get("snippet", ""),
+                            "url": url,
+                            "score": score
+                        })
+                results.sort(key=lambda x: x["score"], reverse=True)
+                results = results[:50]
+                self.send_json({"query": q, "count": len(results), "source": "cache", "results": results})
+                return
+
+            # Fallback to direct search
             results = local_lexical_search(q)
-            self.send_json({"query": q, "count": len(results), "results": results})
+            self.send_json({"query": q, "count": len(results), "source": "direct", "results": results})
+            return
+
+        if path == "/api/context/status":
+            self.send_json(context_health())
+            return
+
+        if path == "/api/context/pack":
+            pack = get_context_pack(ROOT)
+            if pack:
+                self.send_json(pack)
+            else:
+                self.send_json({"error": "No context pack found"}, status=404)
             return
 
         if path == "/":
@@ -3119,6 +3197,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": True, "output": output, "model": model})
             else:
                 self.send_json({"ok": False, "error": output}, status=400)
+            return
+
+        if path == "/api/context/rebuild":
+            res = rebuild_indexes(ROOT)
+            if res.get("ok"):
+                self.send_json(res)
+            else:
+                self.send_json(res, status=400)
             return
 
         # Form-encoded endpoints

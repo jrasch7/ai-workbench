@@ -54,3 +54,4 @@ scripts/aiw.bak.*
 .aiw/lab/
 reports/langgraph-smoke/*.md
 reports/provider-smoke/*.md
+.aiw/context/
