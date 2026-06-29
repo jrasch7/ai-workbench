@@ -1,13 +1,22 @@
 #!/usr/bin/env bash
-if [[ -f ".env" ]]; then
-  set -a
-  source ".env"
-  set +a
+offline="${AIW_AGENT_OFFLINE:-0}"
+if [[ "${1:-}" == "--offline" ]]; then
+  export AIW_AGENT_OFFLINE=1
+  offline="1"
+  shift
 fi
 
-if [[ -z "${LITELLM_MASTER_KEY:-}" ]]; then
-  echo "ERROR: LITELLM_MASTER_KEY is not set. Load .env or export it before running." >&2
-  exit 2
+if [[ "$offline" != "1" && "$offline" != "true" && "$offline" != "yes" ]]; then
+  if [[ -f ".env" ]]; then
+    set -a
+    source ".env"
+    set +a
+  fi
+
+  if [[ -z "${LITELLM_MASTER_KEY:-}" ]]; then
+    echo "ERROR: LITELLM_MASTER_KEY is not set. Load .env or export it before running." >&2
+    exit 2
+  fi
 fi
 exec python3 - <<'PYTHON'
 import os
@@ -81,6 +90,66 @@ def run_agent():
     commands_log = open(run_dir / "commands.log", "w", encoding="utf-8")
     tool_traces_log = open(run_dir / "tool-traces.log", "w", encoding="utf-8")
     tool_traces_jsonl = open(run_dir / "tool-traces.jsonl", "w", encoding="utf-8")
+
+    offline = os.environ.get("AIW_AGENT_OFFLINE", "").lower() in ("1", "true", "yes", "on")
+    if offline:
+        iteration = 0
+        status["status"] = "succeeded_offline"
+        status["mode"] = "offline"
+        status["offline"] = True
+        status["finished_at"] = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        offline_message = (
+            "Modo offline/dry-run concluido. "
+            "Nenhum provider externo foi chamado. "
+            "Evidencias simuladas: task lida, plano fake registrado, nenhuma tool destrutiva executada."
+        )
+        messages.append({"role": "assistant", "content": offline_message})
+
+        commands_log.write("OFFLINE_MODE: enabled\n")
+        commands_log.write(f"Task loaded: {task_file}\n")
+        commands_log.write("Plan: validate runner pipeline without LiteLLM/provider call.\n")
+        commands_log.write("Tools: no destructive tools executed.\n")
+        commands_log.write("Result: succeeded_offline\n")
+
+        offline_trace = {
+            "event": "offline_dry_run",
+            "ok": True,
+            "task_id": task_id,
+            "run_id": run_dir.name,
+            "evidence": [
+                "task_read",
+                "fake_plan_recorded",
+                "no_provider_call",
+                "no_destructive_tool"
+            ]
+        }
+        tool_traces_log.write(f"OFFLINE: {json.dumps(offline_trace, ensure_ascii=False)}\n")
+        tool_traces_jsonl.write(json.dumps(offline_trace, ensure_ascii=False) + "\n")
+
+        with open(run_dir / "status.json", "w") as f:
+            json.dump(status, f, indent=2)
+
+        with open(run_dir / "messages.json", "w") as f:
+            json.dump(messages, f, indent=2, ensure_ascii=False)
+
+        with open(run_dir / "summary.md", "w", encoding="utf-8") as f:
+            f.write("# Agent Run Summary\n\n")
+            f.write(f"Task: {task_id}\n")
+            f.write("Status: succeeded_offline\n")
+            f.write("Mode: offline/dry-run\n")
+            f.write("Provider calls: 0\n")
+            f.write("Evidence: task_read, fake_plan_recorded, no_provider_call, no_destructive_tool\n")
+
+        commands_log.close()
+        tool_traces_log.close()
+        tool_traces_jsonl.close()
+
+        review_dir = ROOT / ".aiw" / "tasks" / "review"
+        review_dir.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(task_file), str(review_dir / task_file.name))
+        print(f"STATUS: REVIEW\nTASK_ID: {task_id}\nRUN_DIR: {run_dir}\nMODE: offline")
+        return
 
     url = f"{get_litellm_url()}/v1/chat/completions"
     headers = {
@@ -162,7 +231,8 @@ def run_agent():
                     "content": res_str
                 })
 
-        status["status"] = "succeeded"
+        if status.get("status") == "running":
+            status["status"] = "succeeded"
     except Exception as e:
         commands_log.write(f"Internal error: {traceback.format_exc()}\n")
         status["status"] = "failed"

@@ -849,6 +849,7 @@ def render_page() -> str:
               <div style="display:flex;gap:8px;flex-wrap:wrap">
                 <button class="btn btn-run" type="submit" formaction="/runner/run-once">Executar One-shot (Legado)</button>
                 <button class="btn btn-primary" type="submit" formaction="/runner/run-agent">Executar modo Agent</button>
+                <button class="btn btn-secondary" type="submit" formaction="/runner/run-agent-offline">Executar Agent Offline</button>
               </div>
             </form>
           </div>
@@ -1205,7 +1206,7 @@ def run_once_from_cockpit(llm_enabled: str = "1", model: str = "dev-gemini-fast"
     return ok, output, run_dir
 
 
-def run_agent_from_cockpit(model: str = "dev-coder") -> tuple[bool, str, str]:
+def run_agent_from_cockpit(model: str = "dev-coder", offline: bool = False) -> tuple[bool, str, str]:
     model = (model or "dev-coder").strip()
 
     allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:/")
@@ -1214,6 +1215,8 @@ def run_agent_from_cockpit(model: str = "dev-coder") -> tuple[bool, str, str]:
 
     env = os.environ.copy()
     env["AIW_MODEL"] = model
+    if offline:
+        env["AIW_AGENT_OFFLINE"] = "1"
 
     try:
         completed = subprocess.run(
@@ -1885,9 +1888,10 @@ class Handler(BaseHTTPRequestHandler):
             model = form.get("model", ["dev-gemini-fast"])[0]
             ok, output, generated_run = run_once_from_cockpit(llm_enabled, model)
             redirect = f"/run?path={quote(generated_run)}" if generated_run else "/"
-        elif path == "/runner/run-agent":
+        elif path in ("/runner/run-agent", "/runner/run-agent-offline"):
             model = form.get("model", ["dev-coder"])[0]
-            ok, output, generated_run = run_agent_from_cockpit(model)
+            offline = path == "/runner/run-agent-offline"
+            ok, output, generated_run = run_agent_from_cockpit(model, offline=offline)
             redirect = f"/run?path={quote(generated_run)}" if generated_run else "/"
         elif path == "/action/approve":
             ok, output = run_action("approve", run_path)
