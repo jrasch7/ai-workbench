@@ -306,6 +306,96 @@ body {
   color: var(--text);
 }
 
+/* ── Mission Control ── */
+.mission-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.85fr);
+  gap: 16px;
+  margin-bottom: 28px;
+}
+.mission-panel {
+  background: linear-gradient(150deg, rgba(139,92,246,0.08), rgba(18,22,34,0.92) 58%);
+  border: 1px solid var(--accent-border);
+  border-radius: 20px;
+  padding: 22px 24px;
+}
+.mission-eyebrow {
+  color: #c4b5fd;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+.mission-title {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin-bottom: 8px;
+}
+.mission-copy {
+  color: var(--muted);
+  max-width: 760px;
+}
+.mission-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+.system-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 18px 20px;
+}
+.system-panel h3 {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.signal-list {
+  display: grid;
+  gap: 10px;
+}
+.signal-row {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.signal-name {
+  color: var(--text);
+  font-weight: 700;
+}
+.signal-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+.roadmap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  margin-bottom: 28px;
+}
+.roadmap-card {
+  background: rgba(255,255,255,0.025);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px 18px;
+}
+.roadmap-card strong {
+  display: block;
+  margin-bottom: 5px;
+}
+.roadmap-card span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 /* ── Composer ── */
 .composer {
   background: linear-gradient(160deg, rgba(139,92,246,0.06) 0, rgba(18,22,34,0.9) 60%);
@@ -641,6 +731,7 @@ a:hover { text-decoration: underline; }
   .sidebar { position: static; height: auto; flex-direction: row; flex-wrap: wrap; padding: 12px; }
   .sidebar-logo { border: none; padding: 0 12px 0 0; margin: 0; }
   .main { padding: 20px 16px 40px; }
+  .mission-grid { grid-template-columns: 1fr; }
   .cards { grid-template-columns: 1fr; }
 }
 """
@@ -796,8 +887,8 @@ def render_page() -> str:
         inbox_cards = '<div class="empty-state">Nenhuma task na inbox.</div>'
 
     # Review / Activity sections
-    queued_runs = [r for r in runs if r["status"] == "queued"]
-    queued_runs = [r for r in runs if r["status"] == "queued"]
+    review_runs = [r for r in runs if r["status"] in ("queued", "review")]
+    other_runs = [r for r in runs if r["status"] not in ("queued", "review")]
 
     def run_card(row: dict) -> str:
         st = html.escape(row["status"])
@@ -823,8 +914,8 @@ def render_page() -> str:
         </div>
         """
 
-    if queued_runs:
-        atencao_cards = "".join(run_card(r) for r in queued_runs)
+    if review_runs:
+        atencao_cards = "".join(run_card(r) for r in review_runs)
         atencao_section = f"""
         <div class="section-block">
           <h3>Precisa da sua atenção</h3>
@@ -856,13 +947,45 @@ def render_page() -> str:
         """
 
     # Overview section content
+    active_total = running_count + review_count
+    mission_panel = f"""
+    <div class="mission-grid">
+      <div class="mission-panel">
+        <div class="mission-eyebrow">AIW Mission Control</div>
+        <div class="mission-title">Bancada própria para agentes de engenharia.</div>
+        <div class="mission-copy">Crie missões, acompanhe runs e consolide evidências em um fluxo inspirado em Devin, Manus e CodeAct, com execução local controlada e aliases LiteLLM por papel.</div>
+        <div class="mission-actions">
+          <button class="btn btn-primary" onclick="showSection('nova')">Nova missão</button>
+          <button class="btn btn-secondary" onclick="showSection('review')">Revisar runs</button>
+        </div>
+      </div>
+      <div class="system-panel">
+        <h3>Sinais operacionais</h3>
+        <div class="signal-list">
+          <div class="signal-row"><span class="signal-name">Runs ativos</span><span class="tag status-running">{active_total}</span></div>
+          <div class="signal-row"><span class="signal-name">Inbox</span><span class="tag status-inbox">{inbox_count}</span></div>
+          <div class="signal-row"><span class="signal-name">Modelo padrão</span><span class="tag">dev-coder</span></div>
+          <div class="signal-note">Próxima evolução: Tool Runtime mínimo com File OS, Shell OS e evidências por chamada.</div>
+        </div>
+      </div>
+    </div>
+    """
+    roadmap_panel = """
+    <div class="roadmap-grid">
+      <div class="roadmap-card"><strong>Tool Runtime</strong><span>directory_list, file_read e shell_exec controlado antes de escrita.</span></div>
+      <div class="roadmap-card"><strong>RAG / Context Engine</strong><span>Contexto versionado, recuperação por projeto e memória auditável.</span></div>
+      <div class="roadmap-card"><strong>Evals e fine-tuning</strong><span>Harness de qualidade antes de treinar ou promover modelos.</span></div>
+    </div>
+    """
     overview_section = f"""
     <div id="sec-overview" class="workspace-section">
       <div class="page-header">
-        <h2>Overview</h2>
-        <div class="sub">Visão geral do workspace. Root: <code>{html.escape(str(ROOT))}</code></div>
+        <h2>Mission Control</h2>
+        <div class="sub">Cockpit central do AI Workbench. Root: <code>{html.escape(str(ROOT))}</code></div>
       </div>
+      {mission_panel}
       <div class="queue-bar">{queue_pills}</div>
+      {roadmap_panel}
       {atencao_section}
       {recent_section}
       <div class="api-links">
@@ -1305,6 +1428,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def do_GET(self):
+        path = urlparse(self.path).path
+
         # Existing GET handling remains unchanged – omitted for brevity
         # New endpoints for analysis artifacts
         if path.startswith("/api/runs/") and path.endswith("/diff-summary") and self.command == "GET":
@@ -1344,8 +1469,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": "artifact_missing"}, status=404)
             return
         # fall through to existing logic
-
-        path = urlparse(self.path).path
 
         if path == "/":
             self.send_html(render_page())
