@@ -839,7 +839,7 @@ def render_page() -> str:
               <span class="tag">inbox</span>
             </div>
             {doc_line}
-            <form method="post" action="/runner/run-once" style="display:flex;flex-direction:column;gap:10px">
+            <form method="post" style="display:flex;flex-direction:column;gap:10px">
               <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
                 <div>
                   <label style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:4px">Modelo</label>
@@ -847,7 +847,8 @@ def render_page() -> str:
                 </div>
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <button class="btn btn-run" type="submit">Executar task selecionada</button>
+                <button class="btn btn-run" type="submit" formaction="/runner/run-once">Executar One-shot (Legado)</button>
+                <button class="btn btn-primary" type="submit" formaction="/runner/run-agent">Executar modo Agent</button>
               </div>
             </form>
           </div>
@@ -897,6 +898,11 @@ def render_page() -> str:
         summary = html.escape(row["summary"])
         run_path = html.escape(row["run"])
         doc = html.escape(row.get("generated_file", ""))
+
+        run_dir_path = ROOT / row["run"]
+        is_agent = (run_dir_path / "tool-traces.jsonl").exists()
+        mode_badge = '<span class="tag" style="border-color:var(--accent-border);color:#c4b5fd">Agent</span>' if is_agent else '<span class="tag">One-shot</span>'
+
         doc_line = f'<div class="card-doc">→ {doc}</div>' if doc else ""
         summary_line = f'<div class="card-summary">{summary}</div>' if summary else ""
         return f"""
@@ -905,6 +911,7 @@ def render_page() -> str:
           <div class="card-meta">
             <span class="tag status-{st}">{st}</span>
             <span class="tag">{model}</span>
+            {mode_badge}
           </div>
           {doc_line}
           {summary_line}
@@ -1198,6 +1205,41 @@ def run_once_from_cockpit(llm_enabled: str = "1", model: str = "dev-gemini-fast"
     return ok, output, run_dir
 
 
+def run_agent_from_cockpit(model: str = "dev-coder") -> tuple[bool, str, str]:
+    model = (model or "dev-coder").strip()
+
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:/")
+    if not model or any(ch not in allowed for ch in model):
+        return False, "invalid model", ""
+
+    env = os.environ.copy()
+    env["AIW_MODEL"] = model
+
+    try:
+        completed = subprocess.run(
+            [str(ROOT / "scripts" / "aiw-runner-agent")],
+            cwd=str(ROOT),
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=300,
+            check=False,
+        )
+    except Exception as exc:
+        return False, f"runner failed: {exc}", ""
+
+    output = completed.stdout.strip()
+    run_dir = ""
+
+    for line in output.splitlines():
+        if line.startswith("RUN_DIR:"):
+            run_dir = line.split(":", 1)[1].strip()
+
+    ok = completed.returncode == 0 and bool(run_dir)
+    return ok, output, run_dir
+
+
 def run_action(action: str, run_path: str, reason: str = "") -> tuple[bool, str]:
     run_dir = safe_run_dir(run_path)
 
@@ -1295,6 +1337,80 @@ def render_run_detail(run_dir: Path) -> str:
         </div>
         """
 
+    is_agent = (run_dir / "tool-traces.jsonl").exists()
+    timeline_html = ""
+    tools_html = ""
+    mode_str = "One-shot (Legado)"
+
+    if is_agent:
+        mode_str = "Agent (Tool Runtime)"
+        traces_file = run_dir / "tool-traces.jsonl"
+        tools = []
+        if traces_file.exists():
+            for line in traces_file.read_text(encoding="utf-8").splitlines():
+                if not line.strip(): continue
+                try:
+                    tools.append(json.loads(line))
+                except:
+                    pass
+
+        tools_list = ""
+        for t in tools:
+            call = t.get("call", {})
+            func = call.get("function", {})
+            name = func.get("name", "unknown")
+            args = func.get("arguments", "{}")
+            res = t.get("result", {})
+            ok_status = res.get("ok", False)
+            res_str = json.dumps(res, ensure_ascii=False)[:100]
+            status_cls = "status-done" if ok_status else "status-failed"
+            status_lbl = "OK" if ok_status else "Erro"
+
+            tools_list += f"""
+            <div style="border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:8px;background:var(--panel2)">
+                <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+                    <strong style="color:var(--text)">{html.escape(name)}</strong>
+                    <span class="tag {status_cls}">{status_lbl}</span>
+                </div>
+                <div style="color:var(--muted);font-size:12px;font-family:monospace;margin-bottom:4px">Args: {html.escape(args)}</div>
+                <div style="color:var(--muted);font-size:12px;font-family:monospace">Result: {html.escape(res_str)}...</div>
+            </div>
+            """
+
+        tools_html = f"""
+        <div class="priority-block">
+          <h3>Ferramentas usadas ({len(tools)})</h3>
+          {tools_list or '<div style="color:var(--muted)">Nenhuma ferramenta usada.</div>'}
+        </div>
+        """
+
+        messages_file = run_dir / "messages.json"
+        timeline = []
+        if messages_file.exists():
+            msgs = read_json(messages_file)
+            if isinstance(msgs, list):
+                for m in msgs:
+                    role = m.get("role", "")
+                    if role == "user":
+                        timeline.append("Tarefa criada / Prompt recebido")
+                    elif role == "assistant":
+                        if m.get("tool_calls"):
+                            timeline.append("Modelo chamou ferramentas")
+                        elif m.get("content"):
+                            timeline.append("Resposta final gerada")
+                    elif role == "tool":
+                        timeline.append(f"Tool {html.escape(m.get('name',''))} executada")
+
+        timeline_list = "".join([f'<li style="margin-bottom:6px;color:var(--muted)"><span style="color:var(--accent);margin-right:8px">●</span>{html.escape(t)}</li>' for t in timeline])
+        timeline_html = f"""
+        <div class="priority-block">
+          <h3>Linha do tempo</h3>
+          <ul style="list-style:none;padding:0;margin:0;font-size:13px">
+            {timeline_list}
+          </ul>
+        </div>
+        """
+
     # Action bar
     next_action = ""
     if status_label == "review":
@@ -1346,6 +1462,15 @@ def render_run_detail(run_dir: Path) -> str:
         if content:
             file_blocks += render_file_block(fname, content)
 
+    advanced_files_html = f"""
+    <details style="margin-top:20px">
+      <summary style="cursor:pointer;color:var(--muted);font-size:13px;padding:10px 0">Avançado: Ver evidências técnicas e arquivos brutos</summary>
+      <div class="detail-files" style="margin-top:14px">
+        {file_blocks}
+      </div>
+    </details>
+    """
+
     return f"""<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -1376,6 +1501,10 @@ def render_run_detail(run_dir: Path) -> str:
       </div>
       <div class="detail-meta-bar">
         <div class="meta-chip">
+          <div class="chip-label">Modo</div>
+          <div class="chip-value">{html.escape(mode_str)}</div>
+        </div>
+        <div class="meta-chip">
           <div class="chip-label">Status</div>
           <div class="chip-value"><span class="tag status-{html.escape(str(status_label))}">{html.escape(str(status_label))}</span></div>
         </div>
@@ -1395,12 +1524,12 @@ def render_run_detail(run_dir: Path) -> str:
 
       {objective_block}
       {result_block}
+      {tools_html}
+      {timeline_html}
       {file_block}
       {action_bar}
 
-      <div class="detail-files">
-        {file_blocks}
-      </div>
+      {advanced_files_html}
     </main>
   </div>
 </body>
@@ -1706,6 +1835,10 @@ class Handler(BaseHTTPRequestHandler):
             llm_enabled = form.get("llm_enabled", ["1"])[0]
             model = form.get("model", ["dev-gemini-fast"])[0]
             ok, output, generated_run = run_once_from_cockpit(llm_enabled, model)
+            redirect = f"/run?path={quote(generated_run)}" if generated_run else "/"
+        elif path == "/runner/run-agent":
+            model = form.get("model", ["dev-coder"])[0]
+            ok, output, generated_run = run_agent_from_cockpit(model)
             redirect = f"/run?path={quote(generated_run)}" if generated_run else "/"
         elif path == "/action/approve":
             ok, output = run_action("approve", run_path)
