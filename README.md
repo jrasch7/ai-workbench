@@ -101,6 +101,8 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 * [Cockpit Navigation and Local Search](docs/runbooks/AIW_COCKPIT_NAVIGATION_SEARCH.md)
 * [Context Pack v1](docs/runbooks/AIW_CONTEXT_PACK_V1.md)
 * [Agent Context Injection](docs/runbooks/AIW_AGENT_CONTEXT_INJECTION.md)
+* [Workspace-Scoped Artifacts](docs/runbooks/AIW_WORKSPACE_SCOPED_ARTIFACTS.md)
+* [External Workspace Agent Execution](docs/runbooks/AIW_EXTERNAL_WORKSPACE_AGENT_EXECUTION.md)
 
 ## Próximos Passos (Roadmap Resumido)
 

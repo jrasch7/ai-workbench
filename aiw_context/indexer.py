@@ -17,7 +17,8 @@ def normalize_workspace_id(workspace_id: str | None = None) -> str:
 
 
 def workspace_base(root: Path, workspace_id: str | None = None) -> Path:
-    return root / ".aiw" / "workspaces" / normalize_workspace_id(workspace_id)
+    artifact_root = Path(os.environ.get("AIW_ROOT", root)).resolve()
+    return artifact_root / ".aiw" / "workspaces" / normalize_workspace_id(workspace_id)
 
 
 def workspace_context_dir(root: Path, workspace_id: str | None = None) -> Path:
@@ -46,7 +47,8 @@ def _first_existing_context_file(root: Path, filename: str, workspace_id: str | 
     if scoped.is_file():
         return scoped
     if ws_id == "aiw":
-        return root / ".aiw" / "context" / filename
+        artifact_root = Path(os.environ.get("AIW_ROOT", root)).resolve()
+        return artifact_root / ".aiw" / "context" / filename
     return scoped
 
 def is_sensitive_path(path_str: str) -> bool:

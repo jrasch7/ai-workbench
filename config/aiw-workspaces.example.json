@@ -6,7 +6,23 @@
       "id": "aiw",
       "name": "AI Workbench",
       "path": "/home/joao/ai-workbench",
-      "type": "aiw"
+      "type": "python",
+      "profile": {
+        "safe_roots": ["."],
+        "source_roots": ["aiw_runtime", "aiw_context", "scripts", "docs"],
+        "test_commands": [
+          "python3 -m py_compile aiw_runtime/*.py",
+          "python3 -m py_compile aiw_context/*.py",
+          "bash -n scripts/aiw-cockpit"
+        ],
+        "blocked_paths": [
+          ".env",
+          ".env.*",
+          ".git",
+          "node_modules",
+          ".venv"
+        ]
+      }
     }
   ]
 }

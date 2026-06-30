@@ -7,7 +7,7 @@ import shutil
 import uuid
 import difflib
 from pathlib import Path
-from .policy import validate_path, validate_write_path, validate_project_patch_path, validate_shell_command, get_root
+from .policy import validate_path, validate_write_path, validate_project_patch_path, validate_shell_command, get_root, get_aiw_root
 
 
 def _workspace_id() -> str:
@@ -16,11 +16,11 @@ def _workspace_id() -> str:
 
 
 def _patches_dir() -> Path:
-    return get_root() / ".aiw" / "workspaces" / _workspace_id() / "patches"
+    return get_aiw_root() / ".aiw" / "workspaces" / _workspace_id() / "patches"
 
 
 def _legacy_patches_dir() -> Path:
-    return get_root() / ".aiw" / "patches"
+    return get_aiw_root() / ".aiw" / "patches"
 
 
 def _patch_file_for_read(patch_id: str) -> Path:
@@ -129,10 +129,10 @@ def _create_backup(resolved_path: Path) -> str:
     root = get_root()
     rel = resolved_path.relative_to(root)
     timestamp = time.strftime("%Y%m%dT%H%M%SZ")
-    backup_path = root / ".aiw" / "backups" / timestamp / rel
+    backup_path = get_aiw_root() / ".aiw" / "backups" / _workspace_id() / timestamp / rel
     backup_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(resolved_path, backup_path)
-    return str(backup_path.relative_to(root))
+    return str(backup_path.relative_to(get_aiw_root()))
 
 def file_write(path: str, content: str, overwrite: bool = False):
     try:
@@ -255,6 +255,8 @@ def project_patch_preview(path: str, old_text: str, new_text: str, expected_repl
 
 def project_patch_apply(patch_id: str):
     try:
+        if _workspace_id() != "aiw":
+            return {"ok": False, "tool": "project_patch_apply", "error": "Auto-apply bloqueado para workspace externo."}
         patch_file = _patch_file_for_read(patch_id)
         if not patch_file.exists():
             return {"ok": False, "tool": "project_patch_apply", "error": "Patch não encontrado."}
@@ -311,7 +313,7 @@ def project_patch_rollback(patch_id: str):
         if not backup_str:
             return {"ok": False, "tool": "project_patch_rollback", "error": "Nenhum backup encontrado para este patch."}
 
-        backup_path = get_root() / backup_str
+        backup_path = get_aiw_root() / backup_str
         if not backup_path.exists():
             return {"ok": False, "tool": "project_patch_rollback", "error": "Arquivo de backup não encontrado fisicamente."}
 

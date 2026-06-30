@@ -48,6 +48,7 @@ WORKSPACE_ID = os.environ.get("AIW_WORKSPACE_ID", "aiw").strip() or "aiw"
 
 # Add root to sys.path to import aiw_runtime
 sys.path.insert(0, str(ROOT))
+from aiw_workspace import resolve_workspace, execution_policy
 from aiw_runtime.schemas import TOOLS
 from aiw_runtime.tools import (
     directory_list, file_read, shell_exec,
@@ -71,6 +72,19 @@ def get_litellm_key():
     return api_key
 
 def run_agent():
+    workspace = resolve_workspace(WORKSPACE_ID)
+    if not workspace or not workspace.get("exists"):
+        print(f"ERROR: workspace not found or missing: {WORKSPACE_ID}", file=sys.stderr)
+        sys.exit(2)
+
+    workspace_root = Path(workspace["resolved_path"]).resolve()
+    policy = execution_policy(WORKSPACE_ID)
+    profile = workspace.get("profile") or {}
+    os.environ["AIW_ROOT"] = str(ROOT)
+    os.environ["AIW_WORKSPACE_ID"] = WORKSPACE_ID
+    os.environ["AIW_WORKSPACE_ROOT"] = str(workspace_root)
+    os.environ["AIW_SOURCE_ROOTS"] = ":".join(profile.get("source_roots", []))
+
     inbox = ROOT / ".aiw" / "tasks" / "inbox"
     tasks = sorted(list(inbox.glob("*.md")))
     if not tasks:
@@ -90,7 +104,7 @@ def run_agent():
 
     use_ctx = os.environ.get("AIW_USE_CONTEXT_PACK", "").lower() in ("1", "true", "yes", "on")
     if use_ctx and build_agent_context:
-        ctx_data = build_agent_context(ROOT, WORKSPACE_ID)
+        ctx_data = build_agent_context(workspace_root, WORKSPACE_ID)
         if ctx_data.get("enabled"):
             task_content = ctx_data["text"] + "\n\n" + task_content
             (run_dir / "context-used.json").write_text(json.dumps(ctx_data["json"], indent=2, ensure_ascii=False), encoding="utf-8")
@@ -108,14 +122,29 @@ def run_agent():
         "log_path": str(run_dir / "commands.log"),
         "model": model,
         "workspace_id": WORKSPACE_ID,
+        "workspace_name": workspace.get("name", WORKSPACE_ID),
+        "workspace_root": str(workspace_root),
         "artifact_scope": "scoped",
+        "execution_policy": {
+            "auto_apply": False,
+            "auto_commit": False,
+            "push_enabled": False,
+            "source_roots": policy.get("source_roots", []),
+        },
     }
 
     with open(run_dir / "status.json", "w") as f:
         json.dump(status, f, indent=2)
 
     messages = [
-        {"role": "system", "content": "Você é o AIW Runner Agent. Você tem ferramentas disponíveis. Realize a tarefa usando as ferramentas, se necessário."},
+        {"role": "system", "content": (
+            "Você é o AIW Runner Agent. Você tem ferramentas disponíveis. "
+            f"Você está operando no workspace {workspace.get('name', WORKSPACE_ID)}. "
+            "Use paths relativos ao workspace. "
+            "Não tente acessar .env, secrets ou caminhos fora do workspace. "
+            "Alterações de código devem ser propostas via project_patch_preview. "
+            "Não faça auto-apply, commit automático ou push."
+        )},
         {"role": "user", "content": task_content}
     ]
 
@@ -293,7 +322,7 @@ def run_agent():
     shutil.move(str(task_file), str(review_dir / task_file.name))
 
     if best_effort_rebuild:
-        best_effort_rebuild(ROOT, run_dir, WORKSPACE_ID)
+        best_effort_rebuild(workspace_root, run_dir, WORKSPACE_ID)
 
     print(f"STATUS: REVIEW\nTASK_ID: {task_id}\nRUN_DIR: {run_dir}")
 

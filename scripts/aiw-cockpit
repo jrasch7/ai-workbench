@@ -35,6 +35,11 @@ from aiw_context import (
     workspace_runs_dirs,
     workspace_patches_dirs,
 )
+from aiw_workspace import (
+    load_workspaces_config as load_workspace_profiles,
+    resolve_workspace as resolve_workspace_profile,
+    execution_policy as workspace_execution_policy,
+)
 
 TASK_QUEUES = ["inbox", "running", "blocked", "queued", "done", "failed"]
 
@@ -188,45 +193,11 @@ def git_run(cwd: Path, args: list[str], timeout: int = 10) -> subprocess.Complet
 
 
 def load_workspaces_config() -> dict:
-    config = {"version": 1, "active": "aiw", "workspaces": [DEFAULT_WORKSPACE]}
-    if WORKSPACES_CONFIG.exists():
-        try:
-            data = json.loads(WORKSPACES_CONFIG.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and isinstance(data.get("workspaces"), list):
-                seen = {"aiw"}
-                items = [DEFAULT_WORKSPACE]
-                for item in data.get("workspaces", []):
-                    if not isinstance(item, dict):
-                        continue
-                    ws_id = str(item.get("id", "")).strip()
-                    if not ws_id or ws_id in seen:
-                        continue
-                    seen.add(ws_id)
-                    items.append({
-                        "id": ws_id,
-                        "name": str(item.get("name", ws_id)),
-                        "path": str(item.get("path", "")),
-                        "type": str(item.get("type", "external")),
-                    })
-                active = str(data.get("active", "aiw"))
-                if active not in seen:
-                    active = "aiw"
-                config = {"version": 1, "active": active, "workspaces": items}
-        except Exception:
-            config["config_error"] = "invalid_json"
-    return config
+    return load_workspace_profiles()
 
 
 def resolve_workspace(workspace_id: str) -> dict | None:
-    config = load_workspaces_config()
-    for ws in config["workspaces"]:
-        if ws["id"] == workspace_id:
-            path = Path(ws["path"]).expanduser().resolve()
-            ws = dict(ws)
-            ws["resolved_path"] = str(path)
-            ws["exists"] = path.is_dir()
-            return ws
-    return None
+    return resolve_workspace_profile(workspace_id)
 
 
 def workspace_health(workspace_id: str) -> dict:
@@ -250,6 +221,8 @@ def workspace_health(workspace_id: str) -> dict:
         "package_json": False,
         "pyproject": False,
         "last_commit": "-",
+        "execution_enabled": ws.get("execution_enabled", path.is_dir()),
+        "profile": ws.get("profile", {}),
     }
     if not path.is_dir():
         return health
@@ -304,11 +277,19 @@ def workspace_path_or_error(workspace_id: str) -> tuple[Path | None, dict | None
 
 def active_workspace_id(workspace_id: str | None = None) -> str:
     if workspace_id:
-        return normalize_workspace_id(workspace_id)
+        ws = resolve_workspace(workspace_id)
+        return ws["id"] if ws else "aiw"
     env_ws = os.environ.get("AIW_WORKSPACE_ID", "").strip()
     if env_ws:
         return normalize_workspace_id(env_ws)
     return normalize_workspace_id(load_workspaces_config().get("active", "aiw"))
+
+
+def workspace_root_for_context(workspace_id: str | None = None) -> Path:
+    ws = resolve_workspace(active_workspace_id(workspace_id))
+    if ws and ws.get("exists"):
+        return Path(ws["resolved_path"])
+    return ROOT
 
 
 def artifact_scope_label(path: Path, workspace_id: str | None = None) -> str:
@@ -1004,11 +985,12 @@ def local_lexical_search(query: str, workspace_id: str | None = None) -> list[di
 
 def context_health(workspace_id: str | None = None) -> dict:
     workspace_id = active_workspace_id(workspace_id)
-    docs_dir = ROOT / "docs"
-    runbooks_dir = ROOT / "docs" / "runbooks"
-    architecture_dir = ROOT / "docs" / "architecture"
-    roadmap_dir = ROOT / "docs" / "roadmap"
-    model_bench_dir = ROOT / "docs" / "model-bench"
+    target_root = workspace_root_for_context(workspace_id)
+    docs_dir = target_root / "docs"
+    runbooks_dir = target_root / "docs" / "runbooks"
+    architecture_dir = target_root / "docs" / "architecture"
+    roadmap_dir = target_root / "docs" / "roadmap"
+    model_bench_dir = target_root / "docs" / "model-bench"
     docs_count = len(list(docs_dir.rglob("*.md"))) if docs_dir.is_dir() else 0
     runbook_files = sorted(runbooks_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True) if runbooks_dir.is_dir() else []
     arch_files = list(architecture_dir.glob("*.md")) if architecture_dir.is_dir() else []
@@ -1040,18 +1022,18 @@ def context_health(workspace_id: str | None = None) -> dict:
             break
 
     checks_ok = [
-        (ROOT / "README.md").is_file(),
+        (target_root / "README.md").is_file(),
         docs_dir.is_dir(),
         runbooks_dir.is_dir(),
         bool(arch_files),
-        (ROOT / "docs" / "MODEL_STRATEGY.md").is_file(),
-        (ROOT / "config" / "litellm.yaml").is_file(),
-        (ROOT / "aiw_runtime").is_dir(),
+        (target_root / "docs" / "MODEL_STRATEGY.md").is_file() or workspace_id != "aiw",
+        (target_root / "config" / "litellm.yaml").is_file() or workspace_id != "aiw",
+        (target_root / "aiw_runtime").is_dir() or workspace_id != "aiw",
         all((ROOT / s).is_file() for s in script_checks),
     ]
     score = sum(1 for ok in checks_ok if ok)
 
-    idx = get_search_index(ROOT, workspace_id)
+    idx = get_search_index(target_root, workspace_id)
     if idx:
         indexable_docs = idx.get("document_count", 0)
         indexable_runs = len([d for d in idx.get("documents", []) if d["type"] == "run"])
@@ -1065,7 +1047,7 @@ def context_health(workspace_id: str | None = None) -> dict:
             context_status = "Índice pronto"
         source_label = "cache"
     else:
-        indexable_docs = docs_count + (1 if (ROOT / "README.md").is_file() else 0)
+        indexable_docs = docs_count + (1 if (target_root / "README.md").is_file() else 0)
         indexable_runs = len(runs)
         indexable_patches = sum(len(list(d.glob("*.json"))) for _, d in iter_artifact_dirs("patches", workspace_id) if d.exists())
         last_index_update = "-"
@@ -1073,10 +1055,11 @@ def context_health(workspace_id: str | None = None) -> dict:
         source_label = "direct"
 
     return {
-        "README": (ROOT / "README.md").is_file(),
+        "README": (target_root / "README.md").is_file(),
         "workspace_id": workspace_id,
         "artifact_scope": "scoped",
-        "context_dir": str(workspace_context_dir(ROOT, workspace_id)),
+        "context_dir": str(workspace_context_dir(target_root, workspace_id)),
+        "workspace_root": str(target_root),
         "docs": docs_dir.is_dir(),
         "docs_count": docs_count,
         "runbooks": runbooks_dir.is_dir(),
@@ -1084,10 +1067,10 @@ def context_health(workspace_id: str | None = None) -> dict:
         "recent_runbooks": [str(p.relative_to(ROOT)) for p in runbook_files[:5]],
         "architecture_count": len(arch_files),
         "roadmap_count": len(roadmap_files),
-        "model_strategy": (ROOT / "docs" / "MODEL_STRATEGY.md").is_file(),
+        "model_strategy": (target_root / "docs" / "MODEL_STRATEGY.md").is_file(),
         "model_bench": model_bench_dir.is_dir(),
-        "litellm_config": (ROOT / "config" / "litellm.yaml").is_file(),
-        "aiw_runtime": (ROOT / "aiw_runtime").is_dir(),
+        "litellm_config": (target_root / "config" / "litellm.yaml").is_file(),
+        "aiw_runtime": (target_root / "aiw_runtime").is_dir(),
         "scripts_ok": all((ROOT / s).is_file() for s in script_checks),
         "scripts_checked": script_checks,
         "pending_patches": len([p for p in list_patch_proposals(100) if p["status"] == "preview"]),
@@ -2050,6 +2033,11 @@ def render_page() -> str:
             return ""
         return f'<span class="badge {cls}">{n}</span>'
 
+    workspace_options = ""
+    for ws in workspace_data.get("workspaces", []):
+        selected = "selected" if ws["id"] == active_workspace else ""
+        workspace_options += f'<option value="{html.escape(ws["id"])}" {selected}>{html.escape(ws["name"])}</option>'
+
     # Sidebar nav items
     nav_html = f"""
     <div class="sidebar-logo">
@@ -2094,9 +2082,13 @@ def render_page() -> str:
       <div class="composer-sub">Descreva o objetivo em linguagem humana. O AIW executa com IA por padrão.</div>
       <form method="post" action="/task/create" id="composer-form">
         <textarea name="title" placeholder="Ex: Melhorar o README do projeto, documentar o fluxo de onboarding e criar exemplos de uso para novos contribuidores..." required></textarea>
-        <div class="composer-row">
-          <div>
-            <label>Modelo</label>
+	        <div class="composer-row">
+	          <div>
+	            <label>Workspace</label>
+	            <select name="workspace_id" class="input">{workspace_options}</select>
+	          </div>
+	          <div>
+	            <label>Modelo</label>
             {model_sel}
           </div>
           <div style="flex:1;min-width:240px">
@@ -2134,10 +2126,14 @@ def render_page() -> str:
             {doc_line}
             <form method="post" style="display:flex;flex-direction:column;gap:10px">
               <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
-                <div>
-                  <label style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:4px">Modelo</label>
-                  {model_select_html(name='model')}
-                </div>
+	                <div>
+	                  <label style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:4px">Modelo</label>
+	                  {model_select_html(name='model')}
+	                </div>
+	                <div>
+	                  <label style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:4px">Workspace</label>
+	                  <select name="workspace_id" class="input">{workspace_options}</select>
+	                </div>
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
                 <button class="btn btn-run" type="submit" formaction="/runner/run-once">Executar One-shot (Legado)</button>
@@ -2324,13 +2320,27 @@ def render_page() -> str:
               <button class="btn btn-secondary" type="submit">Ativar workspace</button>
             </form>
             """
+        exec_buttons = f"""
+            <form method="post" action="/runner/run-agent" style="display:inline">
+              <input type="hidden" name="workspace_id" value="{html.escape(ws["id"])}">
+              <button class="btn btn-primary" type="submit">Executar Agent Online neste workspace</button>
+            </form>
+            <form method="post" action="/runner/run-agent-offline" style="display:inline">
+              <input type="hidden" name="workspace_id" value="{html.escape(ws["id"])}">
+              <button class="btn btn-secondary" type="submit">Executar Agent Offline neste workspace</button>
+            </form>
+        """
         workspace_cards += f"""
         <div class="card">
           <div class="card-title">{html.escape(ws["name"])}</div>
-          <div class="card-meta">
-            {active_tag}
-            {dirty_tag}
-            <span class="tag">{html.escape(ws.get("branch", "-"))}</span>
+	          <div class="card-meta">
+	            {active_tag}
+	            {dirty_tag}
+	            <span class="tag status-done">Execution enabled</span>
+	            <span class="tag">Read-only + Patch Preview</span>
+	            <span class="tag">No auto-apply</span>
+	            <span class="tag">No push</span>
+	            <span class="tag">{html.escape(ws.get("branch", "-"))}</span>
             <span class="tag">{html.escape(ws.get("head", "-"))}</span>
           </div>
           <div class="card-doc">{html.escape(ws["path"])}</div>
@@ -2341,7 +2351,7 @@ def render_page() -> str:
             <div class="signal-row"><span class="signal-name">docs/</span><span class="tag">{str(ws.get("docs")).lower()}</span></div>
             <div class="signal-row"><span class="signal-name">Último commit</span><span class="tag">{html.escape(ws.get("last_commit", "-")[:80])}</span></div>
           </div>
-          <div class="card-actions" style="margin-top:12px">{activate_btn}</div>
+	          <div class="card-actions" style="margin-top:12px">{activate_btn}{exec_buttons}</div>
         </div>
         """
 
@@ -2980,21 +2990,34 @@ def run_once_from_cockpit(llm_enabled: str = "1", model: str = "dev-gemini-fast"
     for line in output.splitlines():
         if line.startswith("RUN_DIR:"):
             run_dir = line.split(":", 1)[1].strip()
+            try:
+                run_dir = str(Path(run_dir).resolve().relative_to(ROOT))
+            except Exception:
+                pass
 
     ok = completed.returncode == 0 and bool(run_dir)
     return ok, output, run_dir
 
 
-def run_agent_from_cockpit(model: str = "dev-coder", offline: bool = False) -> tuple[bool, str, str]:
+def run_agent_from_cockpit(model: str = "dev-coder", offline: bool = False, workspace_id: str | None = None) -> tuple[bool, str, str]:
     model = (model or "dev-coder").strip()
 
     allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:/")
     if not model or any(ch not in allowed for ch in model):
         return False, "invalid model", ""
 
+    ws_id = active_workspace_id(workspace_id)
+    ws = resolve_workspace(ws_id)
+    if not ws or not ws.get("exists"):
+        return False, "workspace not found or unavailable", ""
+
     env = os.environ.copy()
     env["AIW_MODEL"] = model
-    env["AIW_WORKSPACE_ID"] = active_workspace_id()
+    env["AIW_ROOT"] = str(ROOT)
+    env["AIW_WORKSPACE_ID"] = ws_id
+    env["AIW_WORKSPACE_ROOT"] = ws["resolved_path"]
+    env["AIW_SOURCE_ROOTS"] = ":".join((ws.get("profile") or {}).get("source_roots", []))
+    env["AIW_USE_CONTEXT_PACK"] = "1"
     if offline:
         env["AIW_AGENT_OFFLINE"] = "1"
 
@@ -3018,6 +3041,10 @@ def run_agent_from_cockpit(model: str = "dev-coder", offline: bool = False) -> t
     for line in output.splitlines():
         if line.startswith("RUN_DIR:"):
             run_dir = line.split(":", 1)[1].strip()
+            try:
+                run_dir = str(Path(run_dir).resolve().relative_to(ROOT))
+            except Exception:
+                pass
 
     ok = completed.returncode == 0 and bool(run_dir)
     return ok, output, run_dir
@@ -3081,6 +3108,10 @@ def render_run_detail(run_dir: Path) -> str:
     llm_status = status.get("llm_status", "-")
     model = status.get("model", "-")
     generated_file = status.get("generated_file", "")
+    run_workspace_id = str(status.get("workspace_id", "aiw"))
+    run_workspace_name = str(status.get("workspace_name", run_workspace_id))
+    run_workspace_root = str(status.get("workspace_root", ROOT))
+    run_artifact_scope = str(status.get("artifact_scope", artifact_scope_label(run_dir, run_workspace_id)))
 
     # Objective from task.md
     task_text = read_text_file(run_dir / "task.md")
@@ -3163,19 +3194,20 @@ def render_run_detail(run_dir: Path) -> str:
         if patch_ids:
             patches_list = ""
             for pid in patch_ids:
-                patch_file = ROOT / ".aiw" / "patches" / f"{pid}.json"
-                if patch_file.exists():
-                    pdata = read_json(patch_file)
+                pdata = patch_status_for_id(pid, run_workspace_id)
+                if pdata:
                     p_path = pdata.get("path", "")
                     p_status = pdata.get("status", "")
                     p_reason = pdata.get("reason", "")
                     p_diff = pdata.get("diff", "")
 
                     apply_btn = ""
-                    if p_status == "preview":
+                    if p_status == "preview" and run_workspace_id == "aiw":
                         apply_btn = f'''<form method="post" action="/runner/patch/apply" style="display:inline"><input type="hidden" name="patch_id" value="{pid}"><input type="hidden" name="run_path" value="{rel}"><button class="btn btn-run" style="padding:4px 8px;font-size:12px" type="submit">Aplicar</button></form>'''
                     elif p_status == "applied":
                         apply_btn = f'''<form method="post" action="/runner/patch/rollback" style="display:inline"><input type="hidden" name="patch_id" value="{pid}"><input type="hidden" name="run_path" value="{rel}"><button class="btn btn-danger" style="padding:4px 8px;font-size:12px" type="submit">Rollback</button></form>'''
+                    elif p_status == "preview":
+                        apply_btn = '<span class="tag">No auto-apply</span>'
 
                     patches_list += f"""
                     <div style="border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:8px;background:var(--panel2)">
@@ -3306,11 +3338,23 @@ def render_run_detail(run_dir: Path) -> str:
           <div class="chip-label">Doc</div>
           <div class="chip-value">{html.escape(str(doc_status))}</div>
         </div>
-        <div class="meta-chip">
-          <div class="chip-label">LLM</div>
-          <div class="chip-value">{html.escape(str(llm_status))}</div>
-        </div>
-      </div>
+	        <div class="meta-chip">
+	          <div class="chip-label">LLM</div>
+	          <div class="chip-value">{html.escape(str(llm_status))}</div>
+	        </div>
+	        <div class="meta-chip">
+	          <div class="chip-label">Workspace</div>
+	          <div class="chip-value">{html.escape(run_workspace_name)} · {html.escape(run_workspace_id)}</div>
+	        </div>
+	        <div class="meta-chip">
+	          <div class="chip-label">Workspace root</div>
+	          <div class="chip-value">{html.escape(run_workspace_root)}</div>
+	        </div>
+	        <div class="meta-chip">
+	          <div class="chip-label">Artifact scope</div>
+	          <div class="chip-value">{html.escape(run_artifact_scope)}</div>
+	        </div>
+	      </div>
 
       {objective_block}
       {context_used}
@@ -3408,7 +3452,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             q_lower = q.lower()
-            idx = get_search_index(ROOT, workspace_id)
+            target_root = workspace_root_for_context(workspace_id)
+            idx = get_search_index(target_root, workspace_id)
             if idx:
                 results = []
                 for doc in idx.get("documents", []):
@@ -3450,7 +3495,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/context/pack":
             query = parse_qs(urlparse(self.path).query)
             workspace_id = active_workspace_id(query.get("workspace", [""])[0])
-            pack = get_context_pack(ROOT, workspace_id)
+            pack = get_context_pack(workspace_root_for_context(workspace_id), workspace_id)
             if pack:
                 self.send_json(pack)
             else:
@@ -3465,6 +3510,12 @@ class Handler(BaseHTTPRequestHandler):
             ws_id = path[len("/api/workspaces/"):-len("/health")].strip("/")
             health_payload = workspace_health(ws_id)
             self.send_json(health_payload, status=200 if health_payload.get("ok") else 404)
+            return
+
+        if path.startswith("/api/workspaces/") and path.endswith("/execution-policy"):
+            ws_id = path[len("/api/workspaces/"):-len("/execution-policy")].strip("/")
+            payload = workspace_execution_policy(ws_id)
+            self.send_json(payload, status=200 if payload.get("ok") else 404)
             return
 
         if path == "/api/git/status":
@@ -3704,7 +3755,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/context/rebuild":
             query = parse_qs(urlparse(self.path).query)
             workspace_id = active_workspace_id(query.get("workspace", [""])[0])
-            res = rebuild_indexes(ROOT, workspace_id)
+            res = rebuild_indexes(workspace_root_for_context(workspace_id), workspace_id)
             if res.get("ok"):
                 self.send_json(res)
             else:
@@ -3816,8 +3867,9 @@ class Handler(BaseHTTPRequestHandler):
             redirect = f"/run?path={quote(generated_run)}" if generated_run else "/"
         elif path in ("/runner/run-agent", "/runner/run-agent-offline"):
             model = form.get("model", ["dev-coder"])[0]
+            workspace_id = form.get("workspace_id", [""])[0]
             offline = path == "/runner/run-agent-offline"
-            ok, output, generated_run = run_agent_from_cockpit(model, offline=offline)
+            ok, output, generated_run = run_agent_from_cockpit(model, offline=offline, workspace_id=workspace_id)
             redirect = f"/run?path={quote(generated_run)}" if generated_run else "/"
         elif path == "/action/approve":
             ok, output = run_action("approve", run_path)

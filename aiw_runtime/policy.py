@@ -3,7 +3,16 @@ from pathlib import Path
 import shlex
 
 def get_root() -> Path:
+    return Path(os.environ.get("AIW_WORKSPACE_ROOT") or os.environ.get("AIW_ROOT", Path.cwd())).resolve()
+
+def get_aiw_root() -> Path:
     return Path(os.environ.get("AIW_ROOT", Path.cwd())).resolve()
+
+def get_source_roots() -> list[str]:
+    raw = os.environ.get("AIW_SOURCE_ROOTS", "")
+    if raw.strip():
+        return [p.strip() for p in raw.split(":") if p.strip()]
+    return ["aiw_runtime", "scripts", "tests", "docs", ".aiw/generated", ".aiw/generated/tool-smoke"]
 
 def validate_path(path_str: str) -> Path:
     """Bloquear path absoluto, escape por .., e arquivos sensíveis como .env."""
@@ -21,8 +30,14 @@ def validate_path(path_str: str) -> Path:
     except ValueError:
         raise ValueError("Escape de diretório bloqueado (..).")
 
-    if resolved.name == ".env" or ".env." in resolved.name:
-        raise ValueError("Acesso a .env bloqueado.")
+    blocked_names = {".env", ".git", ".venv", "node_modules", "vendor", "__pycache__"}
+    for part in resolved.relative_to(root).parts:
+        if part in blocked_names or part.startswith(".env."):
+            raise ValueError(f"Acesso bloqueado: {part}")
+    lower_path = str(resolved.relative_to(root)).lower()
+    for word in ("secret", "token", "credential", "private_key", "client_secret"):
+        if word in lower_path:
+            raise ValueError(f"Acesso a caminho sensível bloqueado: {word}")
 
     return resolved
 
@@ -72,7 +87,7 @@ def validate_write_path(path_str: str) -> Path:
 def validate_project_patch_path(path_str: str) -> Path:
     """Bloqueios para project_patch_preview (código-fonte controlado)."""
     resolved = validate_path(path_str)
-    allowed = ["aiw_runtime", "scripts", "tests", "docs", ".aiw/generated", ".aiw/generated/tool-smoke"]
+    allowed = get_source_roots()
     return _validate_common_write(resolved, allowed)
 
 def validate_shell_command(command_str: str) -> list[str]:

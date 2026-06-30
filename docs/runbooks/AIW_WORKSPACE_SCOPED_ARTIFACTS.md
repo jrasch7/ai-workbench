@@ -75,7 +75,7 @@ Os artifacts locais scoped ficam ignorados:
 
 ## Riscos Restantes
 
-- Workspaces externos ainda nao executam agents; o Cockpit apenas enxerga health/git control por workspace conhecido.
+- Workspaces externos executam agents somente quando registrados e continuam sem auto-apply, sem auto-commit e sem push.
 - O isolamento de artifacts nao substitui sandbox de execucao.
 - Patches legados continuam suportados para compatibilidade e devem ser migrados naturalmente conforme novos previews forem criados.
 

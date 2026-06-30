@@ -16,9 +16,10 @@ O Cockpit agora possui uma primeira versao de Multi-Workspace local e um Git Con
   - path: `/home/joao/ai-workbench`;
   - type: `aiw`.
 - Endpoints:
-  - `GET /api/workspaces`;
-  - `GET /api/workspaces/<workspace_id>/health`;
-  - `POST /api/workspaces/active`.
+- `GET /api/workspaces`;
+- `GET /api/workspaces/<workspace_id>/health`;
+- `GET /api/workspaces/<workspace_id>/execution-policy`;
+- `POST /api/workspaces/active`.
 
 O health por workspace mostra nome, path, existencia, branch atual, HEAD curto, clean/dirty, quantidade de arquivos modificados, README, docs, `package.json`, `pyproject.toml` e ultimo commit.
 
@@ -74,7 +75,7 @@ O Git Control Panel bloqueia `.aiw/workspaces/` para evitar staging acidental de
 
 - Sem push via UI.
 - Sem deploy.
-- Sem execucao de agentes em workspace externo ainda.
+- Execucao de agents em workspace externo registrada, com read + shell seguro + patch preview e sem auto-apply.
 - Workspace config local e ignorada.
 - Commit usa staging explicito.
 - Branch/commit usam subprocess controlado.
