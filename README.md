@@ -103,6 +103,7 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 * [Agent Context Injection](docs/runbooks/AIW_AGENT_CONTEXT_INJECTION.md)
 * [Workspace-Scoped Artifacts](docs/runbooks/AIW_WORKSPACE_SCOPED_ARTIFACTS.md)
 * [External Workspace Agent Execution](docs/runbooks/AIW_EXTERNAL_WORKSPACE_AGENT_EXECUTION.md)
+* [Workspace Onboarding](docs/runbooks/AIW_WORKSPACE_ONBOARDING.md)
 
 ## Próximos Passos (Roadmap Resumido)
 

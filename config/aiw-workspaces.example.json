@@ -20,7 +20,9 @@
           ".env.*",
           ".git",
           "node_modules",
-          ".venv"
+          ".venv",
+          "vendor",
+          "__pycache__"
         ]
       }
     }

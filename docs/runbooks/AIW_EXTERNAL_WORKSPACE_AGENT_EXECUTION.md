@@ -10,6 +10,8 @@ O AIW Cockpit pode executar Agent Mode no workspace ativo ou em workspace regist
 
 Workspaces continuam configurados localmente em `.aiw/workspaces.json`, ignorado pelo Git. O exemplo versionado fica em `config/aiw-workspaces.example.json`.
 
+O onboarding controlado pelo Cockpit esta documentado em `docs/runbooks/AIW_WORKSPACE_ONBOARDING.md`.
+
 Cada profile define:
 
 - `safe_roots`

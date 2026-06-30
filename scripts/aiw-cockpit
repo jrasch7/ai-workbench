@@ -39,6 +39,10 @@ from aiw_workspace import (
     load_workspaces_config as load_workspace_profiles,
     resolve_workspace as resolve_workspace_profile,
     execution_policy as workspace_execution_policy,
+    validate_workspace_path,
+    validate_profile as validate_workspace_profile,
+    add_workspace,
+    remove_workspace,
 )
 
 TASK_QUEUES = ["inbox", "running", "blocked", "queued", "done", "failed"]
@@ -2312,12 +2316,30 @@ def render_page() -> str:
     for ws in workspace_data.get("workspaces", []):
         active_tag = '<span class="tag status-done">ativo</span>' if ws["id"] == active_workspace else '<span class="tag">disponível</span>'
         dirty_tag = '<span class="tag status-preview">dirty</span>' if ws.get("dirty") else '<span class="tag status-done">clean</span>'
+        profile = validate_workspace_profile(ws["id"])
+        stack = profile.get("stack", {})
+        profile_status = profile.get("status", "needs_attention")
+        profile_cls = "status-done" if profile_status == "valid" else ("status-preview" if profile_status == "incomplete" else "status-failed")
+        source_roots = ", ".join(profile.get("source_roots", [])) or "-"
+        test_commands = profile.get("test_commands", [])
+        test_command_rows = "".join(f'<div class="signal-row"><span class="signal-name">{html.escape(c.get("command", ""))}</span><span class="tag {"status-done" if c.get("ok") else "status-failed"}">{ "ok" if c.get("ok") else html.escape(c.get("reason", "blocked")) }</span></div>' for c in profile.get("test_command_checks", []))
+        if not test_command_rows:
+            test_command_rows = '<div class="signal-row"><span class="signal-name">Test commands</span><span class="tag">nenhum</span></div>'
+        warnings = "; ".join(profile.get("warnings", [])) or "sem warnings"
         activate_btn = ""
         if ws["id"] != active_workspace:
             activate_btn = f"""
             <form method="post" action="/api/workspaces/active">
               <input type="hidden" name="workspace_id" value="{html.escape(ws["id"])}">
               <button class="btn btn-secondary" type="submit">Ativar workspace</button>
+            </form>
+            """
+        remove_btn = ""
+        if ws["id"] != "aiw":
+            remove_btn = f"""
+            <form method="post" action="/api/workspaces/remove" style="display:inline">
+              <input type="hidden" name="workspace_id" value="{html.escape(ws["id"])}">
+              <button class="btn btn-danger" type="submit">Remover da config</button>
             </form>
             """
         exec_buttons = f"""
@@ -2344,16 +2366,25 @@ def render_page() -> str:
             <span class="tag">{html.escape(ws.get("head", "-"))}</span>
           </div>
           <div class="card-doc">{html.escape(ws["path"])}</div>
-          <div class="signal-list">
-            <div class="signal-row"><span class="signal-name">Existe</span><span class="tag">{str(ws.get("exists")).lower()}</span></div>
-            <div class="signal-row"><span class="signal-name">Alterados</span><span class="tag">{ws.get("modified_count", 0)}</span></div>
-            <div class="signal-row"><span class="signal-name">README</span><span class="tag">{str(ws.get("readme")).lower()}</span></div>
-            <div class="signal-row"><span class="signal-name">docs/</span><span class="tag">{str(ws.get("docs")).lower()}</span></div>
-            <div class="signal-row"><span class="signal-name">Último commit</span><span class="tag">{html.escape(ws.get("last_commit", "-")[:80])}</span></div>
-          </div>
-	          <div class="card-actions" style="margin-top:12px">{activate_btn}{exec_buttons}</div>
-        </div>
-        """
+	          <div class="signal-list">
+	            <div class="signal-row"><span class="signal-name">Existe</span><span class="tag">{str(ws.get("exists")).lower()}</span></div>
+	            <div class="signal-row"><span class="signal-name">Stack detectada</span><span class="tag">{html.escape(stack.get("primary", "unknown"))}</span></div>
+	            <div class="signal-row"><span class="signal-name">Profile</span><span class="tag {profile_cls}">{html.escape(profile_status)}</span></div>
+	            <div class="signal-row"><span class="signal-name">Source roots</span><span class="tag">{html.escape(source_roots)}</span></div>
+	            <div class="signal-row"><span class="signal-name">Alterados</span><span class="tag">{ws.get("modified_count", 0)}</span></div>
+	            <div class="signal-row"><span class="signal-name">README</span><span class="tag">{str(ws.get("readme")).lower()}</span></div>
+	            <div class="signal-row"><span class="signal-name">docs/</span><span class="tag">{str(ws.get("docs")).lower()}</span></div>
+	            <div class="signal-row"><span class="signal-name">Último commit</span><span class="tag">{html.escape(ws.get("last_commit", "-")[:80])}</span></div>
+	            <div class="signal-row"><span class="signal-name">Warnings</span><span class="tag">{html.escape(warnings[:120])}</span></div>
+	            {test_command_rows}
+	          </div>
+		          <div class="card-actions" style="margin-top:12px">
+		            {activate_btn}{exec_buttons}{remove_btn}
+		            <a class="btn btn-ghost" href="/api/workspaces/{html.escape(ws["id"])}/profile/validate" target="_blank">Validar perfil</a>
+		            <a class="btn btn-ghost" href="/api/workspaces/{html.escape(ws["id"])}/execution-policy" target="_blank">Ver política de execução</a>
+		          </div>
+	        </div>
+	        """
 
     changed_files = git_data.get("files", []) if git_data.get("ok") else []
     git_file_rows = ""
@@ -2520,24 +2551,61 @@ def render_page() -> str:
         <h2>Workspaces</h2>
         <div class="sub">Configuração local em <code>.aiw/workspaces.json</code>. O AIW aparece como padrão mesmo sem arquivo local.</div>
       </div>
-      <div class="section-block">
-        <h3>Workspace ativo</h3>
+	      <div class="section-block">
+	        <h3>Workspace ativo</h3>
         <div class="system-panel">
           <div class="signal-list">
             <div class="signal-row"><span class="signal-name">Ativo</span><span class="tag status-done">{html.escape(active_workspace)}</span></div>
             <div class="signal-row"><span class="signal-name">Config local</span><span class="tag">{'existe' if workspace_data.get('local_config_exists') else 'não criada'}</span></div>
             <div class="signal-row"><span class="signal-name">Exemplo versionado</span><span class="tag">config/aiw-workspaces.example.json</span></div>
           </div>
-        </div>
-      </div>
-      <div class="section-block">
-        <h3>Workspaces conhecidos</h3>
+	        </div>
+	      </div>
+	      <div class="section-block">
+	        <h3>Adicionar workspace</h3>
+	        <form method="post" action="/api/workspaces" class="system-panel" style="display:grid;gap:12px">
+	          <div class="composer-row">
+	            <div>
+	              <label>Nome</label>
+	              <input class="input" name="name" placeholder="Meu projeto">
+	            </div>
+	            <div>
+	              <label>ID</label>
+	              <input class="input" name="id" placeholder="meu-projeto" required>
+	            </div>
+	            <div>
+	              <label>Tipo</label>
+	              <select class="input" name="type">
+	                <option value="unknown">unknown</option>
+	                <option value="python">python</option>
+	                <option value="node">node</option>
+	                <option value="mixed">mixed</option>
+	                <option value="docs">docs</option>
+	              </select>
+	            </div>
+	          </div>
+	          <div>
+	            <label>Path local absoluto</label>
+	            <input class="input" name="path" placeholder="/home/joao/projetos/meu-projeto" style="width:100%" required>
+	          </div>
+	          <div class="form-help" style="color:var(--muted);font-size:12px">
+	            O backend valida ID, path, duplicidade, stack e riscos. O AIW nunca le arquivos de ambiente; apenas informa presença nas APIs.
+	          </div>
+	          <div class="composer-actions">
+	            <button class="btn btn-primary" type="submit">Adicionar workspace</button>
+	          </div>
+	        </form>
+	      </div>
+	      <div class="section-block">
+	        <h3>Workspaces conhecidos</h3>
         <div class="cards">{workspace_cards}</div>
       </div>
       <div class="api-links">
-        <a class="api-link" href="/api/workspaces">/api/workspaces</a>
-        <a class="api-link" href="/api/workspaces/aiw/health">/api/workspaces/aiw/health</a>
-      </div>
+	        <a class="api-link" href="/api/workspaces">/api/workspaces</a>
+	        <a class="api-link" href="/api/workspaces/aiw/health">/api/workspaces/aiw/health</a>
+	        <a class="api-link" href="/api/workspaces/aiw/profile/validate">/api/workspaces/aiw/profile/validate</a>
+	        <a class="api-link" href="/api/workspaces/onboarding/validate?path={quote(str(ROOT))}">/api/workspaces/onboarding/validate</a>
+	      </div>
     </div>
     """
 
@@ -3506,10 +3574,22 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(workspaces_payload())
             return
 
+        if path == "/api/workspaces/onboarding/validate":
+            query = parse_qs(urlparse(self.path).query)
+            raw_path = query.get("path", [""])[0]
+            self.send_json(validate_workspace_path(raw_path))
+            return
+
         if path.startswith("/api/workspaces/") and path.endswith("/health"):
             ws_id = path[len("/api/workspaces/"):-len("/health")].strip("/")
             health_payload = workspace_health(ws_id)
             self.send_json(health_payload, status=200 if health_payload.get("ok") else 404)
+            return
+
+        if path.startswith("/api/workspaces/") and path.endswith("/profile/validate"):
+            ws_id = path[len("/api/workspaces/"):-len("/profile/validate")].strip("/")
+            payload = validate_workspace_profile(ws_id)
+            self.send_json(payload, status=200 if payload.get("ok") else 404)
             return
 
         if path.startswith("/api/workspaces/") and path.endswith("/execution-policy"):
@@ -3775,6 +3855,35 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/workspaces/active":
             ws_id = str(request_data.get("workspace_id", request_data.get("id", "")))
             res = write_active_workspace(ws_id)
+            if content_type.startswith("application/json"):
+                self.send_json(res, status=200 if res.get("ok") else 400)
+            elif res.get("ok"):
+                self.send_response(303)
+                self.send_header("Location", "/")
+                self.end_headers()
+            else:
+                self.send_json(res, status=400)
+            return
+
+        if path == "/api/workspaces":
+            ws_id = str(request_data.get("id", request_data.get("workspace_id", ""))).strip()
+            name = str(request_data.get("name", ws_id)).strip()
+            raw_path = str(request_data.get("path", "")).strip()
+            ws_type = str(request_data.get("type", "unknown")).strip()
+            res = add_workspace(ws_id, name, raw_path, ws_type)
+            if content_type.startswith("application/json"):
+                self.send_json(res, status=200 if res.get("ok") else 400)
+            elif res.get("ok"):
+                self.send_response(303)
+                self.send_header("Location", "/")
+                self.end_headers()
+            else:
+                self.send_json(res, status=400)
+            return
+
+        if path == "/api/workspaces/remove":
+            ws_id = str(request_data.get("workspace_id", request_data.get("id", ""))).strip()
+            res = remove_workspace(ws_id)
             if content_type.startswith("application/json"):
                 self.send_json(res, status=200 if res.get("ok") else 400)
             elif res.get("ok"):
