@@ -19,6 +19,45 @@ DEFAULT_PROFILE = {
         "python3 -m py_compile aiw_context/*.py",
         "python3 -m py_compile aiw_workspace/*.py",
         "bash -n scripts/aiw-cockpit",
+        "bash -n scripts/aiw-runner-agent",
+        "bash -n scripts/aiw-tool-smoke",
+    ],
+    "test_mappings": [
+        {
+            "name": "Runtime Python",
+            "patterns": ["aiw_runtime/**/*.py", "aiw_runtime/*.py"],
+            "commands": ["python3 -m py_compile aiw_runtime/*.py"],
+        },
+        {
+            "name": "Context Python",
+            "patterns": ["aiw_context/**/*.py", "aiw_context/*.py"],
+            "commands": ["python3 -m py_compile aiw_context/*.py"],
+        },
+        {
+            "name": "Workspace Python",
+            "patterns": ["aiw_workspace/**/*.py", "aiw_workspace/*.py"],
+            "commands": ["python3 -m py_compile aiw_workspace/*.py"],
+        },
+        {
+            "name": "Cockpit Script",
+            "patterns": ["scripts/aiw-cockpit"],
+            "commands": ["bash -n scripts/aiw-cockpit"],
+        },
+        {
+            "name": "Runner Script",
+            "patterns": ["scripts/aiw-runner-agent"],
+            "commands": ["bash -n scripts/aiw-runner-agent"],
+        },
+        {
+            "name": "Tool Smoke Script",
+            "patterns": ["scripts/aiw-tool-smoke"],
+            "commands": ["bash -n scripts/aiw-tool-smoke"],
+        },
+        {
+            "name": "Documentation",
+            "patterns": ["docs/**/*.md", "docs/*.md", "README.md"],
+            "commands": [],
+        },
     ],
     "blocked_paths": [".env", ".env.*", ".git", "node_modules", ".venv", "vendor", "__pycache__"],
 }
@@ -45,6 +84,17 @@ def _merge_profile(profile: dict | None) -> dict:
         for key in ("safe_roots", "source_roots", "test_commands", "blocked_paths"):
             if isinstance(profile.get(key), list):
                 merged[key] = [str(v) for v in profile[key]]
+        if isinstance(profile.get("test_mappings"), list):
+            mappings = []
+            for item in profile["test_mappings"]:
+                if not isinstance(item, dict):
+                    continue
+                mappings.append({
+                    "name": str(item.get("name", "")),
+                    "patterns": [str(v) for v in item.get("patterns", [])] if isinstance(item.get("patterns"), list) else [],
+                    "commands": [str(v) for v in item.get("commands", [])] if isinstance(item.get("commands"), list) else [],
+                })
+            merged["test_mappings"] = mappings
     return merged
 
 
@@ -255,6 +305,7 @@ def profile_for_stack(stack_type: str) -> dict:
         "safe_roots": ["."],
         "source_roots": source_roots,
         "test_commands": test_commands,
+        "test_mappings": [],
         "blocked_paths": list(DEFAULT_PROFILE["blocked_paths"]),
     }
 
@@ -291,6 +342,123 @@ def validate_test_command(command: str) -> dict:
     return {"command": command, "ok": ok, "reason": "" if ok else "not_in_allowlist"}
 
 
+def _normalize_rel_pattern(pattern: str) -> tuple[str, str]:
+    value = str(pattern or "").strip().replace("\\", "/")
+    if not value:
+        return "", "empty_pattern"
+    if value.startswith("/") or ".." in Path(value).parts:
+        return value, "unsafe_pattern"
+    return value, ""
+
+
+def _blocked_pattern(pattern: str, blocked_paths: list[str]) -> bool:
+    parts = Path(pattern).parts
+    for blocked in blocked_paths:
+        blocked = str(blocked).replace("\\", "/").strip()
+        if not blocked:
+            continue
+        if blocked.startswith(".env") and (pattern.startswith(".env") or any(part.startswith(".env") for part in parts)):
+            return True
+        if blocked in parts or pattern == blocked or pattern.startswith(blocked.rstrip("/") + "/"):
+            return True
+    return False
+
+
+def validate_test_mappings(root: Path, profile: dict) -> tuple[list[dict], list[str], list[str], list[str]]:
+    warnings = []
+    errors = []
+    commands = [str(cmd) for cmd in profile.get("test_commands", [])]
+    blocked_paths = [str(p) for p in profile.get("blocked_paths", DEFAULT_PROFILE["blocked_paths"])]
+    mappings = []
+
+    for raw_mapping in profile.get("test_mappings", []) or []:
+        if not isinstance(raw_mapping, dict):
+            errors.append("mapping invalido: esperado objeto")
+            continue
+        name = str(raw_mapping.get("name") or "unnamed")
+        raw_patterns = raw_mapping.get("patterns", [])
+        raw_commands = raw_mapping.get("commands", [])
+        patterns = [str(p) for p in raw_patterns] if isinstance(raw_patterns, list) else []
+        mapping_commands = [str(c) for c in raw_commands] if isinstance(raw_commands, list) else []
+        pattern_checks = []
+        command_checks = []
+        matched_files = []
+        mapping_errors = []
+        mapping_warnings = []
+
+        if not patterns:
+            mapping_errors.append("patterns vazio")
+
+        for pattern in patterns:
+            normalized, error = _normalize_rel_pattern(pattern)
+            blocked = bool(normalized and _blocked_pattern(normalized, blocked_paths))
+            if blocked:
+                error = "blocked_pattern"
+            matches = []
+            if normalized and not error and root.is_dir():
+                try:
+                    matches = sorted(
+                        str(path.relative_to(root)).replace("\\", "/")
+                        for path in root.glob(normalized)
+                        if path.is_file() and not _blocked_pattern(str(path.relative_to(root)).replace("\\", "/"), blocked_paths)
+                    )[:25]
+                except Exception:
+                    matches = []
+            if error:
+                mapping_errors.append(f"{normalized or pattern}: {error}")
+            matched_files.extend(matches)
+            pattern_checks.append({"pattern": normalized or pattern, "ok": not error, "error": error, "matched_files": matches})
+
+        for command in mapping_commands:
+            in_profile = command in commands
+            validation = validate_test_command(command)
+            if not in_profile:
+                mapping_errors.append(f"command_not_in_profile: {command}")
+            if not validation.get("ok"):
+                mapping_errors.append(f"command_blocked: {command}: {validation.get('reason')}")
+            command_checks.append({
+                "command": command,
+                "in_profile": in_profile,
+                "ok": in_profile and bool(validation.get("ok")),
+                "reason": validation.get("reason", ""),
+            })
+
+        if not matched_files:
+            mapping_warnings.append("mapping sem arquivos correspondentes")
+
+        ok = not mapping_errors
+        mappings.append({
+            "name": name,
+            "patterns": [check["pattern"] for check in pattern_checks],
+            "commands": mapping_commands,
+            "ok": ok,
+            "status": "valid" if ok else "invalid",
+            "pattern_checks": pattern_checks,
+            "command_checks": command_checks,
+            "matched_files": sorted(set(matched_files)),
+            "warnings": mapping_warnings,
+            "errors": mapping_errors,
+        })
+        warnings.extend([f"{name}: {w}" for w in mapping_warnings])
+        errors.extend([f"{name}: {e}" for e in mapping_errors])
+
+    source_roots_without_mapping = []
+    for source_root in profile.get("source_roots", []):
+        source_root = str(source_root).strip().replace("\\", "/").rstrip("/")
+        if not source_root:
+            continue
+        mapped = any(
+            pattern == source_root or pattern.startswith(source_root + "/") or pattern.startswith(source_root + "**")
+            for mapping in mappings
+            for pattern in mapping.get("patterns", [])
+        )
+        if not mapped:
+            source_roots_without_mapping.append(source_root)
+            warnings.append(f"source_root sem mapping: {source_root}")
+
+    return mappings, warnings, errors, source_roots_without_mapping
+
+
 def validate_profile(workspace_id: str | None = None) -> dict:
     ws = resolve_workspace(workspace_id)
     if not ws:
@@ -313,7 +481,11 @@ def validate_profile(workspace_id: str | None = None) -> dict:
         warnings.append("source_roots vazio")
     if any(not c["ok"] for c in command_checks):
         warnings.append("test_commands contem comando fora da allowlist")
-    status = "valid" if not warnings else ("incomplete" if profile else "needs_attention")
+    test_mappings, mapping_warnings, mapping_errors, source_roots_without_mapping = validate_test_mappings(root, profile)
+    warnings.extend(mapping_warnings)
+    if mapping_errors:
+        warnings.append("test_mappings contem entradas invalidas")
+    status = "valid" if not warnings and not mapping_errors else ("incomplete" if profile else "needs_attention")
     return {
         "ok": True,
         "workspace_id": ws["id"],
@@ -324,6 +496,11 @@ def validate_profile(workspace_id: str | None = None) -> dict:
         "source_roots": source_roots,
         "blocked_paths": profile.get("blocked_paths", []),
         "test_commands": profile.get("test_commands", []),
+        "test_mappings": test_mappings,
+        "test_mapping_count": len(test_mappings),
+        "valid_test_mapping_count": len([m for m in test_mappings if m.get("ok")]),
+        "test_mapping_errors": mapping_errors,
+        "source_roots_without_mapping": source_roots_without_mapping,
         "source_root_checks": source_checks,
         "test_command_checks": command_checks,
         "warnings": warnings,

@@ -2348,30 +2348,43 @@ def render_page() -> str:
         suggestion_rows = ""
         if suggestions_payload.get("ok") and suggestions_payload.get("suggestions"):
             for suggestion in suggestions_payload.get("suggestions", []):
-                command_value = html.escape(str(suggestion.get("command", "")))
+                command_raw = suggestion.get("command")
+                command_value = html.escape(str(command_raw or "Sem teste tecnico obrigatorio definido"))
                 allowed_cls = "status-done" if suggestion.get("allowed") else "status-failed"
                 allowed_label = "allowlist ok" if suggestion.get("allowed") else "bloqueado"
                 confidence = html.escape(str(suggestion.get("confidence", "-")))
                 reason_text = html.escape(str(suggestion.get("reason", "")))
+                source = html.escape(str(suggestion.get("source", "-")))
+                mapping_name = html.escape(str(suggestion.get("mapping_name", "") or "-"))
+                matched_files = suggestion.get("matched_files", [])
+                matched_files_html = "".join(f'<span class="tag">{html.escape(str(f))}</span>' for f in matched_files) or '<span class="tag">sem match registrado</span>'
+                action_buttons = ""
+                if command_raw:
+                    action_buttons = f"""
+                    <div class="patch-actions">
+                      <form method="post" action="/api/workspaces/{ws_id}/patches/{pid}/tests/preview" target="_blank">
+                        <input type="hidden" name="command" value="{command_value}">
+                        <button class="btn btn-ghost" type="submit">Preview</button>
+                      </form>
+                      <form method="post" action="/api/workspaces/{ws_id}/patches/{pid}/tests/run">
+                        <input type="hidden" name="command" value="{command_value}">
+                        <input type="hidden" name="confirm" value="true">
+                        <button class="btn btn-run" type="submit">Executar teste sugerido</button>
+                      </form>
+                    </div>
+                    """
                 suggestion_rows += f"""
                 <div class="tool-evidence-field" style="border:1px solid var(--line);border-radius:12px;padding:10px;background:rgba(255,255,255,0.02)">
                   <strong>{command_value}</strong>
                   <div style="margin:5px 0;color:var(--muted)">{reason_text}</div>
                   <div class="card-meta">
+                    <span class="tag">{source}</span>
+                    <span class="tag">{mapping_name}</span>
                     <span class="tag">{confidence}</span>
                     <span class="tag {allowed_cls}">{allowed_label}</span>
                   </div>
-                  <div class="patch-actions">
-                    <form method="post" action="/api/workspaces/{ws_id}/patches/{pid}/tests/preview" target="_blank">
-                      <input type="hidden" name="command" value="{command_value}">
-                      <button class="btn btn-ghost" type="submit">Preview</button>
-                    </form>
-                    <form method="post" action="/api/workspaces/{ws_id}/patches/{pid}/tests/run">
-                      <input type="hidden" name="command" value="{command_value}">
-                      <input type="hidden" name="confirm" value="true">
-                      <button class="btn btn-run" type="submit">Executar teste sugerido</button>
-                    </form>
-                  </div>
+                  <div class="signal-note" style="margin-top:6px">Matched files: {matched_files_html}</div>
+                  {action_buttons}
                 </div>
                 """
         elif suggestions_payload.get("ok") and suggestions_payload.get("no_technical_test_required"):
@@ -2486,6 +2499,26 @@ def render_page() -> str:
             """
         if not test_command_rows:
             test_command_rows = '<div class="signal-row"><span class="signal-name">Test commands</span><span class="tag">nenhum</span></div>'
+        mapping_rows = ""
+        for mapping in profile.get("test_mappings", []):
+            mapping_cls = "status-done" if mapping.get("ok") else "status-failed"
+            patterns = ", ".join(mapping.get("patterns", [])) or "-"
+            commands = ", ".join(mapping.get("commands", [])) or "sem teste tecnico obrigatorio"
+            warnings_text = "; ".join(mapping.get("warnings", []) + mapping.get("errors", [])) or "ok"
+            mapping_rows += f"""
+            <div class="tool-evidence-field" style="border:1px solid var(--line);border-radius:12px;padding:10px;background:rgba(255,255,255,0.02)">
+              <strong>{html.escape(str(mapping.get("name", "-")))}</strong>
+              <div class="card-meta">
+                <span class="tag {mapping_cls}">{html.escape(str(mapping.get("status", "-")))}</span>
+                <span class="tag">matches {len(mapping.get("matched_files", []))}</span>
+              </div>
+              <div class="signal-note">Patterns: {html.escape(patterns[:220])}</div>
+              <div class="signal-note">Commands: {html.escape(commands[:220])}</div>
+              <div class="signal-note">Warnings: {html.escape(warnings_text[:220])}</div>
+            </div>
+            """
+        if not mapping_rows:
+            mapping_rows = '<div class="signal-note">Profile sem test_mappings; heuristicas continuam ativas.</div>'
         last_test = tests.get("last_result") or {}
         last_test_label = f"{last_test.get('test_run_id', '-')} · {last_test.get('status', '-')}" if last_test else "nenhum"
         warnings = "; ".join(profile.get("warnings", [])) or "sem warnings"
@@ -2534,6 +2567,7 @@ def render_page() -> str:
 	            <div class="signal-row"><span class="signal-name">Stack detectada</span><span class="tag">{html.escape(stack.get("primary", "unknown"))}</span></div>
 	            <div class="signal-row"><span class="signal-name">Profile</span><span class="tag {profile_cls}">{html.escape(profile_status)}</span></div>
 	            <div class="signal-row"><span class="signal-name">Source roots</span><span class="tag">{html.escape(source_roots)}</span></div>
+	            <div class="signal-row"><span class="signal-name">Source Root Test Mapping</span><span class="tag">{profile.get("valid_test_mapping_count", 0)}/{profile.get("test_mapping_count", 0)} validos</span></div>
 	            <div class="signal-row"><span class="signal-name">Alterados</span><span class="tag">{ws.get("modified_count", 0)}</span></div>
 	            <div class="signal-row"><span class="signal-name">README</span><span class="tag">{str(ws.get("readme")).lower()}</span></div>
 	            <div class="signal-row"><span class="signal-name">docs/</span><span class="tag">{str(ws.get("docs")).lower()}</span></div>
@@ -2543,6 +2577,10 @@ def render_page() -> str:
 		            <div class="signal-row"><span class="signal-name">Último teste</span><span class="tag">{html.escape(last_test_label)}</span></div>
 		            {test_command_rows}
 		          </div>
+		          <details style="margin-top:12px">
+		            <summary style="cursor:pointer;color:var(--muted);font-size:12px">Source Root Test Mapping</summary>
+		            <div class="tool-evidence-list" style="margin-top:10px">{mapping_rows}</div>
+		          </details>
 			          <div class="card-actions" style="margin-top:12px">
 		            {activate_btn}{exec_buttons}{remove_btn}
 			            <a class="btn btn-ghost" href="/api/workspaces/{html.escape(ws["id"])}/profile/validate" target="_blank">Validar perfil</a>

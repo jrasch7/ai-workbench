@@ -5,6 +5,7 @@ import shlex
 import subprocess
 import time
 import glob
+import fnmatch
 from pathlib import Path
 
 from .profiles import load_workspaces_config, resolve_workspace, validate_profile, validate_test_command
@@ -439,6 +440,61 @@ def _command_reason(command: str, changed_files: list[str]) -> tuple[str, str] |
     return None
 
 
+def _mapping_matches(mapping: dict, changed_files: list[str]) -> list[str]:
+    matches = []
+    patterns = [str(p) for p in mapping.get("patterns", [])]
+    for file_path in changed_files:
+        normalized = str(file_path).replace("\\", "/")
+        if any(fnmatch.fnmatch(normalized, pattern) for pattern in patterns):
+            matches.append(normalized)
+    return sorted(set(matches))
+
+
+def _mapping_suggestions(profile: dict, changed_files: list[str]) -> tuple[list[dict], bool]:
+    suggestions = []
+    used_mapping = False
+    command_checks = {str(c.get("command", "")): c for c in profile.get("test_command_checks", [])}
+    seen = set()
+    for mapping in profile.get("test_mappings", []):
+        if not mapping.get("ok"):
+            continue
+        matched_files = _mapping_matches(mapping, changed_files)
+        if not matched_files:
+            continue
+        used_mapping = True
+        commands = [str(c) for c in mapping.get("commands", [])]
+        if not commands:
+            suggestions.append({
+                "command": None,
+                "reason": f"Patch altera arquivos cobertos pelo mapping {mapping.get('name')}; nenhum teste tecnico obrigatorio definido no profile.",
+                "confidence": "medium",
+                "allowed": True,
+                "source": "test_mapping",
+                "mapping_name": mapping.get("name", ""),
+                "matched_files": matched_files,
+                "allowlist_reason": "",
+            })
+            continue
+        for command in commands:
+            key = ("test_mapping", mapping.get("name", ""), command)
+            if key in seen:
+                continue
+            seen.add(key)
+            validation = validate_test_command(command)
+            check = command_checks.get(command, {})
+            suggestions.append({
+                "command": command,
+                "reason": f"Arquivo alterado bateu com mapping {mapping.get('name')}.",
+                "confidence": "high",
+                "allowed": bool(validation.get("ok")) and bool(check.get("ok")),
+                "source": "test_mapping",
+                "mapping_name": mapping.get("name", ""),
+                "matched_files": matched_files,
+                "allowlist_reason": validation.get("reason", ""),
+            })
+    return suggestions, used_mapping
+
+
 def suggest_tests_for_patch(workspace_id: str, patch_id: str) -> dict:
     patch_payload = load_patch_preview(workspace_id, patch_id)
     if not patch_payload.get("ok"):
@@ -448,20 +504,24 @@ def suggest_tests_for_patch(workspace_id: str, patch_id: str) -> dict:
         return {"ok": False, "error": "invalid_profile", "profile": profile}
     patch = patch_payload["patch"]
     changed_files = [str(p) for p in patch.get("changed_files", []) if str(p)]
-    suggestions = []
-    for check in profile.get("test_command_checks", []):
-        command = str(check.get("command", ""))
-        reason = _command_reason(command, changed_files)
-        if not reason:
-            continue
-        validation = validate_test_command(command)
-        suggestions.append({
-            "command": command,
-            "reason": reason[0],
-            "confidence": reason[1],
-            "allowed": bool(validation.get("ok")) and bool(check.get("ok")),
-            "allowlist_reason": validation.get("reason", ""),
-        })
+    suggestions, used_mapping = _mapping_suggestions(profile, changed_files)
+    if not used_mapping:
+        for check in profile.get("test_command_checks", []):
+            command = str(check.get("command", ""))
+            reason = _command_reason(command, changed_files)
+            if not reason:
+                continue
+            validation = validate_test_command(command)
+            suggestions.append({
+                "command": command,
+                "reason": reason[0],
+                "confidence": reason[1],
+                "allowed": bool(validation.get("ok")) and bool(check.get("ok")),
+                "allowlist_reason": validation.get("reason", ""),
+                "source": "heuristic",
+                "mapping_name": "",
+                "matched_files": changed_files,
+            })
     return {
         "ok": True,
         "workspace_id": profile["workspace_id"],
@@ -469,7 +529,8 @@ def suggest_tests_for_patch(workspace_id: str, patch_id: str) -> dict:
         "patch_id": patch["patch_id"],
         "changed_files": changed_files,
         "suggestions": suggestions,
-        "no_technical_test_required": bool(changed_files) and all(p.lower().endswith(".md") for p in changed_files) and not suggestions,
+        "used_test_mappings": used_mapping,
+        "no_technical_test_required": any(item.get("command") is None for item in suggestions) or (bool(changed_files) and all(p.lower().endswith(".md") for p in changed_files) and not suggestions),
     }
 
 
@@ -477,8 +538,10 @@ def _suggested_command(workspace_id: str, patch_id: str, command: str) -> tuple[
     suggestions = suggest_tests_for_patch(workspace_id, patch_id)
     if not suggestions.get("ok"):
         return None, suggestions.get("error", "suggestions_unavailable")
+    if not command:
+        return None, "command_required"
     for item in suggestions.get("suggestions", []):
-        if item.get("command") == command:
+        if item.get("command") and item.get("command") == command:
             if not item.get("allowed"):
                 return None, "suggested_command_blocked"
             return item, None

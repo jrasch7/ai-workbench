@@ -54,6 +54,8 @@ Detalhes e rerun seguro permanecem escopados ao workspace.
 
 Patches em preview podem sugerir testes usando apenas comandos ja presentes no profile. Runs disparados por sugestao registram `trigger: patch_suggestion` e `patch_id`.
 
+Profiles podem declarar `test_mappings` para mapear source roots/patterns a comandos de teste especificos.
+
 ## Seguranca
 
 - sem comando arbitrario;
@@ -80,4 +82,4 @@ Ver relatorio final da fase.
 
 ## Proximo passo recomendado
 
-Adicionar ranking de relevancia dos testes sugeridos por source root.
+Adicionar grupos de validacao por tipo de tarefa.

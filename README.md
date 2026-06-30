@@ -107,6 +107,7 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 * [Profile Test Runner](docs/runbooks/AIW_PROFILE_TEST_RUNNER.md)
 * [Test Run History](docs/runbooks/AIW_TEST_RUN_HISTORY.md)
 * [Patch-Aware Test Suggestions](docs/runbooks/AIW_PATCH_AWARE_TEST_SUGGESTIONS.md)
+* [Source Root Test Mapping](docs/runbooks/AIW_SOURCE_ROOT_TEST_MAPPING.md)
 
 ## Próximos Passos (Roadmap Resumido)
 

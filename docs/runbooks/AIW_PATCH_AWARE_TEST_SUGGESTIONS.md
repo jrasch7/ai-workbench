@@ -12,6 +12,8 @@ O Cockpit le o patch preview em `.aiw/workspaces/<workspace_id>/patches/<patch_i
 
 As sugestoes nunca chamam LLM e nunca executam automaticamente.
 
+Quando `profile.test_mappings` existe, ele tem prioridade sobre as heuristicas. Cada sugestao informa `source`, `mapping_name` e `matched_files`.
+
 ## Heuristicas
 
 - Python: arquivos `.py` sugerem comandos `python3 -m py_compile` ou `python3 -m compileall` existentes no profile.
@@ -57,4 +59,4 @@ Ver relatorio final da rodada.
 
 ## Proximo passo recomendado
 
-Adicionar ranking de relevancia por arquivo e mapear comandos de teste por source root no profile do workspace.
+Adicionar ranking de relevancia por arquivo e grupos de validacao por tipo de tarefa.

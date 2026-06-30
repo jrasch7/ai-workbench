@@ -9,11 +9,51 @@
       "type": "python",
       "profile": {
         "safe_roots": ["."],
-        "source_roots": ["aiw_runtime", "aiw_context", "scripts", "docs"],
+        "source_roots": ["aiw_runtime", "aiw_context", "aiw_workspace", "scripts", "docs"],
         "test_commands": [
           "python3 -m py_compile aiw_runtime/*.py",
           "python3 -m py_compile aiw_context/*.py",
-          "bash -n scripts/aiw-cockpit"
+          "python3 -m py_compile aiw_workspace/*.py",
+          "bash -n scripts/aiw-cockpit",
+          "bash -n scripts/aiw-runner-agent",
+          "bash -n scripts/aiw-tool-smoke"
+        ],
+        "test_mappings": [
+          {
+            "name": "Runtime Python",
+            "patterns": ["aiw_runtime/**/*.py", "aiw_runtime/*.py"],
+            "commands": ["python3 -m py_compile aiw_runtime/*.py"]
+          },
+          {
+            "name": "Context Python",
+            "patterns": ["aiw_context/**/*.py", "aiw_context/*.py"],
+            "commands": ["python3 -m py_compile aiw_context/*.py"]
+          },
+          {
+            "name": "Workspace Python",
+            "patterns": ["aiw_workspace/**/*.py", "aiw_workspace/*.py"],
+            "commands": ["python3 -m py_compile aiw_workspace/*.py"]
+          },
+          {
+            "name": "Cockpit Script",
+            "patterns": ["scripts/aiw-cockpit"],
+            "commands": ["bash -n scripts/aiw-cockpit"]
+          },
+          {
+            "name": "Runner Script",
+            "patterns": ["scripts/aiw-runner-agent"],
+            "commands": ["bash -n scripts/aiw-runner-agent"]
+          },
+          {
+            "name": "Tool Smoke Script",
+            "patterns": ["scripts/aiw-tool-smoke"],
+            "commands": ["bash -n scripts/aiw-tool-smoke"]
+          },
+          {
+            "name": "Documentation",
+            "patterns": ["docs/**/*.md", "docs/*.md", "README.md"],
+            "commands": []
+          }
         ],
         "blocked_paths": [
           ".env",
