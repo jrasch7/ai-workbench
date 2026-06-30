@@ -42,6 +42,14 @@ Arquivos:
 - `result.json`
 - `summary.md`
 
+## Historico visual
+
+O Cockpit exibe o historico em `Test Runs`, com filtros por workspace, status, comando e limite de ultimos registros. O endpoint global e:
+
+`GET /api/tests/runs`
+
+Detalhes e rerun seguro permanecem escopados ao workspace.
+
 ## Seguranca
 
 - sem comando arbitrario;
@@ -68,4 +76,4 @@ Ver relatorio final da fase.
 
 ## Proximo passo recomendado
 
-Adicionar fila de test runs com historico visual completo no Cockpit e recomendacao automatica de testes apos patch preview, ainda sem execucao automatica.
+Adicionar recomendacao automatica de testes apos patch preview, ainda sem execucao automatica.

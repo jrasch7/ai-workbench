@@ -47,7 +47,9 @@ from aiw_workspace import (
     preview_test_command,
     run_test_command,
     list_test_runs,
+    list_all_test_runs,
     get_test_run,
+    rerun_test_run,
 )
 
 TASK_QUEUES = ["inbox", "running", "blocked", "queued", "done", "failed"]
@@ -1098,6 +1100,27 @@ def context_health(workspace_id: str | None = None) -> dict:
     }
 
 
+def clamp_limit(raw_limit, default: int = 50, maximum: int = 200) -> int:
+    try:
+        return max(1, min(int(raw_limit), maximum))
+    except Exception:
+        return default
+
+
+def safe_status_filter(raw_status: str) -> str:
+    value = (raw_status or "").strip()
+    return value if value in {"succeeded", "failed", "timed_out", "blocked"} else ""
+
+
+def status_tag_class(status: object) -> str:
+    value = str(status or "unknown")
+    if value == "succeeded":
+        return "status-done"
+    if value in ("failed", "timed_out", "blocked"):
+        return "status-failed"
+    return "status-unknown"
+
+
 def list_inbox_tasks(limit: int = 20) -> list[dict]:
     inbox = ROOT / ".aiw" / "tasks" / "inbox"
     if not inbox.exists():
@@ -1664,6 +1687,44 @@ body {
   margin-bottom: 3px;
   text-transform: uppercase;
 }
+.test-run-list {
+  display: grid;
+  gap: 12px;
+}
+.test-run-row {
+  align-items: flex-start;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 14px 16px;
+}
+.test-run-title {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.test-run-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.test-run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.test-run-actions .btn {
+  padding: 7px 12px;
+  font-size: 12px;
+}
 
 /* ── Composer ── */
 .composer {
@@ -2008,6 +2069,8 @@ a:hover { text-decoration: underline; }
   .harness-grid { grid-template-columns: 1fr; }
   .harness-columns { grid-template-columns: 1fr; }
   .tool-evidence-grid { grid-template-columns: 1fr; }
+  .test-run-row { grid-template-columns: 1fr; }
+  .test-run-actions { justify-content: flex-start; }
   .cards { grid-template-columns: 1fr; }
 }
 """
@@ -2042,10 +2105,15 @@ def render_page() -> str:
             return ""
         return f'<span class="badge {cls}">{n}</span>'
 
+    test_runs_payload = list_all_test_runs(limit=100)
+    test_runs_count = len(test_runs_payload.get("runs", []))
+
     workspace_options = ""
+    test_workspace_options = ""
     for ws in workspace_data.get("workspaces", []):
         selected = "selected" if ws["id"] == active_workspace else ""
         workspace_options += f'<option value="{html.escape(ws["id"])}" {selected}>{html.escape(ws["name"])}</option>'
+        test_workspace_options += f'<option value="{html.escape(ws["id"])}">{html.escape(ws["name"])}</option>'
 
     # Sidebar nav items
     nav_html = f"""
@@ -2057,6 +2125,7 @@ def render_page() -> str:
       <div class="nav-label">Workspace</div>
       <button class="nav-item active" onclick="showSection('overview')"><span class="icon">◎</span>Overview</button>
       <button class="nav-item" onclick="showSection('harness')"><span class="icon">▦</span>Bancada {badge(len(patch_proposals), 'warn')}</button>
+      <button class="nav-item" onclick="showSection('test-runs')"><span class="icon">▤</span>Test Runs {badge(test_runs_count, 'ok')}</button>
       <button class="nav-item" onclick="showSection('workspaces')"><span class="icon">▣</span>Workspaces</button>
       <button class="nav-item" onclick="showSection('git')"><span class="icon">⑂</span>Git Control</button>
       <button class="nav-item" onclick="showSection('nova')"><span class="icon">✦</span>Nova task</button>
@@ -2413,9 +2482,48 @@ def render_page() -> str:
 			            <a class="btn btn-ghost" href="/api/workspaces/{html.escape(ws["id"])}/execution-policy" target="_blank">Ver política de execução</a>
 			            <a class="btn btn-ghost" href="/api/workspaces/{html.escape(ws["id"])}/tests" target="_blank">Ver Test Commands</a>
 			            <a class="btn btn-ghost" href="/api/workspaces/{html.escape(ws["id"])}/tests/runs" target="_blank">Logs de testes</a>
+			            <button class="btn btn-ghost" type="button" onclick="showSection('test-runs')">Histórico visual</button>
 			          </div>
 	        </div>
 	        """
+
+    def test_run_row(row: dict, index: int) -> str:
+        ws_id = html.escape(str(row.get("workspace_id", "-")))
+        ws_name = html.escape(str(row.get("workspace_name") or row.get("workspace_id") or "-"))
+        test_id = html.escape(str(row.get("test_run_id", "-")))
+        status = html.escape(str(row.get("status", "unknown")))
+        command = html.escape(str(row.get("command", "-")))
+        duration = html.escape(str(row.get("duration_seconds", "-")))
+        exit_code = html.escape(str(row.get("exit_code", "-")))
+        started = html.escape(str(row.get("started_at") or row.get("finished_at") or "-"))
+        parent = row.get("rerun_of") or row.get("parent_test_run_id")
+        parent_tag = f'<span class="tag">rerun de {html.escape(str(parent))}</span>' if parent else ""
+        return f"""
+        <div class="test-run-row" data-test-index="{index}" data-test-status="{status}" data-test-workspace="{ws_id}" data-test-command="{command.lower()}">
+          <div>
+            <div class="test-run-title">{command}</div>
+            <div class="test-run-meta">
+              <span class="tag">{ws_name}</span>
+              <span class="tag {status_tag_class(row.get("status"))}">{status}</span>
+              <span class="tag">exit {exit_code}</span>
+              <span class="tag">{duration}s</span>
+              {parent_tag}
+            </div>
+            <div class="card-doc" style="margin-top:6px;margin-bottom:0">{test_id} · {started}</div>
+          </div>
+          <div class="test-run-actions">
+            <a class="btn btn-secondary" href="/api/workspaces/{ws_id}/tests/runs/{test_id}" target="_blank">Ver detalhes</a>
+            <form method="post" action="/api/workspaces/{ws_id}/tests/runs/{test_id}/rerun" style="display:inline">
+              <input type="hidden" name="confirm" value="true">
+              <button class="btn btn-run" type="submit">Reexecutar</button>
+            </form>
+          </div>
+        </div>
+        """
+
+    test_runs_rows = "".join(test_run_row(r, idx) for idx, r in enumerate(test_runs_payload.get("runs", []), start=1))
+    if not test_runs_rows:
+        test_runs_rows = '<div class="empty-state">Nenhum test-run encontrado neste workspace.</div>'
 
     changed_files = git_data.get("files", []) if git_data.get("ok") else []
     git_file_rows = ""
@@ -2739,6 +2847,48 @@ def render_page() -> str:
     </div>
     """
 
+    test_runs_section = f"""
+    <div id="sec-test-runs" class="workspace-section" style="display:none">
+      <div class="page-header">
+        <h2>Test Runs</h2>
+        <div class="sub">Histórico dos comandos de teste aprovados no profile do workspace.</div>
+      </div>
+      <div class="system-panel" style="margin-bottom:16px">
+        <div class="signal-list">
+          <div class="signal-row"><span class="signal-name">Garantias</span><span class="tag">Profile only</span><span class="tag">Sem commit</span><span class="tag">Sem patch apply</span><span class="tag">Sem push</span></div>
+          <div class="signal-note">Test Runs executam apenas comandos aprovados no profile. Não fazem commit, não aplicam patch e não fazem push.</div>
+        </div>
+      </div>
+      <div class="filter-bar">
+        <select class="input" id="test-filter-workspace" onchange="filterTestRuns()">
+          <option value="all">Todos os workspaces</option>
+          {test_workspace_options}
+        </select>
+        <select class="input" id="test-filter-status" onchange="filterTestRuns()">
+          <option value="all">todos</option>
+          <option value="succeeded">succeeded</option>
+          <option value="failed">failed</option>
+          <option value="timed_out">timed_out</option>
+          <option value="blocked">blocked</option>
+        </select>
+        <input class="input" id="test-filter-q" placeholder="Filtrar comando..." oninput="filterTestRuns()" style="min-width:240px">
+        <select class="input" id="test-filter-limit" onchange="reloadTestRunsWithLimit()">
+          <option value="30">ultimos 30</option>
+          <option value="50">ultimos 50</option>
+          <option value="100">ultimos 100</option>
+        </select>
+      </div>
+      <div class="test-run-list" id="test-run-list">
+        {test_runs_rows}
+      </div>
+      <div class="empty-state" id="test-run-filter-empty" style="display:none;margin-top:12px">Nenhum test-run encontrado com estes filtros.</div>
+      <div class="api-links" style="margin-top:14px">
+        <a class="api-link" href="/api/tests/runs">/api/tests/runs</a>
+        <a class="api-link" href="/api/workspaces/{html.escape(active_workspace)}/tests/runs">/api/workspaces/{html.escape(active_workspace)}/tests/runs</a>
+      </div>
+    </div>
+    """
+
     nova_section = f"""
     <div id="sec-nova" class="workspace-section" style="display:none">
       <div class="page-header">
@@ -2819,6 +2969,7 @@ def render_page() -> str:
       {workspaces_section}
       {git_section}
       {harness_section}
+      {test_runs_section}
       {nova_section}
       {inbox_section}
       {running_section}
@@ -2865,6 +3016,26 @@ def render_page() -> str:
       }});
       var empty = document.getElementById('patch-filter-empty');
       if (empty) empty.style.display = shown ? 'none' : '';
+    }}
+    function filterTestRuns() {{
+      const ws = document.getElementById('test-filter-workspace').value || 'all';
+      const status = document.getElementById('test-filter-status').value || 'all';
+      const q = (document.getElementById('test-filter-q').value || '').toLowerCase();
+      const limit = parseInt(document.getElementById('test-filter-limit').value || '30', 10);
+      var shown = 0;
+      document.querySelectorAll('[data-test-status]').forEach(row => {{
+        const rowWs = row.getAttribute('data-test-workspace') || '';
+        const rowStatus = row.getAttribute('data-test-status') || '';
+        const rowCommand = row.getAttribute('data-test-command') || '';
+        const match = (ws === 'all' || ws === rowWs) && (status === 'all' || status === rowStatus) && (!q || rowCommand.indexOf(q) >= 0) && shown < limit;
+        row.style.display = match ? '' : 'none';
+        if (match) shown += 1;
+      }});
+      const empty = document.getElementById('test-run-filter-empty');
+      if (empty) empty.style.display = shown ? 'none' : '';
+    }}
+    function reloadTestRunsWithLimit() {{
+      filterTestRuns();
     }}
             async function rebuildContextIndex(event) {{
       const btn = event.currentTarget;
@@ -2931,6 +3102,7 @@ def render_page() -> str:
                 performSearch();
             }}
         }}
+        filterTestRuns();
       }} catch(e) {{}}
     }}
 
@@ -2946,6 +3118,7 @@ def render_page() -> str:
       if(searchInput) searchInput.value = '';
       document.getElementById('search-results').style.display = 'none';
       document.getElementById('search-empty').style.display = 'none';
+      filterTestRuns();
     }}
 
     document.addEventListener('DOMContentLoaded', restoreFilters);
@@ -3270,6 +3443,9 @@ def render_run_detail(run_dir: Path) -> str:
     <div class="priority-block" style="background:var(--panel2); border:1px solid var(--line);">
       <h3>Próximo passo sugerido</h3>
       <div class="result-text">Rodar Test Commands do workspace <strong>{html.escape(run_workspace_name)}</strong> manualmente pelo painel Workspaces.</div>
+      <div style="margin-top:12px">
+        <a class="btn btn-ghost" href="/api/tests/runs?workspace={html.escape(run_workspace_id)}" target="_blank">Ver histórico de Test Runs deste workspace</a>
+      </div>
     </div>
     """
 
@@ -3628,8 +3804,26 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/api/workspaces/") and path.endswith("/tests/runs"):
             ws_id = path[len("/api/workspaces/"):-len("/tests/runs")].strip("/")
-            payload = list_test_runs(ws_id)
+            query = parse_qs(urlparse(self.path).query)
+            payload = list_test_runs(
+                ws_id,
+                limit=clamp_limit(query.get("limit", ["30"])[0], default=30),
+                status=safe_status_filter(query.get("status", [""])[0]),
+                q=query.get("q", [""])[0],
+            )
             self.send_json(payload, status=200 if payload.get("ok") else 404)
+            return
+
+        if path == "/api/tests/runs":
+            query = parse_qs(urlparse(self.path).query)
+            workspace_id = query.get("workspace", [""])[0].strip() or None
+            payload = list_all_test_runs(
+                workspace_id=workspace_id,
+                limit=clamp_limit(query.get("limit", ["50"])[0], default=50),
+                status=safe_status_filter(query.get("status", [""])[0]),
+                q=query.get("q", [""])[0],
+            )
+            self.send_json(payload)
             return
 
         if path.startswith("/api/workspaces/") and path.endswith("/tests"):
@@ -3975,6 +4169,22 @@ class Handler(BaseHTTPRequestHandler):
                 command_index = None
             res = run_test_command(ws_id, command_index=command_index, command=command, confirm=confirm)
             self.send_json(res, status=200 if res.get("status") in ("succeeded", "failed", "timed_out") else 400)
+            return
+
+        if path.startswith("/api/workspaces/") and "/tests/runs/" in path and path.endswith("/rerun"):
+            rest = path[len("/api/workspaces/"):]
+            ws_id, test_run_id = rest.split("/tests/runs/", 1)
+            test_run_id = test_run_id[:-len("/rerun")].strip("/")
+            confirm = str(request_data.get("confirm", "")).lower() in ("1", "true", "yes", "on")
+            res = rerun_test_run(ws_id.strip("/"), test_run_id, confirm=confirm)
+            if content_type.startswith("application/json"):
+                self.send_json(res, status=200 if res.get("status") in ("succeeded", "failed", "timed_out") else 400)
+            elif res.get("status") in ("succeeded", "failed", "timed_out"):
+                self.send_response(303)
+                self.send_header("Location", "/")
+                self.end_headers()
+            else:
+                self.send_json(res, status=400)
             return
 
         if path == "/api/git/branch/create":

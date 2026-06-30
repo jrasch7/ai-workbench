@@ -7,7 +7,7 @@ import time
 import glob
 from pathlib import Path
 
-from .profiles import resolve_workspace, validate_profile, validate_test_command
+from .profiles import load_workspaces_config, resolve_workspace, validate_profile, validate_test_command
 
 
 MAX_LOG_CHARS = 120_000
@@ -138,14 +138,32 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def run_test_command(workspace_id: str, command_index: int | None = None, command: str | None = None, confirm: bool = False, timeout: int = DEFAULT_TIMEOUT) -> dict:
+def _new_test_run_id(workspace_id: str) -> str:
+    base = "test-" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    runs_root = _workspace_base(workspace_id) / "test-runs"
+    candidate = base
+    suffix = 1
+    while (runs_root / candidate).exists():
+        suffix += 1
+        candidate = f"{base}-{suffix}"
+    return candidate
+
+
+def run_test_command(
+    workspace_id: str,
+    command_index: int | None = None,
+    command: str | None = None,
+    confirm: bool = False,
+    timeout: int = DEFAULT_TIMEOUT,
+    rerun_of: str | None = None,
+) -> dict:
     if not confirm:
         return {"ok": False, "status": "blocked", "error": "confirm_required"}
     preview = preview_test_command(workspace_id, command_index, command, timeout)
     if not preview.get("allowed"):
         return {"ok": False, "status": "blocked", "preview": preview, "error": preview.get("error") or preview.get("reason")}
 
-    test_run_id = "test-" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    test_run_id = _new_test_run_id(preview["workspace_id"])
     run_dir = _workspace_base(preview["workspace_id"]) / "test-runs" / test_run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -191,6 +209,9 @@ def run_test_command(workspace_id: str, command_index: int | None = None, comman
         "exit_code": exit_code,
         "duration_seconds": duration,
     }
+    if rerun_of:
+        metadata["rerun_of"] = rerun_of
+        metadata["parent_test_run_id"] = rerun_of
     result = {"ok": status == "succeeded", **metadata}
     _write_json(run_dir / "metadata.json", metadata)
     _write_json(run_dir / "command.json", preview)
@@ -209,21 +230,67 @@ def run_test_command(workspace_id: str, command_index: int | None = None, comman
     return {"ok": status == "succeeded", "status": status, "test_run_id": test_run_id, "result": result, "run_dir": str(run_dir)}
 
 
-def list_test_runs(workspace_id: str, limit: int = 30) -> dict:
+def _run_row_from_dir(workspace_id: str, run_dir: Path) -> dict:
+    meta_path = run_dir / "metadata.json"
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        meta = {"test_run_id": run_dir.name, "status": "invalid"}
+    meta.setdefault("test_run_id", run_dir.name)
+    meta.setdefault("workspace_id", workspace_id)
+    meta["artifact_dir"] = str(run_dir)
+    meta["artifact_files"] = {
+        name: str(run_dir / name)
+        for name in ("metadata.json", "command.json", "stdout.log", "stderr.log", "result.json", "summary.md")
+        if (run_dir / name).exists()
+    }
+    return meta
+
+
+def list_test_runs(workspace_id: str, limit: int = 30, status: str | None = None, q: str | None = None) -> dict:
     ws = resolve_workspace(workspace_id)
     if not ws:
         return {"ok": False, "error": "unknown_workspace"}
     root = _workspace_base(ws["id"]) / "test-runs"
     rows = []
     if root.is_dir():
-        for run_dir in sorted([p for p in root.iterdir() if p.is_dir()], reverse=True)[:limit]:
-            meta_path = run_dir / "metadata.json"
-            try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            except Exception:
-                meta = {"test_run_id": run_dir.name, "status": "invalid"}
-            rows.append(meta)
+        q_lower = (q or "").lower()
+        allowed_statuses = {"succeeded", "failed", "timed_out", "blocked"}
+        status_filter = status if status in allowed_statuses else ""
+        for run_dir in sorted([p for p in root.iterdir() if p.is_dir()], reverse=True):
+            row = _run_row_from_dir(ws["id"], run_dir)
+            if status_filter and row.get("status") != status_filter:
+                continue
+            if q_lower:
+                haystack = " ".join(str(row.get(k, "")) for k in ("test_run_id", "command", "status", "workspace_name")).lower()
+                if q_lower not in haystack:
+                    continue
+            rows.append(row)
+            if len(rows) >= limit:
+                break
     return {"ok": True, "workspace_id": ws["id"], "runs": rows}
+
+
+def list_all_test_runs(workspace_id: str | None = None, limit: int = 50, status: str | None = None, q: str | None = None) -> dict:
+    try:
+        limit = max(1, min(int(limit or 50), 200))
+    except Exception:
+        limit = 50
+    workspace_ids = []
+    if workspace_id:
+        workspace_ids = [workspace_id]
+    else:
+        workspace_ids = [ws["id"] for ws in load_workspaces_config().get("workspaces", [])]
+    rows = []
+    errors = []
+    for ws_id in workspace_ids:
+        payload = list_test_runs(ws_id, limit=limit, status=status, q=q)
+        if payload.get("ok"):
+            rows.extend(payload.get("runs", []))
+        else:
+            errors.append({"workspace_id": ws_id, "error": payload.get("error", "unknown")})
+    rows.sort(key=lambda row: str(row.get("started_at") or row.get("test_run_id") or ""), reverse=True)
+    return {"ok": True, "runs": rows[:limit], "count": min(len(rows), limit), "errors": errors}
 
 
 def get_test_run(workspace_id: str, test_run_id: str) -> dict:
@@ -252,10 +319,40 @@ def get_test_run(workspace_id: str, test_run_id: str) -> dict:
         "metadata": read_json_file("metadata.json"),
         "command": read_json_file("command.json"),
         "result": read_json_file("result.json"),
-        "stdout": read_text_file("stdout.log"),
-        "stderr": read_text_file("stderr.log"),
+        "stdout": _mask(read_text_file("stdout.log")),
+        "stderr": _mask(read_text_file("stderr.log")),
         "summary": read_text_file("summary.md"),
+        "artifacts": {
+            name: str(run_dir / name)
+            for name in ("metadata.json", "command.json", "stdout.log", "stderr.log", "result.json", "summary.md")
+            if (run_dir / name).exists()
+        },
     }
+
+
+def rerun_test_run(workspace_id: str, test_run_id: str, confirm: bool = False, timeout: int = DEFAULT_TIMEOUT) -> dict:
+    if not confirm:
+        return {"ok": False, "status": "blocked", "error": "confirm_required"}
+    original = get_test_run(workspace_id, test_run_id)
+    if not original.get("ok"):
+        return {"ok": False, "status": "blocked", "error": original.get("error", "test_run_not_found")}
+    command_payload = original.get("command") or {}
+    command = str(command_payload.get("command") or original.get("metadata", {}).get("command") or "")
+    if not command:
+        return {"ok": False, "status": "blocked", "error": "original_command_missing"}
+    selected, error = _command_from_profile(workspace_id, command=command)
+    if error:
+        return {"ok": False, "status": "blocked", "error": error}
+    validation = validate_test_command(command)
+    if not validation.get("ok"):
+        return {"ok": False, "status": "blocked", "error": validation.get("reason", "command_blocked"), "command": command}
+    return run_test_command(
+        workspace_id,
+        command_index=selected["command_index"],
+        confirm=True,
+        timeout=timeout,
+        rerun_of=test_run_id,
+    )
 
 
 def tests_payload(workspace_id: str) -> dict:

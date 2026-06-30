@@ -18,7 +18,9 @@ from .test_runner import (
     preview_test_command,
     run_test_command,
     list_test_runs,
+    list_all_test_runs,
     get_test_run,
+    rerun_test_run,
 )
 
 __all__ = [
@@ -37,5 +39,7 @@ __all__ = [
     "preview_test_command",
     "run_test_command",
     "list_test_runs",
+    "list_all_test_runs",
     "get_test_run",
+    "rerun_test_run",
 ]
