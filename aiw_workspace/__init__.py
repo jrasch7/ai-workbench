@@ -21,6 +21,10 @@ from .test_runner import (
     list_all_test_runs,
     get_test_run,
     rerun_test_run,
+    load_patch_preview,
+    suggest_tests_for_patch,
+    preview_patch_suggested_test,
+    run_patch_suggested_test,
 )
 
 __all__ = [
@@ -42,4 +46,8 @@ __all__ = [
     "list_all_test_runs",
     "get_test_run",
     "rerun_test_run",
+    "load_patch_preview",
+    "suggest_tests_for_patch",
+    "preview_patch_suggested_test",
+    "run_patch_suggested_test",
 ]

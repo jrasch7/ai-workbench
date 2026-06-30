@@ -13,10 +13,11 @@ BROAD_PATHS = {Path("/"), Path("/home"), Path("/home/joao"), Path("/tmp"), Path(
 
 DEFAULT_PROFILE = {
     "safe_roots": ["."],
-    "source_roots": ["aiw_runtime", "aiw_context", "scripts", "docs"],
+    "source_roots": ["aiw_runtime", "aiw_context", "aiw_workspace", "scripts", "docs"],
     "test_commands": [
         "python3 -m py_compile aiw_runtime/*.py",
         "python3 -m py_compile aiw_context/*.py",
+        "python3 -m py_compile aiw_workspace/*.py",
         "bash -n scripts/aiw-cockpit",
     ],
     "blocked_paths": [".env", ".env.*", ".git", "node_modules", ".venv", "vendor", "__pycache__"],

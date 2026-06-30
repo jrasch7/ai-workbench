@@ -20,6 +20,7 @@ Filtros disponiveis:
 
 - workspace;
 - status: todos, succeeded, failed, timed_out, blocked;
+- trigger `patch_suggestion`;
 - texto/comando;
 - ultimos 30, 50 ou 100 itens.
 
@@ -30,6 +31,8 @@ O detalhe continua disponivel via:
 `GET /api/workspaces/<workspace_id>/tests/runs/<test_run_id>`
 
 A resposta inclui metadata, command, result, stdout/stderr resumidos, summary e paths dos artefatos.
+
+Quando um test-run nasce de uma sugestao de patch, a metadata inclui `trigger: patch_suggestion` e `patch_id`.
 
 ## Safe Rerun
 

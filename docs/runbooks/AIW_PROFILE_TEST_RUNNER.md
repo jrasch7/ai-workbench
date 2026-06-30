@@ -50,6 +50,10 @@ O Cockpit exibe o historico em `Test Runs`, com filtros por workspace, status, c
 
 Detalhes e rerun seguro permanecem escopados ao workspace.
 
+## Patch-aware suggestions
+
+Patches em preview podem sugerir testes usando apenas comandos ja presentes no profile. Runs disparados por sugestao registram `trigger: patch_suggestion` e `patch_id`.
+
 ## Seguranca
 
 - sem comando arbitrario;
@@ -76,4 +80,4 @@ Ver relatorio final da fase.
 
 ## Proximo passo recomendado
 
-Adicionar recomendacao automatica de testes apos patch preview, ainda sem execucao automatica.
+Adicionar ranking de relevancia dos testes sugeridos por source root.

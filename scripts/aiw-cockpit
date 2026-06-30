@@ -50,6 +50,9 @@ from aiw_workspace import (
     list_all_test_runs,
     get_test_run,
     rerun_test_run,
+    suggest_tests_for_patch,
+    preview_patch_suggested_test,
+    run_patch_suggested_test,
 )
 
 TASK_QUEUES = ["inbox", "running", "blocked", "queued", "done", "failed"]
@@ -412,6 +415,7 @@ def list_patch_proposals(limit: int = 30, workspace_id: str | None = None) -> li
             proposals.append({
                 "patch_id": patch_id,
                 "path": str(data.get("path", "")),
+                "changed_files": [str(p) for p in data.get("changed_files", [])] if isinstance(data.get("changed_files"), list) else ([str(data.get("path", ""))] if data.get("path") else []),
                 "status": str(data.get("status", "unknown")),
                 "reason": str(data.get("reason", "")),
                 "diff": str(data.get("diff", "")),
@@ -1119,6 +1123,21 @@ def status_tag_class(status: object) -> str:
     if value in ("failed", "timed_out", "blocked"):
         return "status-failed"
     return "status-unknown"
+
+
+def parse_workspace_patch_path(path: str, suffix: str) -> tuple[str, str] | None:
+    prefix = "/api/workspaces/"
+    marker = "/patches/"
+    if not path.startswith(prefix) or marker not in path or not path.endswith(suffix):
+        return None
+    rest = path[len(prefix):]
+    ws_id, patch_part = rest.split(marker, 1)
+    patch_id = patch_part[:-len(suffix)] if suffix else patch_part
+    ws_id = ws_id.strip("/")
+    patch_id = patch_id.strip("/")
+    if not ws_id or not patch_id or "/" in patch_id or ".." in patch_id:
+        return None
+    return ws_id, patch_id
 
 
 def list_inbox_tasks(limit: int = 20) -> list[dict]:
@@ -2323,6 +2342,44 @@ def render_page() -> str:
             apply_btn = f'''<form method="post" action="/runner/patch/apply"><input type="hidden" name="patch_id" value="{pid}"><button class="btn btn-run" type="submit">Aplicar</button></form>'''
         elif patch["status"] == "applied":
             apply_btn = f'''<form method="post" action="/runner/patch/rollback"><input type="hidden" name="patch_id" value="{pid}"><button class="btn btn-danger" type="submit">Rollback</button></form>'''
+        changed_files = patch.get("changed_files") or ([patch.get("path")] if patch.get("path") else [])
+        changed_files_html = "".join(f'<span class="tag">{html.escape(str(p))}</span>' for p in changed_files) or '<span class="tag">sem arquivos registrados</span>'
+        suggestions_payload = suggest_tests_for_patch(patch.get("workspace_id") or active_workspace, patch["patch_id"])
+        suggestion_rows = ""
+        if suggestions_payload.get("ok") and suggestions_payload.get("suggestions"):
+            for suggestion in suggestions_payload.get("suggestions", []):
+                command_value = html.escape(str(suggestion.get("command", "")))
+                allowed_cls = "status-done" if suggestion.get("allowed") else "status-failed"
+                allowed_label = "allowlist ok" if suggestion.get("allowed") else "bloqueado"
+                confidence = html.escape(str(suggestion.get("confidence", "-")))
+                reason_text = html.escape(str(suggestion.get("reason", "")))
+                suggestion_rows += f"""
+                <div class="tool-evidence-field" style="border:1px solid var(--line);border-radius:12px;padding:10px;background:rgba(255,255,255,0.02)">
+                  <strong>{command_value}</strong>
+                  <div style="margin:5px 0;color:var(--muted)">{reason_text}</div>
+                  <div class="card-meta">
+                    <span class="tag">{confidence}</span>
+                    <span class="tag {allowed_cls}">{allowed_label}</span>
+                  </div>
+                  <div class="patch-actions">
+                    <form method="post" action="/api/workspaces/{ws_id}/patches/{pid}/tests/preview" target="_blank">
+                      <input type="hidden" name="command" value="{command_value}">
+                      <button class="btn btn-ghost" type="submit">Preview</button>
+                    </form>
+                    <form method="post" action="/api/workspaces/{ws_id}/patches/{pid}/tests/run">
+                      <input type="hidden" name="command" value="{command_value}">
+                      <input type="hidden" name="confirm" value="true">
+                      <button class="btn btn-run" type="submit">Executar teste sugerido</button>
+                    </form>
+                  </div>
+                </div>
+                """
+        elif suggestions_payload.get("ok") and suggestions_payload.get("no_technical_test_required"):
+            suggestion_rows = '<div class="signal-note">Patch altera apenas documentacao; sem teste tecnico obrigatorio pelo profile atual.</div>'
+        elif suggestions_payload.get("ok"):
+            suggestion_rows = '<div class="signal-note">Nenhum comando do profile combina com este patch.</div>'
+        else:
+            suggestion_rows = f'<div class="signal-note">Sugestoes indisponiveis: {html.escape(str(suggestions_payload.get("error", "unknown")))}</div>'
         return f"""
         <div class="patch-item" data-patch-filter="{status}">
           <div class="patch-head">
@@ -2339,9 +2396,19 @@ def render_page() -> str:
             <span class="tag">{ws_id}</span>
             <span class="tag">{scope}</span>
           </div>
+          <div class="signal-note" style="margin:8px 0">Arquivos alterados: {changed_files_html}</div>
           <details>
             <summary style="cursor:pointer;color:var(--muted);font-size:12px">Unified diff log</summary>
             <pre style="margin-top:8px;background:var(--bg);border-radius:8px">{diff}</pre>
+          </details>
+          <details open style="margin-top:10px">
+            <summary style="cursor:pointer;color:var(--muted);font-size:12px">Testes sugeridos</summary>
+            <div class="signal-note" style="margin:8px 0">Sugestoes baseadas no profile do workspace. Nada e executado automaticamente.</div>
+            <div class="tool-evidence-list">{suggestion_rows}</div>
+            <div style="margin-top:10px">
+              <a class="btn btn-ghost" href="/api/workspaces/{ws_id}/patches/{pid}/test-suggestions" target="_blank">Ver JSON</a>
+              <a class="btn btn-ghost" href="/api/tests/runs?workspace={ws_id}&patch_id={pid}" target="_blank">Historico deste patch</a>
+            </div>
           </details>
           <div class="patch-actions">{apply_btn}</div>
         </div>
@@ -2493,13 +2560,19 @@ def render_page() -> str:
         test_id = html.escape(str(row.get("test_run_id", "-")))
         status = html.escape(str(row.get("status", "unknown")))
         command = html.escape(str(row.get("command", "-")))
+        trigger = str(row.get("trigger", ""))
+        patch_id = str(row.get("patch_id", ""))
         duration = html.escape(str(row.get("duration_seconds", "-")))
         exit_code = html.escape(str(row.get("exit_code", "-")))
         started = html.escape(str(row.get("started_at") or row.get("finished_at") or "-"))
         parent = row.get("rerun_of") or row.get("parent_test_run_id")
         parent_tag = f'<span class="tag">rerun de {html.escape(str(parent))}</span>' if parent else ""
+        patch_tag = ""
+        if trigger == "patch_suggestion":
+            patch_label = html.escape(patch_id or "patch")
+            patch_tag = f'<span class="tag status-preview">Patch suggestion</span><a class="tag" href="/api/workspaces/{ws_id}/patches/{patch_label}/test-suggestions" target="_blank">{patch_label}</a>'
         return f"""
-        <div class="test-run-row" data-test-index="{index}" data-test-status="{status}" data-test-workspace="{ws_id}" data-test-command="{command.lower()}">
+        <div class="test-run-row" data-test-index="{index}" data-test-status="{status}" data-test-workspace="{ws_id}" data-test-command="{command.lower()}" data-test-trigger="{html.escape(trigger)}" data-test-patch="{html.escape(patch_id)}">
           <div>
             <div class="test-run-title">{command}</div>
             <div class="test-run-meta">
@@ -2508,6 +2581,7 @@ def render_page() -> str:
               <span class="tag">exit {exit_code}</span>
               <span class="tag">{duration}s</span>
               {parent_tag}
+              {patch_tag}
             </div>
             <div class="card-doc" style="margin-top:6px;margin-bottom:0">{test_id} · {started}</div>
           </div>
@@ -2871,6 +2945,10 @@ def render_page() -> str:
           <option value="timed_out">timed_out</option>
           <option value="blocked">blocked</option>
         </select>
+        <select class="input" id="test-filter-trigger" onchange="filterTestRuns()">
+          <option value="all">todos triggers</option>
+          <option value="patch_suggestion">patch_suggestion</option>
+        </select>
         <input class="input" id="test-filter-q" placeholder="Filtrar comando..." oninput="filterTestRuns()" style="min-width:240px">
         <select class="input" id="test-filter-limit" onchange="reloadTestRunsWithLimit()">
           <option value="30">ultimos 30</option>
@@ -3020,14 +3098,16 @@ def render_page() -> str:
     function filterTestRuns() {{
       const ws = document.getElementById('test-filter-workspace').value || 'all';
       const status = document.getElementById('test-filter-status').value || 'all';
+      const trigger = document.getElementById('test-filter-trigger').value || 'all';
       const q = (document.getElementById('test-filter-q').value || '').toLowerCase();
       const limit = parseInt(document.getElementById('test-filter-limit').value || '30', 10);
       var shown = 0;
       document.querySelectorAll('[data-test-status]').forEach(row => {{
         const rowWs = row.getAttribute('data-test-workspace') || '';
         const rowStatus = row.getAttribute('data-test-status') || '';
+        const rowTrigger = row.getAttribute('data-test-trigger') || '';
         const rowCommand = row.getAttribute('data-test-command') || '';
-        const match = (ws === 'all' || ws === rowWs) && (status === 'all' || status === rowStatus) && (!q || rowCommand.indexOf(q) >= 0) && shown < limit;
+        const match = (ws === 'all' || ws === rowWs) && (status === 'all' || status === rowStatus) && (trigger === 'all' || trigger === rowTrigger) && (!q || rowCommand.indexOf(q) >= 0) && shown < limit;
         row.style.display = match ? '' : 'none';
         if (match) shown += 1;
       }});
@@ -3795,6 +3875,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(validate_workspace_path(raw_path))
             return
 
+        parsed_patch = parse_workspace_patch_path(path, "/test-suggestions")
+        if parsed_patch:
+            ws_id, patch_id = parsed_patch
+            payload = suggest_tests_for_patch(ws_id, patch_id)
+            self.send_json(payload, status=200 if payload.get("ok") else 404)
+            return
+
         if path.startswith("/api/workspaces/") and "/tests/runs/" in path:
             rest = path[len("/api/workspaces/"):]
             ws_id, test_run_id = rest.split("/tests/runs/", 1)
@@ -3822,6 +3909,8 @@ class Handler(BaseHTTPRequestHandler):
                 limit=clamp_limit(query.get("limit", ["50"])[0], default=50),
                 status=safe_status_filter(query.get("status", [""])[0]),
                 q=query.get("q", [""])[0],
+                trigger=query.get("trigger", [""])[0].strip() or None,
+                patch_id=query.get("patch_id", [""])[0].strip() or None,
             )
             self.send_json(payload)
             return
@@ -4139,6 +4228,30 @@ class Handler(BaseHTTPRequestHandler):
             if content_type.startswith("application/json"):
                 self.send_json(res, status=200 if res.get("ok") else 400)
             elif res.get("ok"):
+                self.send_response(303)
+                self.send_header("Location", "/")
+                self.end_headers()
+            else:
+                self.send_json(res, status=400)
+            return
+
+        parsed_patch_preview = parse_workspace_patch_path(path, "/tests/preview")
+        if parsed_patch_preview:
+            ws_id, patch_id = parsed_patch_preview
+            command = str(request_data.get("command", ""))
+            res = preview_patch_suggested_test(ws_id, patch_id, command)
+            self.send_json(res, status=200 if res.get("ok") else 400)
+            return
+
+        parsed_patch_run = parse_workspace_patch_path(path, "/tests/run")
+        if parsed_patch_run:
+            ws_id, patch_id = parsed_patch_run
+            command = str(request_data.get("command", ""))
+            confirm = str(request_data.get("confirm", "")).lower() in ("1", "true", "yes", "on")
+            res = run_patch_suggested_test(ws_id, patch_id, command, confirm=confirm)
+            if content_type.startswith("application/json"):
+                self.send_json(res, status=200 if res.get("status") in ("succeeded", "failed", "timed_out") else 400)
+            elif res.get("status") in ("succeeded", "failed", "timed_out"):
                 self.send_response(303)
                 self.send_header("Location", "/")
                 self.end_headers()

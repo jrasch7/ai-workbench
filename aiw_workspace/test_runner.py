@@ -156,6 +156,8 @@ def run_test_command(
     confirm: bool = False,
     timeout: int = DEFAULT_TIMEOUT,
     rerun_of: str | None = None,
+    trigger: str | None = None,
+    patch_id: str | None = None,
 ) -> dict:
     if not confirm:
         return {"ok": False, "status": "blocked", "error": "confirm_required"}
@@ -212,6 +214,10 @@ def run_test_command(
     if rerun_of:
         metadata["rerun_of"] = rerun_of
         metadata["parent_test_run_id"] = rerun_of
+    if trigger:
+        metadata["trigger"] = trigger
+    if patch_id:
+        metadata["patch_id"] = patch_id
     result = {"ok": status == "succeeded", **metadata}
     _write_json(run_dir / "metadata.json", metadata)
     _write_json(run_dir / "command.json", preview)
@@ -262,7 +268,7 @@ def list_test_runs(workspace_id: str, limit: int = 30, status: str | None = None
             if status_filter and row.get("status") != status_filter:
                 continue
             if q_lower:
-                haystack = " ".join(str(row.get(k, "")) for k in ("test_run_id", "command", "status", "workspace_name")).lower()
+                haystack = " ".join(str(row.get(k, "")) for k in ("test_run_id", "command", "status", "workspace_name", "trigger", "patch_id")).lower()
                 if q_lower not in haystack:
                     continue
             rows.append(row)
@@ -271,7 +277,14 @@ def list_test_runs(workspace_id: str, limit: int = 30, status: str | None = None
     return {"ok": True, "workspace_id": ws["id"], "runs": rows}
 
 
-def list_all_test_runs(workspace_id: str | None = None, limit: int = 50, status: str | None = None, q: str | None = None) -> dict:
+def list_all_test_runs(
+    workspace_id: str | None = None,
+    limit: int = 50,
+    status: str | None = None,
+    q: str | None = None,
+    trigger: str | None = None,
+    patch_id: str | None = None,
+) -> dict:
     try:
         limit = max(1, min(int(limit or 50), 200))
     except Exception:
@@ -286,7 +299,12 @@ def list_all_test_runs(workspace_id: str | None = None, limit: int = 50, status:
     for ws_id in workspace_ids:
         payload = list_test_runs(ws_id, limit=limit, status=status, q=q)
         if payload.get("ok"):
-            rows.extend(payload.get("runs", []))
+            for row in payload.get("runs", []):
+                if trigger and row.get("trigger") != trigger:
+                    continue
+                if patch_id and row.get("patch_id") != patch_id:
+                    continue
+                rows.append(row)
         else:
             errors.append({"workspace_id": ws_id, "error": payload.get("error", "unknown")})
     rows.sort(key=lambda row: str(row.get("started_at") or row.get("test_run_id") or ""), reverse=True)
@@ -352,6 +370,141 @@ def rerun_test_run(workspace_id: str, test_run_id: str, confirm: bool = False, t
         confirm=True,
         timeout=timeout,
         rerun_of=test_run_id,
+    )
+
+
+def _safe_patch_id(patch_id: str) -> str:
+    value = str(patch_id or "").strip()
+    if not value or "/" in value or "\\" in value or ".." in value:
+        raise ValueError("invalid_patch_id")
+    return value
+
+
+def _patch_file(workspace_id: str, patch_id: str) -> Path:
+    safe_patch_id = _safe_patch_id(patch_id)
+    scoped = _workspace_base(workspace_id) / "patches" / f"{safe_patch_id}.json"
+    if scoped.is_file():
+        return scoped
+    legacy = Path(__file__).resolve().parents[1] / ".aiw" / "patches" / f"{safe_patch_id}.json"
+    return legacy
+
+
+def load_patch_preview(workspace_id: str, patch_id: str) -> dict:
+    ws = resolve_workspace(workspace_id)
+    if not ws:
+        return {"ok": False, "error": "unknown_workspace"}
+    try:
+        patch_path = _patch_file(ws["id"], patch_id)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    if not patch_path.is_file():
+        return {"ok": False, "error": "patch_not_found"}
+    try:
+        data = json.loads(patch_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"ok": False, "error": "invalid_patch_json"}
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "invalid_patch_payload"}
+    data.setdefault("patch_id", patch_path.stem)
+    data.setdefault("workspace_id", ws["id"])
+    data.setdefault("artifact_scope", "scoped" if ".aiw/workspaces/" in str(patch_path) else "legacy")
+    if not data.get("changed_files"):
+        path = str(data.get("path", "")).strip()
+        data["changed_files"] = [path] if path else []
+    return {"ok": True, "workspace_id": ws["id"], "patch": data}
+
+
+def _command_reason(command: str, changed_files: list[str]) -> tuple[str, str] | None:
+    lower_command = command.lower()
+    files = [str(f) for f in changed_files]
+    lower_files = [f.lower() for f in files]
+    has_python = any(f.endswith(".py") for f in lower_files)
+    has_shell = any(f.startswith("scripts/") or f.endswith(".sh") for f in lower_files)
+    has_node = any(
+        f == "package.json"
+        or f.startswith("src/")
+        or f.startswith("frontend/")
+        or f.endswith((".ts", ".tsx", ".js", ".jsx"))
+        for f in lower_files
+    )
+    docs_only = bool(lower_files) and all(f.endswith(".md") for f in lower_files)
+    if has_python and "python3 -m" in lower_command and ("py_compile" in lower_command or "compileall" in lower_command):
+        return "Patch altera arquivos Python cobertos por comando Python do profile.", "high"
+    if has_shell and lower_command.startswith("bash -n"):
+        return "Patch altera scripts ou shell files cobertos por sintaxe bash do profile.", "high"
+    if has_node and lower_command in {"npm run lint", "npm test", "npm run build", "pnpm lint", "pnpm test", "pnpm build"}:
+        return "Patch altera area Node/frontend coberta por comando do profile.", "medium"
+    if docs_only and ("docs" in lower_command or "markdown" in lower_command):
+        return "Patch altera apenas documentacao e existe comando de docs no profile.", "low"
+    return None
+
+
+def suggest_tests_for_patch(workspace_id: str, patch_id: str) -> dict:
+    patch_payload = load_patch_preview(workspace_id, patch_id)
+    if not patch_payload.get("ok"):
+        return patch_payload
+    profile = validate_profile(workspace_id)
+    if not profile.get("ok"):
+        return {"ok": False, "error": "invalid_profile", "profile": profile}
+    patch = patch_payload["patch"]
+    changed_files = [str(p) for p in patch.get("changed_files", []) if str(p)]
+    suggestions = []
+    for check in profile.get("test_command_checks", []):
+        command = str(check.get("command", ""))
+        reason = _command_reason(command, changed_files)
+        if not reason:
+            continue
+        validation = validate_test_command(command)
+        suggestions.append({
+            "command": command,
+            "reason": reason[0],
+            "confidence": reason[1],
+            "allowed": bool(validation.get("ok")) and bool(check.get("ok")),
+            "allowlist_reason": validation.get("reason", ""),
+        })
+    return {
+        "ok": True,
+        "workspace_id": profile["workspace_id"],
+        "workspace_name": profile["workspace_name"],
+        "patch_id": patch["patch_id"],
+        "changed_files": changed_files,
+        "suggestions": suggestions,
+        "no_technical_test_required": bool(changed_files) and all(p.lower().endswith(".md") for p in changed_files) and not suggestions,
+    }
+
+
+def _suggested_command(workspace_id: str, patch_id: str, command: str) -> tuple[dict | None, str | None]:
+    suggestions = suggest_tests_for_patch(workspace_id, patch_id)
+    if not suggestions.get("ok"):
+        return None, suggestions.get("error", "suggestions_unavailable")
+    for item in suggestions.get("suggestions", []):
+        if item.get("command") == command:
+            if not item.get("allowed"):
+                return None, "suggested_command_blocked"
+            return item, None
+    return None, "command_not_in_patch_suggestions"
+
+
+def preview_patch_suggested_test(workspace_id: str, patch_id: str, command: str) -> dict:
+    _, error = _suggested_command(workspace_id, patch_id, command)
+    if error:
+        return {"ok": False, "allowed": False, "error": error}
+    return preview_test_command(workspace_id, command=command)
+
+
+def run_patch_suggested_test(workspace_id: str, patch_id: str, command: str, confirm: bool = False, timeout: int = DEFAULT_TIMEOUT) -> dict:
+    if not confirm:
+        return {"ok": False, "status": "blocked", "error": "confirm_required"}
+    _, error = _suggested_command(workspace_id, patch_id, command)
+    if error:
+        return {"ok": False, "status": "blocked", "error": error}
+    return run_test_command(
+        workspace_id,
+        command=command,
+        confirm=True,
+        timeout=timeout,
+        trigger="patch_suggestion",
+        patch_id=patch_id,
     )
 
 

@@ -227,6 +227,7 @@ def project_patch_preview(path: str, old_text: str, new_text: str, expected_repl
         patch_data = {
             "patch_id": patch_id,
             "path": str(resolved_path.relative_to(get_root())),
+            "changed_files": [str(resolved_path.relative_to(get_root()))],
             "old_text": old_text,
             "new_text": new_text,
             "reason": reason,
@@ -235,7 +236,8 @@ def project_patch_preview(path: str, old_text: str, new_text: str, expected_repl
             "status": "preview",
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "workspace_id": _workspace_id(),
-            "artifact_scope": "scoped"
+            "artifact_scope": "scoped",
+            "suggested_tests": []
         }
 
         patch_file = patches_dir / f"{patch_id}.json"
@@ -246,6 +248,7 @@ def project_patch_preview(path: str, old_text: str, new_text: str, expected_repl
             "tool": "project_patch_preview",
             "patch_id": patch_id,
             "path": patch_data["path"],
+            "changed_files": patch_data["changed_files"],
             "replacements": occurrences,
             "diff": diff_text,
             "status": "preview"
