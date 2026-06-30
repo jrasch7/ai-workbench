@@ -5,6 +5,7 @@ exec python3 - <<'PYTHON'
 import html
 import json
 import os
+import re
 import socketserver
 import subprocess
 import sys
@@ -134,6 +135,227 @@ def current_git_branch() -> str:
         return branch or "-"
     except Exception:
         return "-"
+
+
+WORKSPACES_CONFIG = ROOT / ".aiw" / "workspaces.json"
+DEFAULT_WORKSPACE = {
+    "id": "aiw",
+    "name": "AI Workbench",
+    "path": str(ROOT),
+    "type": "aiw",
+}
+SAFE_BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,79}$")
+FORBIDDEN_GIT_PARTS = (
+    ".env",
+    "secret",
+    "token",
+    "credential",
+    "private_key",
+    "client_secret",
+    "AGENTS.md",
+    ".aiw/context/",
+    ".aiw/runs/",
+    ".aiw/backups/",
+    ".aiw/generated/",
+    ".aiw/patches/",
+)
+
+
+def git_run(cwd: Path, args: list[str], timeout: int = 10) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def load_workspaces_config() -> dict:
+    config = {"version": 1, "active": "aiw", "workspaces": [DEFAULT_WORKSPACE]}
+    if WORKSPACES_CONFIG.exists():
+        try:
+            data = json.loads(WORKSPACES_CONFIG.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("workspaces"), list):
+                seen = {"aiw"}
+                items = [DEFAULT_WORKSPACE]
+                for item in data.get("workspaces", []):
+                    if not isinstance(item, dict):
+                        continue
+                    ws_id = str(item.get("id", "")).strip()
+                    if not ws_id or ws_id in seen:
+                        continue
+                    seen.add(ws_id)
+                    items.append({
+                        "id": ws_id,
+                        "name": str(item.get("name", ws_id)),
+                        "path": str(item.get("path", "")),
+                        "type": str(item.get("type", "external")),
+                    })
+                active = str(data.get("active", "aiw"))
+                if active not in seen:
+                    active = "aiw"
+                config = {"version": 1, "active": active, "workspaces": items}
+        except Exception:
+            config["config_error"] = "invalid_json"
+    return config
+
+
+def resolve_workspace(workspace_id: str) -> dict | None:
+    config = load_workspaces_config()
+    for ws in config["workspaces"]:
+        if ws["id"] == workspace_id:
+            path = Path(ws["path"]).expanduser().resolve()
+            ws = dict(ws)
+            ws["resolved_path"] = str(path)
+            ws["exists"] = path.is_dir()
+            return ws
+    return None
+
+
+def workspace_health(workspace_id: str) -> dict:
+    ws = resolve_workspace(workspace_id)
+    if not ws:
+        return {"ok": False, "error": "unknown_workspace"}
+    path = Path(ws["resolved_path"])
+    health = {
+        "ok": True,
+        "id": ws["id"],
+        "name": ws["name"],
+        "path": str(path),
+        "type": ws.get("type", "external"),
+        "exists": path.is_dir(),
+        "branch": "-",
+        "head": "-",
+        "dirty": False,
+        "modified_count": 0,
+        "readme": False,
+        "docs": False,
+        "package_json": False,
+        "pyproject": False,
+        "last_commit": "-",
+    }
+    if not path.is_dir():
+        return health
+    health["readme"] = (path / "README.md").is_file()
+    health["docs"] = (path / "docs").is_dir()
+    health["package_json"] = (path / "package.json").is_file()
+    health["pyproject"] = (path / "pyproject.toml").is_file()
+    try:
+        health["branch"] = git_run(path, ["branch", "--show-current"]).stdout.strip() or "-"
+        health["head"] = git_run(path, ["rev-parse", "--short", "HEAD"]).stdout.strip() or "-"
+        status_lines = git_status_files(path)
+        health["dirty"] = bool(status_lines)
+        health["modified_count"] = len(status_lines)
+        health["last_commit"] = git_run(path, ["log", "-1", "--oneline"]).stdout.strip() or "-"
+    except Exception as exc:
+        health["git_error"] = str(exc)
+    return health
+
+
+def workspaces_payload() -> dict:
+    config = load_workspaces_config()
+    return {
+        "active": config.get("active", "aiw"),
+        "config_path": str(WORKSPACES_CONFIG),
+        "local_config_exists": WORKSPACES_CONFIG.exists(),
+        "workspaces": [workspace_health(ws["id"]) for ws in config["workspaces"]],
+    }
+
+
+def write_active_workspace(workspace_id: str) -> dict:
+    ws = resolve_workspace(workspace_id)
+    if not ws:
+        return {"ok": False, "error": "unknown_workspace"}
+    if not ws["exists"]:
+        return {"ok": False, "error": "workspace_path_missing"}
+    config = load_workspaces_config()
+    config["active"] = workspace_id
+    WORKSPACES_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    WORKSPACES_CONFIG.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    return {"ok": True, "active": workspace_id}
+
+
+def workspace_path_or_error(workspace_id: str) -> tuple[Path | None, dict | None]:
+    ws = resolve_workspace(workspace_id or "aiw")
+    if not ws:
+        return None, {"ok": False, "error": "unknown_workspace"}
+    path = Path(ws["resolved_path"])
+    if not path.is_dir():
+        return None, {"ok": False, "error": "workspace_path_missing"}
+    return path, None
+
+
+def git_status_files(path: Path) -> list[dict]:
+    proc = git_run(path, ["status", "--porcelain"], timeout=10)
+    files = []
+    for line in proc.stdout.splitlines():
+        if not line:
+            continue
+        status = line[:2].strip() or "?"
+        file_path = line[3:] if len(line) > 3 else line
+        if " -> " in file_path:
+            file_path = file_path.split(" -> ", 1)[1]
+        files.append({"status": status, "path": file_path})
+    return files
+
+
+def is_forbidden_git_file(file_path: str) -> bool:
+    normalized = file_path.replace("\\", "/").lstrip("/")
+    lower = normalized.lower()
+    if normalized == "AGENTS.md":
+        return True
+    return any(part.lower() in lower for part in FORBIDDEN_GIT_PARTS)
+
+
+def validate_git_file_selection(path: Path, files: list[str]) -> tuple[list[str], str]:
+    if not files:
+        return [], "no_files_selected"
+    changed = {f["path"] for f in git_status_files(path)}
+    allowed = []
+    for raw in files:
+        file_path = str(raw).strip()
+        if not file_path or file_path.startswith("/") or ".." in Path(file_path).parts:
+            return [], f"invalid_file:{file_path}"
+        if is_forbidden_git_file(file_path):
+            return [], f"forbidden_file:{file_path}"
+        if file_path not in changed:
+            return [], f"file_not_changed:{file_path}"
+        allowed.append(file_path)
+    return allowed, ""
+
+
+def git_status_payload(workspace_id: str) -> dict:
+    path, err = workspace_path_or_error(workspace_id)
+    if err:
+        return err
+    files = git_status_files(path)
+    return {
+        "ok": True,
+        "workspace": workspace_id,
+        "branch": git_run(path, ["branch", "--show-current"]).stdout.strip() or "-",
+        "head": git_run(path, ["rev-parse", "--short", "HEAD"]).stdout.strip() or "-",
+        "dirty": bool(files),
+        "files": files,
+    }
+
+
+def git_diff_payload(workspace_id: str) -> dict:
+    path, err = workspace_path_or_error(workspace_id)
+    if err:
+        return err
+    stat = git_run(path, ["diff", "--stat"]).stdout.strip()
+    names = git_run(path, ["diff", "--name-only"]).stdout.strip().splitlines()
+    cached = git_run(path, ["diff", "--cached", "--name-only"]).stdout.strip().splitlines()
+    return {"ok": True, "workspace": workspace_id, "stat": stat, "files": names, "staged_files": cached}
+
+
+def validate_branch_name(name: str) -> bool:
+    if not name or not SAFE_BRANCH_RE.match(name):
+        return False
+    if name.endswith("/") or "//" in name or ".." in name or "@{" in name:
+        return False
+    return True
 
 
 def list_patch_proposals(limit: int = 30) -> list[dict]:
@@ -1741,6 +1963,10 @@ def render_page() -> str:
     inbox_tasks = list_inbox_tasks()
     patch_proposals = list_patch_proposals()
     health = context_health()
+    workspace_data = workspaces_payload()
+    active_workspace = workspace_data.get("active", "aiw")
+    git_data = git_status_payload(active_workspace)
+    git_diff = git_diff_payload(active_workspace)
 
     # Queue pills
     queue_pills = ""
@@ -1769,6 +1995,8 @@ def render_page() -> str:
       <div class="nav-label">Workspace</div>
       <button class="nav-item active" onclick="showSection('overview')"><span class="icon">◎</span>Overview</button>
       <button class="nav-item" onclick="showSection('harness')"><span class="icon">▦</span>Bancada {badge(len(patch_proposals), 'warn')}</button>
+      <button class="nav-item" onclick="showSection('workspaces')"><span class="icon">▣</span>Workspaces</button>
+      <button class="nav-item" onclick="showSection('git')"><span class="icon">⑂</span>Git Control</button>
       <button class="nav-item" onclick="showSection('nova')"><span class="icon">✦</span>Nova task</button>
     </nav>
     <nav class="nav-section">
@@ -2011,6 +2239,63 @@ def render_page() -> str:
       <div class="health-row"><span>Runbooks recentes</span><span class="context-recent-list">{html.escape(" | ".join(health["recent_runbooks"]) or "-")}</span></div>
     """
 
+    workspace_cards = ""
+    for ws in workspace_data.get("workspaces", []):
+        active_tag = '<span class="tag status-done">ativo</span>' if ws["id"] == active_workspace else '<span class="tag">disponível</span>'
+        dirty_tag = '<span class="tag status-preview">dirty</span>' if ws.get("dirty") else '<span class="tag status-done">clean</span>'
+        activate_btn = ""
+        if ws["id"] != active_workspace:
+            activate_btn = f"""
+            <form method="post" action="/api/workspaces/active">
+              <input type="hidden" name="workspace_id" value="{html.escape(ws["id"])}">
+              <button class="btn btn-secondary" type="submit">Ativar workspace</button>
+            </form>
+            """
+        workspace_cards += f"""
+        <div class="card">
+          <div class="card-title">{html.escape(ws["name"])}</div>
+          <div class="card-meta">
+            {active_tag}
+            {dirty_tag}
+            <span class="tag">{html.escape(ws.get("branch", "-"))}</span>
+            <span class="tag">{html.escape(ws.get("head", "-"))}</span>
+          </div>
+          <div class="card-doc">{html.escape(ws["path"])}</div>
+          <div class="signal-list">
+            <div class="signal-row"><span class="signal-name">Existe</span><span class="tag">{str(ws.get("exists")).lower()}</span></div>
+            <div class="signal-row"><span class="signal-name">Alterados</span><span class="tag">{ws.get("modified_count", 0)}</span></div>
+            <div class="signal-row"><span class="signal-name">README</span><span class="tag">{str(ws.get("readme")).lower()}</span></div>
+            <div class="signal-row"><span class="signal-name">docs/</span><span class="tag">{str(ws.get("docs")).lower()}</span></div>
+            <div class="signal-row"><span class="signal-name">Último commit</span><span class="tag">{html.escape(ws.get("last_commit", "-")[:80])}</span></div>
+          </div>
+          <div class="card-actions" style="margin-top:12px">{activate_btn}</div>
+        </div>
+        """
+
+    changed_files = git_data.get("files", []) if git_data.get("ok") else []
+    git_file_rows = ""
+    for item in changed_files:
+        file_path = item["path"]
+        blocked = is_forbidden_git_file(file_path)
+        disabled = "disabled" if blocked else ""
+        blocked_note = " · bloqueado" if blocked else ""
+        git_file_rows += f"""
+        <label class="health-row" style="justify-content:flex-start">
+          <input type="checkbox" name="files" value="{html.escape(file_path)}" {disabled}>
+          <span class="tag">{html.escape(item["status"])}</span>
+          <span>{html.escape(file_path)}{blocked_note}</span>
+        </label>
+        """
+    if not git_file_rows:
+        git_file_rows = '<div class="empty-state">Nenhum arquivo alterado neste workspace.</div>'
+
+    git_panel_status = f"""
+      <div class="signal-row"><span class="signal-name">Workspace</span><span class="tag">{html.escape(active_workspace)}</span></div>
+      <div class="signal-row"><span class="signal-name">Branch</span><span class="tag">{html.escape(git_data.get("branch", "-"))}</span></div>
+      <div class="signal-row"><span class="signal-name">HEAD</span><span class="tag">{html.escape(git_data.get("head", "-"))}</span></div>
+      <div class="signal-row"><span class="signal-name">Estado</span><span class="tag {'status-preview' if git_data.get('dirty') else 'status-done'}">{'dirty' if git_data.get('dirty') else 'clean'}</span></div>
+    """
+
     def run_card(row: dict) -> str:
         st = html.escape(row["status"])
         model = html.escape(row["model"])
@@ -2146,6 +2431,79 @@ def render_page() -> str:
     </div>
     """
 
+    workspaces_section = f"""
+    <div id="sec-workspaces" class="workspace-section" style="display:none">
+      <div class="page-header">
+        <h2>Workspaces</h2>
+        <div class="sub">Configuração local em <code>.aiw/workspaces.json</code>. O AIW aparece como padrão mesmo sem arquivo local.</div>
+      </div>
+      <div class="section-block">
+        <h3>Workspace ativo</h3>
+        <div class="system-panel">
+          <div class="signal-list">
+            <div class="signal-row"><span class="signal-name">Ativo</span><span class="tag status-done">{html.escape(active_workspace)}</span></div>
+            <div class="signal-row"><span class="signal-name">Config local</span><span class="tag">{'existe' if workspace_data.get('local_config_exists') else 'não criada'}</span></div>
+            <div class="signal-row"><span class="signal-name">Exemplo versionado</span><span class="tag">config/aiw-workspaces.example.json</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="section-block">
+        <h3>Workspaces conhecidos</h3>
+        <div class="cards">{workspace_cards}</div>
+      </div>
+      <div class="api-links">
+        <a class="api-link" href="/api/workspaces">/api/workspaces</a>
+        <a class="api-link" href="/api/workspaces/aiw/health">/api/workspaces/aiw/health</a>
+      </div>
+    </div>
+    """
+
+    git_section = f"""
+    <div id="sec-git" class="workspace-section" style="display:none">
+      <div class="page-header">
+        <h2>Git Control</h2>
+        <div class="sub">Painel Git seguro para status, diff, branch local e commit com arquivos explícitos. Push não está disponível nesta versão.</div>
+      </div>
+      <div class="harness-grid">
+        <div class="harness-panel">
+          <h3>Status</h3>
+          <div class="signal-list">{git_panel_status}</div>
+          <details style="margin-top:12px">
+            <summary style="cursor:pointer;color:var(--muted);font-size:12px">Ver diff</summary>
+            <pre style="margin-top:8px;border-radius:8px;background:var(--bg)">{html.escape(git_diff.get("stat", "") or "Sem diff unstaged.")}</pre>
+          </details>
+        </div>
+        <div class="harness-panel">
+          <h3>Branch local</h3>
+          <form method="post" action="/api/git/branch/create" style="display:grid;gap:10px;margin-bottom:12px">
+            <input type="hidden" name="workspace" value="{html.escape(active_workspace)}">
+            <input class="input" name="branch" placeholder="codex/nova-branch">
+            <button class="btn btn-secondary" type="submit">Criar branch</button>
+          </form>
+          <form method="post" action="/api/git/branch/checkout" style="display:grid;gap:10px">
+            <input type="hidden" name="workspace" value="{html.escape(active_workspace)}">
+            <input class="input" name="branch" placeholder="branch-existente">
+            <button class="btn btn-secondary" type="submit">Trocar para branch existente</button>
+          </form>
+        </div>
+      </div>
+      <div class="section-block">
+        <h3>Commit local</h3>
+        <form method="post" action="/api/git/commit" class="harness-panel">
+          <input type="hidden" name="workspace" value="{html.escape(active_workspace)}">
+          <div class="signal-list" style="margin-bottom:12px">{git_file_rows}</div>
+          <input class="input" name="message" placeholder="Mensagem do commit" style="width:100%;margin-bottom:10px">
+          <button class="btn btn-run" type="submit">Commitar selecionados</button>
+          <div class="signal-note" style="margin-top:10px">Push não está disponível nesta versão. O commit usa staging explícito e nunca usa <code>git add .</code>.</div>
+        </form>
+      </div>
+      <div class="api-links">
+        <a class="api-link" href="/api/git/status?workspace={html.escape(active_workspace)}">/api/git/status</a>
+        <a class="api-link" href="/api/git/diff?workspace={html.escape(active_workspace)}">/api/git/diff</a>
+      </div>
+    </div>
+    """
+
     harness_section = f"""
     <div id="sec-harness" class="workspace-section" style="display:none">
       <div class="page-header">
@@ -2276,6 +2634,8 @@ def render_page() -> str:
     </aside>
     <main class="main">
       {overview_section}
+      {workspaces_section}
+      {git_section}
       {harness_section}
       {nova_section}
       {inbox_section}
@@ -3005,6 +3365,30 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": "No context pack found"}, status=404)
             return
 
+        if path == "/api/workspaces":
+            self.send_json(workspaces_payload())
+            return
+
+        if path.startswith("/api/workspaces/") and path.endswith("/health"):
+            ws_id = path[len("/api/workspaces/"):-len("/health")].strip("/")
+            health_payload = workspace_health(ws_id)
+            self.send_json(health_payload, status=200 if health_payload.get("ok") else 404)
+            return
+
+        if path == "/api/git/status":
+            query = parse_qs(urlparse(self.path).query)
+            ws_id = query.get("workspace", ["aiw"])[0]
+            payload = git_status_payload(ws_id)
+            self.send_json(payload, status=200 if payload.get("ok") else 400)
+            return
+
+        if path == "/api/git/diff":
+            query = parse_qs(urlparse(self.path).query)
+            ws_id = query.get("workspace", ["aiw"])[0]
+            payload = git_diff_payload(ws_id)
+            self.send_json(payload, status=200 if payload.get("ok") else 400)
+            return
+
         if path == "/":
             self.send_html(render_page())
             return
@@ -3231,6 +3615,92 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(res)
             else:
                 self.send_json(res, status=400)
+            return
+
+        request_data = {}
+        if content_type.startswith("application/json"):
+            try:
+                request_data = json.loads(raw) if raw else {}
+            except Exception:
+                self.send_json({"ok": False, "error": "invalid_json"}, status=400)
+                return
+        else:
+            request_data = {k: v[0] if len(v) == 1 else v for k, v in parse_qs(raw).items()}
+
+        if path == "/api/workspaces/active":
+            ws_id = str(request_data.get("workspace_id", request_data.get("id", "")))
+            res = write_active_workspace(ws_id)
+            if content_type.startswith("application/json"):
+                self.send_json(res, status=200 if res.get("ok") else 400)
+            elif res.get("ok"):
+                self.send_response(303)
+                self.send_header("Location", "/")
+                self.end_headers()
+            else:
+                self.send_json(res, status=400)
+            return
+
+        if path == "/api/git/branch/create":
+            ws_id = str(request_data.get("workspace", "aiw"))
+            branch = str(request_data.get("branch", "")).strip()
+            workspace_path, err = workspace_path_or_error(ws_id)
+            if err:
+                self.send_json(err, status=400)
+                return
+            if not validate_branch_name(branch):
+                self.send_json({"ok": False, "error": "invalid_branch_name"}, status=400)
+                return
+            proc = git_run(workspace_path, ["checkout", "-b", branch], timeout=20)
+            res = {"ok": proc.returncode == 0, "stdout": proc.stdout, "stderr": proc.stderr, "branch": branch}
+            self.send_json(res, status=200 if res["ok"] else 400)
+            return
+
+        if path == "/api/git/branch/checkout":
+            ws_id = str(request_data.get("workspace", "aiw"))
+            branch = str(request_data.get("branch", "")).strip()
+            workspace_path, err = workspace_path_or_error(ws_id)
+            if err:
+                self.send_json(err, status=400)
+                return
+            if not validate_branch_name(branch):
+                self.send_json({"ok": False, "error": "invalid_branch_name"}, status=400)
+                return
+            if git_status_files(workspace_path):
+                self.send_json({"ok": False, "error": "dirty_worktree_checkout_blocked"}, status=409)
+                return
+            verify = git_run(workspace_path, ["rev-parse", "--verify", f"refs/heads/{branch}"], timeout=10)
+            if verify.returncode != 0:
+                self.send_json({"ok": False, "error": "branch_not_found"}, status=404)
+                return
+            proc = git_run(workspace_path, ["checkout", branch], timeout=20)
+            res = {"ok": proc.returncode == 0, "stdout": proc.stdout, "stderr": proc.stderr, "branch": branch}
+            self.send_json(res, status=200 if res["ok"] else 400)
+            return
+
+        if path == "/api/git/commit":
+            ws_id = str(request_data.get("workspace", "aiw"))
+            message = str(request_data.get("message", "")).strip()
+            selected = request_data.get("files", [])
+            if isinstance(selected, str):
+                selected = [selected]
+            workspace_path, err = workspace_path_or_error(ws_id)
+            if err:
+                self.send_json(err, status=400)
+                return
+            if not message or len(message) > 200:
+                self.send_json({"ok": False, "error": "invalid_commit_message"}, status=400)
+                return
+            files, file_error = validate_git_file_selection(workspace_path, selected)
+            if file_error:
+                self.send_json({"ok": False, "error": file_error}, status=400)
+                return
+            add_proc = git_run(workspace_path, ["add", "--", *files], timeout=20)
+            if add_proc.returncode != 0:
+                self.send_json({"ok": False, "error": "git_add_failed", "stderr": add_proc.stderr}, status=400)
+                return
+            commit_proc = git_run(workspace_path, ["commit", "-m", message], timeout=30)
+            res = {"ok": commit_proc.returncode == 0, "stdout": commit_proc.stdout, "stderr": commit_proc.stderr}
+            self.send_json(res, status=200 if res["ok"] else 400)
             return
 
         # Form-encoded endpoints

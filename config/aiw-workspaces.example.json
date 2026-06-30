@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "active": "aiw",
+  "workspaces": [
+    {
+      "id": "aiw",
+      "name": "AI Workbench",
+      "path": "/home/joao/ai-workbench",
+      "type": "aiw"
+    }
+  ]
+}
