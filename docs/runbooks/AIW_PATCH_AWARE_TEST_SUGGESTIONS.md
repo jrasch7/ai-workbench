@@ -14,6 +14,8 @@ As sugestoes nunca chamam LLM e nunca executam automaticamente.
 
 Quando `profile.test_mappings` existe, ele tem prioridade sobre as heuristicas. Cada sugestao informa `source`, `mapping_name` e `matched_files`.
 
+O Validation Plan usa essas sugestoes como entrada para ordenar grupos e scores por patch.
+
 ## Heuristicas
 
 - Python: arquivos `.py` sugerem comandos `python3 -m py_compile` ou `python3 -m compileall` existentes no profile.

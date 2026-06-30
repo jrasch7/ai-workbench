@@ -53,6 +53,9 @@ from aiw_workspace import (
     suggest_tests_for_patch,
     preview_patch_suggested_test,
     run_patch_suggested_test,
+    validation_plan_for_patch,
+    preview_validation_plan_command,
+    run_validation_plan_commands,
 )
 
 TASK_QUEUES = ["inbox", "running", "blocked", "queued", "done", "failed"]
@@ -2345,6 +2348,7 @@ def render_page() -> str:
         changed_files = patch.get("changed_files") or ([patch.get("path")] if patch.get("path") else [])
         changed_files_html = "".join(f'<span class="tag">{html.escape(str(p))}</span>' for p in changed_files) or '<span class="tag">sem arquivos registrados</span>'
         suggestions_payload = suggest_tests_for_patch(patch.get("workspace_id") or active_workspace, patch["patch_id"])
+        validation_plan_payload = validation_plan_for_patch(patch.get("workspace_id") or active_workspace, patch["patch_id"])
         suggestion_rows = ""
         if suggestions_payload.get("ok") and suggestions_payload.get("suggestions"):
             for suggestion in suggestions_payload.get("suggestions", []):
@@ -2393,6 +2397,54 @@ def render_page() -> str:
             suggestion_rows = '<div class="signal-note">Nenhum comando do profile combina com este patch.</div>'
         else:
             suggestion_rows = f'<div class="signal-note">Sugestoes indisponiveis: {html.escape(str(suggestions_payload.get("error", "unknown")))}</div>'
+        validation_plan_rows = ""
+        if validation_plan_payload.get("ok") and validation_plan_payload.get("docs_only"):
+            validation_plan_rows = '<div class="signal-note">Patch altera apenas documentacao. Nenhum teste tecnico obrigatorio foi definido no profile.</div>'
+        elif validation_plan_payload.get("ok") and validation_plan_payload.get("plan"):
+            for group in validation_plan_payload.get("plan", []):
+                command_rows = ""
+                for item in group.get("commands", []):
+                    command_value = html.escape(str(item.get("command", "")))
+                    matched_files_html = "".join(f'<span class="tag">{html.escape(str(f))}</span>' for f in item.get("matched_files", [])) or '<span class="tag">sem match registrado</span>'
+                    command_rows += f"""
+                    <div class="tool-evidence-field" style="border:1px solid var(--line);border-radius:12px;padding:10px;background:rgba(255,255,255,0.02)">
+                      <strong>{command_value}</strong>
+                      <div class="card-meta">
+                        <span class="tag">score {html.escape(str(item.get("score", 0)))}</span>
+                        <span class="tag">{html.escape(str(item.get("source", "-")))}</span>
+                        <span class="tag">{html.escape(str(item.get("mapping_name", "") or "-"))}</span>
+                      </div>
+                      <div class="signal-note">{html.escape(str(item.get("reason", "")))}</div>
+                      <div class="signal-note" style="margin-top:6px">Matched files: {matched_files_html}</div>
+                      <div class="patch-actions">
+                        <form method="post" action="/api/workspaces/{ws_id}/patches/{pid}/validation-plan/preview" target="_blank">
+                          <input type="hidden" name="command" value="{command_value}">
+                          <button class="btn btn-ghost" type="submit">Preview</button>
+                        </form>
+                        <form method="post" action="/api/workspaces/{ws_id}/patches/{pid}/validation-plan/run">
+                          <input type="hidden" name="commands" value="{command_value}">
+                          <input type="hidden" name="confirm" value="true">
+                          <button class="btn btn-run" type="submit">Executar</button>
+                        </form>
+                      </div>
+                    </div>
+                    """
+                validation_plan_rows += f"""
+                <div class="tool-evidence-card">
+                  <div class="tool-evidence-head">
+                    <div>
+                      <div class="tool-evidence-title">{html.escape(str(group.get("group", "-")))}</div>
+                      <div class="tool-evidence-sub">{html.escape(str(group.get("kind", "-")))} · priority {html.escape(str(group.get("priority", "-")))}</div>
+                    </div>
+                  </div>
+                  <div class="signal-note" style="margin-bottom:8px">{html.escape(str(group.get("reason", "")))}</div>
+                  <div class="tool-evidence-list">{command_rows}</div>
+                </div>
+                """
+        elif validation_plan_payload.get("ok"):
+            validation_plan_rows = '<div class="signal-note">Nenhum grupo de validacao sugerido para este patch.</div>'
+        else:
+            validation_plan_rows = f'<div class="signal-note">Plano indisponivel: {html.escape(str(validation_plan_payload.get("error", "unknown")))}</div>'
         return f"""
         <div class="patch-item" data-patch-filter="{status}">
           <div class="patch-head">
@@ -2421,6 +2473,14 @@ def render_page() -> str:
             <div style="margin-top:10px">
               <a class="btn btn-ghost" href="/api/workspaces/{ws_id}/patches/{pid}/test-suggestions" target="_blank">Ver JSON</a>
               <a class="btn btn-ghost" href="/api/tests/runs?workspace={ws_id}&patch_id={pid}" target="_blank">Historico deste patch</a>
+            </div>
+          </details>
+          <details open style="margin-top:10px">
+            <summary style="cursor:pointer;color:var(--muted);font-size:12px">Plano de validação sugerido</summary>
+            <div class="signal-note" style="margin:8px 0">{html.escape(str(validation_plan_payload.get("summary", "")))} Nada e executado automaticamente. Comandos precisam estar no profile. Sem commit, sem apply, sem push.</div>
+            <div class="tool-evidence-list">{validation_plan_rows}</div>
+            <div style="margin-top:10px">
+              <a class="btn btn-ghost" href="/api/workspaces/{ws_id}/patches/{pid}/validation-plan" target="_blank">Ver plano JSON</a>
             </div>
           </details>
           <div class="patch-actions">{apply_btn}</div>
@@ -2519,6 +2579,25 @@ def render_page() -> str:
             """
         if not mapping_rows:
             mapping_rows = '<div class="signal-note">Profile sem test_mappings; heuristicas continuam ativas.</div>'
+        validation_group_rows = ""
+        for group in profile.get("validation_groups", []):
+            group_cls = "status-done" if group.get("ok") else "status-failed"
+            commands = ", ".join(group.get("commands", [])) or "nenhum"
+            warnings_text = "; ".join(group.get("warnings", []) + group.get("errors", [])) or "ok"
+            validation_group_rows += f"""
+            <div class="tool-evidence-field" style="border:1px solid var(--line);border-radius:12px;padding:10px;background:rgba(255,255,255,0.02)">
+              <strong>{html.escape(str(group.get("name", "-")))}</strong>
+              <div class="card-meta">
+                <span class="tag {group_cls}">{html.escape(str(group.get("status", "-")))}</span>
+                <span class="tag">{html.escape(str(group.get("kind", "-")))}</span>
+                <span class="tag">priority {html.escape(str(group.get("priority", "-")))}</span>
+              </div>
+              <div class="signal-note">Commands: {html.escape(commands[:260])}</div>
+              <div class="signal-note">Warnings: {html.escape(warnings_text[:220])}</div>
+            </div>
+            """
+        if not validation_group_rows:
+            validation_group_rows = '<div class="signal-note">Profile sem validation_groups; plano usa sugestoes diretas quando possivel.</div>'
         last_test = tests.get("last_result") or {}
         last_test_label = f"{last_test.get('test_run_id', '-')} · {last_test.get('status', '-')}" if last_test else "nenhum"
         warnings = "; ".join(profile.get("warnings", [])) or "sem warnings"
@@ -2568,6 +2647,7 @@ def render_page() -> str:
 	            <div class="signal-row"><span class="signal-name">Profile</span><span class="tag {profile_cls}">{html.escape(profile_status)}</span></div>
 	            <div class="signal-row"><span class="signal-name">Source roots</span><span class="tag">{html.escape(source_roots)}</span></div>
 	            <div class="signal-row"><span class="signal-name">Source Root Test Mapping</span><span class="tag">{profile.get("valid_test_mapping_count", 0)}/{profile.get("test_mapping_count", 0)} validos</span></div>
+	            <div class="signal-row"><span class="signal-name">Validation Groups</span><span class="tag">{profile.get("valid_validation_group_count", 0)}/{profile.get("validation_group_count", 0)} validos</span></div>
 	            <div class="signal-row"><span class="signal-name">Alterados</span><span class="tag">{ws.get("modified_count", 0)}</span></div>
 	            <div class="signal-row"><span class="signal-name">README</span><span class="tag">{str(ws.get("readme")).lower()}</span></div>
 	            <div class="signal-row"><span class="signal-name">docs/</span><span class="tag">{str(ws.get("docs")).lower()}</span></div>
@@ -2580,6 +2660,10 @@ def render_page() -> str:
 		          <details style="margin-top:12px">
 		            <summary style="cursor:pointer;color:var(--muted);font-size:12px">Source Root Test Mapping</summary>
 		            <div class="tool-evidence-list" style="margin-top:10px">{mapping_rows}</div>
+		          </details>
+		          <details style="margin-top:12px">
+		            <summary style="cursor:pointer;color:var(--muted);font-size:12px">Validation Groups</summary>
+		            <div class="tool-evidence-list" style="margin-top:10px">{validation_group_rows}</div>
 		          </details>
 			          <div class="card-actions" style="margin-top:12px">
 		            {activate_btn}{exec_buttons}{remove_btn}
@@ -2609,6 +2693,11 @@ def render_page() -> str:
         if trigger == "patch_suggestion":
             patch_label = html.escape(patch_id or "patch")
             patch_tag = f'<span class="tag status-preview">Patch suggestion</span><a class="tag" href="/api/workspaces/{ws_id}/patches/{patch_label}/test-suggestions" target="_blank">{patch_label}</a>'
+        elif trigger == "validation_plan":
+            patch_label = html.escape(patch_id or "patch")
+            validation_group = html.escape(str(row.get("validation_group", "")))
+            score = html.escape(str(row.get("score", "")))
+            patch_tag = f'<span class="tag status-preview">Validation plan</span><a class="tag" href="/api/workspaces/{ws_id}/patches/{patch_label}/validation-plan" target="_blank">{patch_label}</a><span class="tag">{validation_group}</span><span class="tag">score {score}</span>'
         return f"""
         <div class="test-run-row" data-test-index="{index}" data-test-status="{status}" data-test-workspace="{ws_id}" data-test-command="{command.lower()}" data-test-trigger="{html.escape(trigger)}" data-test-patch="{html.escape(patch_id)}">
           <div>
@@ -2986,6 +3075,7 @@ def render_page() -> str:
         <select class="input" id="test-filter-trigger" onchange="filterTestRuns()">
           <option value="all">todos triggers</option>
           <option value="patch_suggestion">patch_suggestion</option>
+          <option value="validation_plan">validation_plan</option>
         </select>
         <input class="input" id="test-filter-q" placeholder="Filtrar comando..." oninput="filterTestRuns()" style="min-width:240px">
         <select class="input" id="test-filter-limit" onchange="reloadTestRunsWithLimit()">
@@ -3920,6 +4010,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(payload, status=200 if payload.get("ok") else 404)
             return
 
+        parsed_plan = parse_workspace_patch_path(path, "/validation-plan")
+        if parsed_plan:
+            ws_id, patch_id = parsed_plan
+            payload = validation_plan_for_patch(ws_id, patch_id)
+            self.send_json(payload, status=200 if payload.get("ok") else 404)
+            return
+
         if path.startswith("/api/workspaces/") and "/tests/runs/" in path:
             rest = path[len("/api/workspaces/"):]
             ws_id, test_run_id = rest.split("/tests/runs/", 1)
@@ -4320,6 +4417,36 @@ class Handler(BaseHTTPRequestHandler):
                 command_index = None
             res = run_test_command(ws_id, command_index=command_index, command=command, confirm=confirm)
             self.send_json(res, status=200 if res.get("status") in ("succeeded", "failed", "timed_out") else 400)
+            return
+
+        parsed_plan_preview = parse_workspace_patch_path(path, "/validation-plan/preview")
+        if parsed_plan_preview:
+            ws_id, patch_id = parsed_plan_preview
+            command = str(request_data.get("command", ""))
+            res = preview_validation_plan_command(ws_id, patch_id, command)
+            self.send_json(res, status=200 if res.get("ok") else 400)
+            return
+
+        parsed_plan_run = parse_workspace_patch_path(path, "/validation-plan/run")
+        if parsed_plan_run:
+            ws_id, patch_id = parsed_plan_run
+            raw_commands = request_data.get("commands", [])
+            if isinstance(raw_commands, str):
+                commands = [raw_commands]
+            elif isinstance(raw_commands, list):
+                commands = [str(cmd) for cmd in raw_commands]
+            else:
+                commands = []
+            confirm = str(request_data.get("confirm", "")).lower() in ("1", "true", "yes", "on")
+            res = run_validation_plan_commands(ws_id, patch_id, commands, confirm=confirm)
+            if content_type.startswith("application/json"):
+                self.send_json(res, status=200 if res.get("status") in ("succeeded", "failed") else 400)
+            elif res.get("status") in ("succeeded", "failed"):
+                self.send_response(303)
+                self.send_header("Location", "/")
+                self.end_headers()
+            else:
+                self.send_json(res, status=400)
             return
 
         if path.startswith("/api/workspaces/") and "/tests/runs/" in path and path.endswith("/rerun"):

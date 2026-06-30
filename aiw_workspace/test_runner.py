@@ -159,6 +159,8 @@ def run_test_command(
     rerun_of: str | None = None,
     trigger: str | None = None,
     patch_id: str | None = None,
+    validation_group: str | None = None,
+    validation_score: int | None = None,
 ) -> dict:
     if not confirm:
         return {"ok": False, "status": "blocked", "error": "confirm_required"}
@@ -219,6 +221,10 @@ def run_test_command(
         metadata["trigger"] = trigger
     if patch_id:
         metadata["patch_id"] = patch_id
+    if validation_group:
+        metadata["validation_group"] = validation_group
+    if validation_score is not None:
+        metadata["score"] = validation_score
     result = {"ok": status == "succeeded", **metadata}
     _write_json(run_dir / "metadata.json", metadata)
     _write_json(run_dir / "command.json", preview)

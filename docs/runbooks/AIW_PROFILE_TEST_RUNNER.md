@@ -56,6 +56,8 @@ Patches em preview podem sugerir testes usando apenas comandos ja presentes no p
 
 Profiles podem declarar `test_mappings` para mapear source roots/patterns a comandos de teste especificos.
 
+Profiles tambem podem declarar `validation_groups` para organizar comandos por tipo e prioridade no Validation Plan.
+
 ## Seguranca
 
 - sem comando arbitrario;

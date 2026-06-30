@@ -31,6 +31,10 @@ A ordem de decisao e:
 
 Sugestoes por mapping incluem `source`, `mapping_name` e `matched_files`.
 
+## Validation Plan
+
+`validation_groups` consome os mappings para montar uma sequencia ranqueada de comandos por patch.
+
 ## Cockpit
 
 O Cockpit mostra `Source Root Test Mapping` no card do workspace e detalha source/mapping/matched files em `Testes sugeridos` no painel de patches.

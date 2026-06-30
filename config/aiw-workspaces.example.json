@@ -16,7 +16,8 @@
           "python3 -m py_compile aiw_workspace/*.py",
           "bash -n scripts/aiw-cockpit",
           "bash -n scripts/aiw-runner-agent",
-          "bash -n scripts/aiw-tool-smoke"
+          "bash -n scripts/aiw-tool-smoke",
+          "./scripts/aiw-tool-smoke"
         ],
         "test_mappings": [
           {
@@ -53,6 +54,27 @@
             "name": "Documentation",
             "patterns": ["docs/**/*.md", "docs/*.md", "README.md"],
             "commands": []
+          }
+        ],
+        "validation_groups": [
+          {
+            "name": "Syntax",
+            "kind": "syntax",
+            "priority": 10,
+            "commands": [
+              "python3 -m py_compile aiw_runtime/*.py",
+              "python3 -m py_compile aiw_context/*.py",
+              "python3 -m py_compile aiw_workspace/*.py",
+              "bash -n scripts/aiw-cockpit",
+              "bash -n scripts/aiw-runner-agent",
+              "bash -n scripts/aiw-tool-smoke"
+            ]
+          },
+          {
+            "name": "Tool Runtime Smoke",
+            "kind": "smoke",
+            "priority": 30,
+            "commands": ["./scripts/aiw-tool-smoke"]
           }
         ],
         "blocked_paths": [

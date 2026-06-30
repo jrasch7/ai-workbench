@@ -21,6 +21,28 @@ DEFAULT_PROFILE = {
         "bash -n scripts/aiw-cockpit",
         "bash -n scripts/aiw-runner-agent",
         "bash -n scripts/aiw-tool-smoke",
+        "./scripts/aiw-tool-smoke",
+    ],
+    "validation_groups": [
+        {
+            "name": "Syntax",
+            "kind": "syntax",
+            "priority": 10,
+            "commands": [
+                "python3 -m py_compile aiw_runtime/*.py",
+                "python3 -m py_compile aiw_context/*.py",
+                "python3 -m py_compile aiw_workspace/*.py",
+                "bash -n scripts/aiw-cockpit",
+                "bash -n scripts/aiw-runner-agent",
+                "bash -n scripts/aiw-tool-smoke",
+            ],
+        },
+        {
+            "name": "Tool Runtime Smoke",
+            "kind": "smoke",
+            "priority": 30,
+            "commands": ["./scripts/aiw-tool-smoke"],
+        },
     ],
     "test_mappings": [
         {
@@ -95,6 +117,22 @@ def _merge_profile(profile: dict | None) -> dict:
                     "commands": [str(v) for v in item.get("commands", [])] if isinstance(item.get("commands"), list) else [],
                 })
             merged["test_mappings"] = mappings
+        elif "test_mappings" not in profile:
+            merged["test_mappings"] = []
+        if isinstance(profile.get("validation_groups"), list):
+            groups = []
+            for item in profile["validation_groups"]:
+                if not isinstance(item, dict):
+                    continue
+                groups.append({
+                    "name": str(item.get("name", "")),
+                    "kind": str(item.get("kind", "")),
+                    "priority": item.get("priority", 100),
+                    "commands": [str(v) for v in item.get("commands", [])] if isinstance(item.get("commands"), list) else [],
+                })
+            merged["validation_groups"] = groups
+        elif "validation_groups" not in profile:
+            merged["validation_groups"] = []
     return merged
 
 
@@ -306,6 +344,7 @@ def profile_for_stack(stack_type: str) -> dict:
         "source_roots": source_roots,
         "test_commands": test_commands,
         "test_mappings": [],
+        "validation_groups": [],
         "blocked_paths": list(DEFAULT_PROFILE["blocked_paths"]),
     }
 
@@ -338,6 +377,8 @@ def validate_test_command(command: str) -> dict:
     elif parts == ["pnpm", "run", "test"] or parts == ["pnpm", "run", "lint"] or parts == ["pnpm", "run", "build"]:
         ok = True
     elif parts == ["yarn", "test"] or parts == ["yarn", "lint"] or parts == ["yarn", "build"]:
+        ok = True
+    elif parts == ["./scripts/aiw-tool-smoke"]:
         ok = True
     return {"command": command, "ok": ok, "reason": "" if ok else "not_in_allowlist"}
 
@@ -459,6 +500,68 @@ def validate_test_mappings(root: Path, profile: dict) -> tuple[list[dict], list[
     return mappings, warnings, errors, source_roots_without_mapping
 
 
+def validate_validation_groups(profile: dict) -> tuple[list[dict], list[str], list[str]]:
+    allowed_kinds = {"syntax", "targeted", "smoke", "build", "docs", "full"}
+    warnings = []
+    errors = []
+    commands = [str(cmd) for cmd in profile.get("test_commands", [])]
+    groups = []
+
+    for raw_group in profile.get("validation_groups", []) or []:
+        if not isinstance(raw_group, dict):
+            errors.append("validation_group invalido: esperado objeto")
+            continue
+        name = str(raw_group.get("name") or "unnamed")
+        kind = str(raw_group.get("kind") or "targeted")
+        raw_priority = raw_group.get("priority", 100)
+        group_commands = [str(c) for c in raw_group.get("commands", [])] if isinstance(raw_group.get("commands"), list) else []
+        group_errors = []
+        group_warnings = []
+
+        try:
+            priority = int(raw_priority)
+        except Exception:
+            priority = 100
+            group_errors.append("priority_invalida")
+        if kind not in allowed_kinds:
+            group_errors.append(f"kind_desconhecido: {kind}")
+        if not group_commands:
+            group_warnings.append("grupo sem comandos")
+
+        command_checks = []
+        for command in group_commands:
+            in_profile = command in commands
+            validation = validate_test_command(command)
+            if not in_profile:
+                group_errors.append(f"command_not_in_profile: {command}")
+            if not validation.get("ok"):
+                group_errors.append(f"command_blocked: {command}: {validation.get('reason')}")
+            command_checks.append({
+                "command": command,
+                "in_profile": in_profile,
+                "ok": in_profile and bool(validation.get("ok")),
+                "reason": validation.get("reason", ""),
+            })
+
+        ok = not group_errors
+        groups.append({
+            "name": name,
+            "kind": kind,
+            "priority": priority,
+            "commands": group_commands,
+            "ok": ok,
+            "status": "valid" if ok else "invalid",
+            "command_checks": command_checks,
+            "warnings": group_warnings,
+            "errors": group_errors,
+        })
+        warnings.extend([f"{name}: {w}" for w in group_warnings])
+        errors.extend([f"{name}: {e}" for e in group_errors])
+
+    groups.sort(key=lambda group: (group.get("priority", 100), group.get("name", "")))
+    return groups, warnings, errors
+
+
 def validate_profile(workspace_id: str | None = None) -> dict:
     ws = resolve_workspace(workspace_id)
     if not ws:
@@ -485,7 +588,11 @@ def validate_profile(workspace_id: str | None = None) -> dict:
     warnings.extend(mapping_warnings)
     if mapping_errors:
         warnings.append("test_mappings contem entradas invalidas")
-    status = "valid" if not warnings and not mapping_errors else ("incomplete" if profile else "needs_attention")
+    validation_groups, group_warnings, group_errors = validate_validation_groups(profile)
+    warnings.extend(group_warnings)
+    if group_errors:
+        warnings.append("validation_groups contem entradas invalidas")
+    status = "valid" if not warnings and not mapping_errors and not group_errors else ("incomplete" if profile else "needs_attention")
     return {
         "ok": True,
         "workspace_id": ws["id"],
@@ -501,6 +608,10 @@ def validate_profile(workspace_id: str | None = None) -> dict:
         "valid_test_mapping_count": len([m for m in test_mappings if m.get("ok")]),
         "test_mapping_errors": mapping_errors,
         "source_roots_without_mapping": source_roots_without_mapping,
+        "validation_groups": validation_groups,
+        "validation_group_count": len(validation_groups),
+        "valid_validation_group_count": len([g for g in validation_groups if g.get("ok")]),
+        "validation_group_errors": group_errors,
         "source_root_checks": source_checks,
         "test_command_checks": command_checks,
         "warnings": warnings,

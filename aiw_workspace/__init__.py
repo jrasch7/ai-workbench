@@ -26,6 +26,11 @@ from .test_runner import (
     preview_patch_suggested_test,
     run_patch_suggested_test,
 )
+from .validation_plan import (
+    validation_plan_for_patch,
+    preview_validation_plan_command,
+    run_validation_plan_commands,
+)
 
 __all__ = [
     "DEFAULT_WORKSPACE",
@@ -50,4 +55,7 @@ __all__ = [
     "suggest_tests_for_patch",
     "preview_patch_suggested_test",
     "run_patch_suggested_test",
+    "validation_plan_for_patch",
+    "preview_validation_plan_command",
+    "run_validation_plan_commands",
 ]
