@@ -64,6 +64,12 @@ Endpoints:
   - `.aiw/patches/`.
 - Push via UI nao existe nesta versao.
 
+## Nota sobre artifacts por workspace
+
+Runs, patches e caches de contexto agora preferem o layout scoped em `.aiw/workspaces/<workspace_id>/`. Para o workspace `aiw`, o Cockpit le scoped primeiro e mantem fallback para os artifacts legados em `.aiw/runs/`, `.aiw/patches/` e `.aiw/context/`.
+
+O Git Control Panel bloqueia `.aiw/workspaces/` para evitar staging acidental de artifacts locais.
+
 ## Limitacoes
 
 - Sem push via UI.
@@ -102,6 +108,6 @@ Evoluir para execucao de agentes por workspace selecionado, mas apenas depois de
 
 1. adicionar allowlist explicita de workspaces externos;
 2. criar sandbox por workspace;
-3. separar contexto, runs e patches por workspace;
+3. evoluir sandbox de execucao para workspaces externos;
 4. adicionar preview de acoes antes de qualquer escrita;
 5. manter push/deploy fora da UI ate haver politica de aprovacao.

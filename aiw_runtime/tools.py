@@ -9,6 +9,27 @@ import difflib
 from pathlib import Path
 from .policy import validate_path, validate_write_path, validate_project_patch_path, validate_shell_command, get_root
 
+
+def _workspace_id() -> str:
+    value = os.environ.get("AIW_WORKSPACE_ID", "aiw").strip() or "aiw"
+    return "".join(ch if ch.isalnum() or ch in ("-", "_") else "-" for ch in value)[:80] or "aiw"
+
+
+def _patches_dir() -> Path:
+    return get_root() / ".aiw" / "workspaces" / _workspace_id() / "patches"
+
+
+def _legacy_patches_dir() -> Path:
+    return get_root() / ".aiw" / "patches"
+
+
+def _patch_file_for_read(patch_id: str) -> Path:
+    scoped = _patches_dir() / f"{patch_id}.json"
+    if scoped.exists():
+        return scoped
+    return _legacy_patches_dir() / f"{patch_id}.json"
+
+
 def directory_list(path: str = ".", max_depth: int = 2, limit: int = 100):
     try:
         resolved_path = validate_path(path)
@@ -200,7 +221,7 @@ def project_patch_preview(path: str, old_text: str, new_text: str, expected_repl
         diff_text = "".join(diff_lines)
 
         patch_id = time.strftime("%Y%m%dT%H%M%SZ-") + uuid.uuid4().hex[:8]
-        patches_dir = get_root() / ".aiw" / "patches"
+        patches_dir = _patches_dir()
         patches_dir.mkdir(parents=True, exist_ok=True)
 
         patch_data = {
@@ -212,7 +233,9 @@ def project_patch_preview(path: str, old_text: str, new_text: str, expected_repl
             "diff": diff_text,
             "replacements": occurrences,
             "status": "preview",
-            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "workspace_id": _workspace_id(),
+            "artifact_scope": "scoped"
         }
 
         patch_file = patches_dir / f"{patch_id}.json"
@@ -232,7 +255,7 @@ def project_patch_preview(path: str, old_text: str, new_text: str, expected_repl
 
 def project_patch_apply(patch_id: str):
     try:
-        patch_file = get_root() / ".aiw" / "patches" / f"{patch_id}.json"
+        patch_file = _patch_file_for_read(patch_id)
         if not patch_file.exists():
             return {"ok": False, "tool": "project_patch_apply", "error": "Patch não encontrado."}
 
@@ -273,7 +296,7 @@ def project_patch_apply(patch_id: str):
 
 def project_patch_rollback(patch_id: str):
     try:
-        patch_file = get_root() / ".aiw" / "patches" / f"{patch_id}.json"
+        patch_file = _patch_file_for_read(patch_id)
         if not patch_file.exists():
             return {"ok": False, "tool": "project_patch_rollback", "error": "Patch não encontrado."}
 

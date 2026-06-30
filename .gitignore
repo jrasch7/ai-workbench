@@ -56,3 +56,6 @@ reports/langgraph-smoke/*.md
 reports/provider-smoke/*.md
 .aiw/context/
 .aiw/workspaces.json
+.aiw/workspaces/*/runs/
+.aiw/workspaces/*/patches/
+.aiw/workspaces/*/context/

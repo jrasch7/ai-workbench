@@ -8,6 +8,47 @@ from urllib.parse import quote
 SENSITIVE_VALUE_PARTS = (".env", "litellm_master_key", "api_key", "client_secret", "private_key")
 SENSITIVE_NAME_PARTS = ("key", "token", "secret", "password", "credential", "private")
 
+
+def normalize_workspace_id(workspace_id: str | None = None) -> str:
+    value = (workspace_id or os.environ.get("AIW_WORKSPACE_ID") or "aiw").strip()
+    if not value:
+        return "aiw"
+    return "".join(ch if ch.isalnum() or ch in ("-", "_") else "-" for ch in value)[:80] or "aiw"
+
+
+def workspace_base(root: Path, workspace_id: str | None = None) -> Path:
+    return root / ".aiw" / "workspaces" / normalize_workspace_id(workspace_id)
+
+
+def workspace_context_dir(root: Path, workspace_id: str | None = None) -> Path:
+    return workspace_base(root, workspace_id) / "context"
+
+
+def workspace_runs_dirs(root: Path, workspace_id: str | None = None) -> list[tuple[str, Path]]:
+    ws_id = normalize_workspace_id(workspace_id)
+    dirs = [("scoped", workspace_base(root, ws_id) / "runs")]
+    if ws_id == "aiw":
+        dirs.append(("legacy", root / ".aiw" / "runs"))
+    return dirs
+
+
+def workspace_patches_dirs(root: Path, workspace_id: str | None = None) -> list[tuple[str, Path]]:
+    ws_id = normalize_workspace_id(workspace_id)
+    dirs = [("scoped", workspace_base(root, ws_id) / "patches")]
+    if ws_id == "aiw":
+        dirs.append(("legacy", root / ".aiw" / "patches"))
+    return dirs
+
+
+def _first_existing_context_file(root: Path, filename: str, workspace_id: str | None = None) -> Path:
+    ws_id = normalize_workspace_id(workspace_id)
+    scoped = workspace_context_dir(root, ws_id) / filename
+    if scoped.is_file():
+        return scoped
+    if ws_id == "aiw":
+        return root / ".aiw" / "context" / filename
+    return scoped
+
 def is_sensitive_path(path_str: str) -> bool:
     lower = path_str.lower()
     if ".env" in lower:
@@ -46,10 +87,11 @@ def read_text_safe(path: Path) -> str:
     except Exception:
         return ""
 
-def _build_search_index(root: Path, branch: str, head: str, out_path: Path):
+def _build_search_index(root: Path, branch: str, head: str, out_path: Path, workspace_id: str | None = None):
     docs = []
+    ws_id = normalize_workspace_id(workspace_id)
 
-    def add_doc(dtype: str, title: str, path: Path, rel_path: str, snippet: str, terms: list[str]):
+    def add_doc(dtype: str, title: str, path: Path, rel_path: str, snippet: str, terms: list[str], scope: str = "repo"):
         if is_sensitive_path(rel_path) or is_sensitive_path(title):
             return
         # Basic check for sensitive values in snippet before caching
@@ -72,7 +114,9 @@ def _build_search_index(root: Path, branch: str, head: str, out_path: Path):
             "mtime": mtime,
             "size": size,
             "terms": terms,
-            "snippet": snippet[:400]
+            "snippet": snippet[:400],
+            "workspace_id": ws_id,
+            "scope": scope
         })
 
     # README
@@ -91,8 +135,9 @@ def _build_search_index(root: Path, branch: str, head: str, out_path: Path):
             add_doc("doc", dpath.name, dpath, rel, text[:400].replace("\n", " "), [dpath.stem.lower()])
 
     # runs
-    runs_dir = root / ".aiw" / "runs"
-    if runs_dir.exists():
+    for scope, runs_dir in workspace_runs_dirs(root, ws_id):
+        if not runs_dir.exists():
+            continue
         for run_path in runs_dir.iterdir():
             if not run_path.is_dir(): continue
             rel_run = str(run_path.relative_to(root))
@@ -109,29 +154,30 @@ def _build_search_index(root: Path, branch: str, head: str, out_path: Path):
             summary_path = run_path / "summary.md"
             if summary_path.is_file():
                 text = read_text_safe(summary_path)
-                add_doc("run", title, summary_path, str(summary_path.relative_to(root)), text[:400].replace("\n", " "), ["run", "summary", run_path.name.lower()])
+                add_doc("run", title, summary_path, str(summary_path.relative_to(root)), text[:400].replace("\n", " "), ["run", "summary", run_path.name.lower()], scope)
 
             # index commands.log
             commands_path = run_path / "commands.log"
             if commands_path.is_file():
                 text = read_text_safe(commands_path)
-                add_doc("run", f"{title} (Commands)", commands_path, str(commands_path.relative_to(root)), text[:400].replace("\n", " "), ["run", "commands", "log"])
+                add_doc("run", f"{title} (Commands)", commands_path, str(commands_path.relative_to(root)), text[:400].replace("\n", " "), ["run", "commands", "log"], scope)
 
             # index tool-traces.jsonl
             traces_path = run_path / "tool-traces.jsonl"
             if traces_path.is_file():
                 text = read_text_safe(traces_path)
-                add_doc("run", f"{title} (Tools)", traces_path, str(traces_path.relative_to(root)), text[:400].replace("\n", " "), ["run", "tools", "traces"])
+                add_doc("run", f"{title} (Tools)", traces_path, str(traces_path.relative_to(root)), text[:400].replace("\n", " "), ["run", "tools", "traces"], scope)
 
             # index messages.json
             msgs_path = run_path / "messages.json"
             if msgs_path.is_file():
                 text = read_text_safe(msgs_path)
-                add_doc("run", f"{title} (Messages)", msgs_path, str(msgs_path.relative_to(root)), text[:400].replace("\n", " "), ["run", "messages", "llm"])
+                add_doc("run", f"{title} (Messages)", msgs_path, str(msgs_path.relative_to(root)), text[:400].replace("\n", " "), ["run", "messages", "llm"], scope)
 
     # patches
-    patches_dir = root / ".aiw" / "patches"
-    if patches_dir.exists():
+    for scope, patches_dir in workspace_patches_dirs(root, ws_id):
+        if not patches_dir.exists():
+            continue
         for ppath in patches_dir.glob("*.json"):
             if not ppath.is_file(): continue
             try:
@@ -141,7 +187,7 @@ def _build_search_index(root: Path, branch: str, head: str, out_path: Path):
                 reason = data.get("reason", "")
                 diff = data.get("diff", "")
                 snip = (reason + " " + diff)[:400].replace("\n", " ")
-                add_doc("patch", title, ppath, str(ppath.relative_to(root)), snip, ["patch", target.lower()])
+                add_doc("patch", title, ppath, str(ppath.relative_to(root)), snip, ["patch", target.lower()], scope)
             except: pass
 
     # tasks
@@ -165,6 +211,8 @@ def _build_search_index(root: Path, branch: str, head: str, out_path: Path):
         "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "repo_head": head,
         "branch": branch,
+        "workspace_id": ws_id,
+        "artifact_scope": "scoped",
         "document_count": len(docs),
         "documents": docs
     }
@@ -173,18 +221,17 @@ def _build_search_index(root: Path, branch: str, head: str, out_path: Path):
     return index_data
 
 
-def _build_context_pack(root: Path, branch: str, head: str, out_path: Path):
+def _build_context_pack(root: Path, branch: str, head: str, out_path: Path, workspace_id: str | None = None):
+    ws_id = normalize_workspace_id(workspace_id)
     docs_dir = root / "docs"
     runbooks_dir = docs_dir / "runbooks"
     arch_dir = docs_dir / "architecture"
-    runs_dir = root / ".aiw" / "runs"
-    patches_dir = root / ".aiw" / "patches"
 
     docs_count = len(list(docs_dir.rglob("*.md"))) if docs_dir.is_dir() else 0
     runbooks_count = len(list(runbooks_dir.glob("*.md"))) if runbooks_dir.is_dir() else 0
     arch_count = len(list(arch_dir.glob("*.md"))) if arch_dir.is_dir() else 0
-    runs_count = len([p for p in runs_dir.iterdir() if p.is_dir()]) if runs_dir.is_dir() else 0
-    patches_count = len(list(patches_dir.glob("*.json"))) if patches_dir.is_dir() else 0
+    runs_count = sum(len([p for p in d.iterdir() if p.is_dir()]) for _, d in workspace_runs_dirs(root, ws_id) if d.is_dir())
+    patches_count = sum(len(list(d.glob("*.json"))) for _, d in workspace_patches_dirs(root, ws_id) if d.is_dir())
     readme_ok = (root / "README.md").is_file()
 
     sources = []
@@ -212,6 +259,8 @@ def _build_context_pack(root: Path, branch: str, head: str, out_path: Path):
     pack_data = {
         "version": 1,
         "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "workspace_id": ws_id,
+        "artifact_scope": "scoped",
         "repo": {
             "branch": branch,
             "head": head
@@ -234,8 +283,9 @@ def _build_context_pack(root: Path, branch: str, head: str, out_path: Path):
     out_path.write_text(json.dumps(pack_data, indent=2, ensure_ascii=False))
     return pack_data
 
-def rebuild_indexes(root_path: Path) -> dict:
-    ctx_dir = root_path / ".aiw" / "context"
+def rebuild_indexes(root_path: Path, workspace_id: str | None = None) -> dict:
+    ws_id = normalize_workspace_id(workspace_id)
+    ctx_dir = workspace_context_dir(root_path, ws_id)
     ctx_dir.mkdir(parents=True, exist_ok=True)
 
     branch = current_git_branch(root_path)
@@ -245,14 +295,20 @@ def rebuild_indexes(root_path: Path) -> dict:
     pack_path = ctx_dir / "context-pack.json"
 
     try:
-        _build_search_index(root_path, branch, head, idx_path)
-        _build_context_pack(root_path, branch, head, pack_path)
-        return {"ok": True, "message": "Index and Context Pack rebuilt successfully."}
+        _build_search_index(root_path, branch, head, idx_path, ws_id)
+        _build_context_pack(root_path, branch, head, pack_path, ws_id)
+        return {
+            "ok": True,
+            "message": "Index and Context Pack rebuilt successfully.",
+            "workspace_id": ws_id,
+            "artifact_scope": "scoped",
+            "context_dir": str(ctx_dir),
+        }
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
-def get_search_index(root_path: Path) -> dict | None:
-    idx_path = root_path / ".aiw" / "context" / "search-index.json"
+def get_search_index(root_path: Path, workspace_id: str | None = None) -> dict | None:
+    idx_path = _first_existing_context_file(root_path, "search-index.json", workspace_id)
     if not idx_path.is_file():
         return None
     try:
@@ -260,8 +316,8 @@ def get_search_index(root_path: Path) -> dict | None:
     except:
         return None
 
-def get_context_pack(root_path: Path) -> dict | None:
-    pack_path = root_path / ".aiw" / "context" / "context-pack.json"
+def get_context_pack(root_path: Path, workspace_id: str | None = None) -> dict | None:
+    pack_path = _first_existing_context_file(root_path, "context-pack.json", workspace_id)
     if not pack_path.is_file():
         return None
     try:
@@ -270,11 +326,12 @@ def get_context_pack(root_path: Path) -> dict | None:
         return None
 
 
-def build_agent_context(root_path: Path) -> dict:
-    pack = get_context_pack(root_path)
+def build_agent_context(root_path: Path, workspace_id: str | None = None) -> dict:
+    ws_id = normalize_workspace_id(workspace_id)
+    pack = get_context_pack(root_path, ws_id)
     if not pack:
-        res = rebuild_indexes(root_path)
-        pack = get_context_pack(root_path)
+        res = rebuild_indexes(root_path, ws_id)
+        pack = get_context_pack(root_path, ws_id)
 
     if not pack:
         return {'enabled': False, 'text': '', 'json': {}, 'md': ''}
@@ -312,6 +369,7 @@ def build_agent_context(root_path: Path) -> dict:
     context_json = {
         "enabled": True,
         "source": "context-pack",
+        "workspace_id": ws_id,
         "pack_created_at": pack.get("created_at"),
         "repo_head": pack.get("repo", {}).get("head", ""),
         "sources": sources
@@ -331,9 +389,9 @@ def build_agent_context(root_path: Path) -> dict:
         "md": "\n".join(md_lines)
     }
 
-def best_effort_rebuild(root_path: Path, run_dir: Path):
+def best_effort_rebuild(root_path: Path, run_dir: Path, workspace_id: str | None = None):
     try:
-        res = rebuild_indexes(root_path)
+        res = rebuild_indexes(root_path, workspace_id)
         status = "succeeded" if res.get("ok") else "failed"
         log = f"Context index rebuild: {status}\n{res}"
     except Exception as e:

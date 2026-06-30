@@ -44,6 +44,7 @@ from pathlib import Path
 import traceback
 
 ROOT = Path(os.environ.get("AIW_ROOT", Path.cwd())).resolve()
+WORKSPACE_ID = os.environ.get("AIW_WORKSPACE_ID", "aiw").strip() or "aiw"
 
 # Add root to sys.path to import aiw_runtime
 sys.path.insert(0, str(ROOT))
@@ -79,7 +80,7 @@ def run_agent():
     task_file = tasks[0]
     task_id = task_file.stem
     ts = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-    run_dir = ROOT / ".aiw" / "runs" / f"{ts}-{task_id}"
+    run_dir = ROOT / ".aiw" / "workspaces" / WORKSPACE_ID / "runs" / f"{ts}-{task_id}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
     model = os.environ.get("AIW_MODEL", "dev-coder")
@@ -89,7 +90,7 @@ def run_agent():
 
     use_ctx = os.environ.get("AIW_USE_CONTEXT_PACK", "").lower() in ("1", "true", "yes", "on")
     if use_ctx and build_agent_context:
-        ctx_data = build_agent_context(ROOT)
+        ctx_data = build_agent_context(ROOT, WORKSPACE_ID)
         if ctx_data.get("enabled"):
             task_content = ctx_data["text"] + "\n\n" + task_content
             (run_dir / "context-used.json").write_text(json.dumps(ctx_data["json"], indent=2, ensure_ascii=False), encoding="utf-8")
@@ -106,6 +107,8 @@ def run_agent():
         "task_path": str(task_file),
         "log_path": str(run_dir / "commands.log"),
         "model": model,
+        "workspace_id": WORKSPACE_ID,
+        "artifact_scope": "scoped",
     }
 
     with open(run_dir / "status.json", "w") as f:
@@ -146,6 +149,8 @@ def run_agent():
             "ok": True,
             "task_id": task_id,
             "run_id": run_dir.name,
+            "workspace_id": WORKSPACE_ID,
+            "artifact_scope": "scoped",
             "evidence": [
                 "task_read",
                 "fake_plan_recorded",
@@ -288,7 +293,7 @@ def run_agent():
     shutil.move(str(task_file), str(review_dir / task_file.name))
 
     if best_effort_rebuild:
-        best_effort_rebuild(ROOT, run_dir)
+        best_effort_rebuild(ROOT, run_dir, WORKSPACE_ID)
 
     print(f"STATUS: REVIEW\nTASK_ID: {task_id}\nRUN_DIR: {run_dir}")
 

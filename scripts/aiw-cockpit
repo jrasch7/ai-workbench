@@ -26,7 +26,15 @@ OPEN_BROWSER = os.environ.get("AIW_COCKPIT_OPEN_BROWSER", "0") == "1"
 import sys
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from aiw_context import rebuild_indexes, get_search_index, get_context_pack
+from aiw_context import (
+    rebuild_indexes,
+    get_search_index,
+    get_context_pack,
+    normalize_workspace_id,
+    workspace_context_dir,
+    workspace_runs_dirs,
+    workspace_patches_dirs,
+)
 
 TASK_QUEUES = ["inbox", "running", "blocked", "queued", "done", "failed"]
 
@@ -85,26 +93,33 @@ def read_summary_first_lines(run_dir: Path, lines: int = 3) -> str:
     return " ".join(parts[:lines])
 
 
-def list_runs(limit: int = 25) -> list[dict]:
-    runs_dir = ROOT / ".aiw" / "runs"
-    if not runs_dir.exists():
-        return []
-
+def list_runs(limit: int = 25, workspace_id: str | None = None) -> list[dict]:
+    workspace_id = active_workspace_id(workspace_id)
     rows = []
-    for run in sorted([p for p in runs_dir.iterdir() if p.is_dir()], reverse=True)[:limit]:
-        status = read_json(run / "status.json")
-        rows.append({
-            "run": str(run.relative_to(ROOT)),
-            "task_id": read_task_id(run),
-            "title": read_task_title(run),
-            "status": status.get("status", "unknown"),
-            "llm_status": status.get("llm_status", "-"),
-            "doc_status": status.get("doc_status", "-"),
-            "generated_file": status.get("generated_file", ""),
-            "model": status.get("model", "-"),
-            "summary": read_summary_first_lines(run),
-        })
-    return rows
+    seen = set()
+    for scope, runs_dir in workspace_runs_dirs(ROOT, workspace_id):
+        if not runs_dir.exists():
+            continue
+        for run in [p for p in runs_dir.iterdir() if p.is_dir()]:
+            if run.resolve() in seen:
+                continue
+            seen.add(run.resolve())
+            status = read_json(run / "status.json")
+            rows.append({
+                "run": str(run.relative_to(ROOT)),
+                "task_id": read_task_id(run),
+                "title": read_task_title(run),
+                "status": status.get("status", "unknown"),
+                "llm_status": status.get("llm_status", "-"),
+                "doc_status": status.get("doc_status", "-"),
+                "generated_file": status.get("generated_file", ""),
+                "model": status.get("model", "-"),
+                "summary": read_summary_first_lines(run),
+                "workspace_id": status.get("workspace_id", workspace_id),
+                "artifact_scope": status.get("artifact_scope", scope),
+            })
+    rows.sort(key=lambda row: row["run"], reverse=True)
+    return rows[:limit]
 
 
 def short_git_head() -> str:
@@ -158,6 +173,7 @@ FORBIDDEN_GIT_PARTS = (
     ".aiw/backups/",
     ".aiw/generated/",
     ".aiw/patches/",
+    ".aiw/workspaces/",
 )
 
 
@@ -286,6 +302,34 @@ def workspace_path_or_error(workspace_id: str) -> tuple[Path | None, dict | None
     return path, None
 
 
+def active_workspace_id(workspace_id: str | None = None) -> str:
+    if workspace_id:
+        return normalize_workspace_id(workspace_id)
+    env_ws = os.environ.get("AIW_WORKSPACE_ID", "").strip()
+    if env_ws:
+        return normalize_workspace_id(env_ws)
+    return normalize_workspace_id(load_workspaces_config().get("active", "aiw"))
+
+
+def artifact_scope_label(path: Path, workspace_id: str | None = None) -> str:
+    ws_id = active_workspace_id(workspace_id)
+    scoped_base = (ROOT / ".aiw" / "workspaces" / ws_id).resolve()
+    try:
+        path.resolve().relative_to(scoped_base)
+        return "scoped"
+    except ValueError:
+        return "legacy"
+
+
+def iter_artifact_dirs(kind: str, workspace_id: str | None = None) -> list[tuple[str, Path]]:
+    ws_id = active_workspace_id(workspace_id)
+    if kind == "runs":
+        return workspace_runs_dirs(ROOT, ws_id)
+    if kind == "patches":
+        return workspace_patches_dirs(ROOT, ws_id)
+    return []
+
+
 def git_status_files(path: Path) -> list[dict]:
     proc = git_run(path, ["status", "--porcelain"], timeout=10)
     files = []
@@ -358,27 +402,34 @@ def validate_branch_name(name: str) -> bool:
     return True
 
 
-def list_patch_proposals(limit: int = 30) -> list[dict]:
-    patches_dir = ROOT / ".aiw" / "patches"
-    if not patches_dir.exists():
-        return []
-
+def list_patch_proposals(limit: int = 30, workspace_id: str | None = None) -> list[dict]:
+    workspace_id = active_workspace_id(workspace_id)
     proposals = []
-    for patch_file in sorted(patches_dir.glob("*.json"), reverse=True)[:limit]:
-        data = read_json(patch_file)
-        if not isinstance(data, dict):
+    seen = set()
+    for scope, patches_dir in iter_artifact_dirs("patches", workspace_id):
+        if not patches_dir.exists():
             continue
-        patch_id = data.get("patch_id") or patch_file.stem
-        proposals.append({
-            "patch_id": str(patch_id),
-            "path": str(data.get("path", "")),
-            "status": str(data.get("status", "unknown")),
-            "reason": str(data.get("reason", "")),
-            "diff": str(data.get("diff", "")),
-            "run_id": str(data.get("run_id") or data.get("run_path") or ""),
-            "created_at": str(data.get("created_at", "")),
-        })
-    return proposals
+        for patch_file in sorted(patches_dir.glob("*.json"), reverse=True):
+            data = read_json(patch_file)
+            if not isinstance(data, dict):
+                continue
+            patch_id = str(data.get("patch_id") or patch_file.stem)
+            if patch_id in seen:
+                continue
+            seen.add(patch_id)
+            proposals.append({
+                "patch_id": patch_id,
+                "path": str(data.get("path", "")),
+                "status": str(data.get("status", "unknown")),
+                "reason": str(data.get("reason", "")),
+                "diff": str(data.get("diff", "")),
+                "run_id": str(data.get("run_id") or data.get("run_path") or ""),
+                "created_at": str(data.get("created_at", "")),
+                "workspace_id": str(data.get("workspace_id", workspace_id)),
+                "artifact_scope": str(data.get("artifact_scope", scope)),
+            })
+    proposals.sort(key=lambda row: row.get("created_at") or row["patch_id"], reverse=True)
+    return proposals[:limit]
 
 
 def diff_summary(diff_text: str) -> str:
@@ -506,13 +557,17 @@ def summarize_output(tool_name: str, result: dict) -> str:
     return safe_json_text(result, limit=320)
 
 
-def patch_status_for_id(patch_id: str) -> dict:
+def patch_status_for_id(patch_id: str, workspace_id: str | None = None) -> dict:
     if not patch_id:
         return {}
-    patch_file = ROOT / ".aiw" / "patches" / f"{patch_id}.json"
-    if patch_file.exists():
-        data = read_json(patch_file)
-        return mask_payload(data) if isinstance(data, dict) else {}
+    for scope, patches_dir in iter_artifact_dirs("patches", workspace_id):
+        patch_file = patches_dir / f"{patch_id}.json"
+        if patch_file.exists():
+            data = read_json(patch_file)
+            if isinstance(data, dict):
+                data.setdefault("artifact_scope", scope)
+                data.setdefault("workspace_id", active_workspace_id(workspace_id))
+                return mask_payload(data)
     return {}
 
 
@@ -837,9 +892,10 @@ def classify_run(row: dict) -> dict:
 
 
 
-def local_lexical_search(query: str) -> list[dict]:
+def local_lexical_search(query: str, workspace_id: str | None = None) -> list[dict]:
     results = []
     q_lower = query.lower()
+    workspace_id = active_workspace_id(workspace_id)
 
     def add_res(rtype, title, label, snip, url, score):
         if SENSITIVE_VALUE_PARTS and any(s in snip.lower() for s in SENSITIVE_VALUE_PARTS):
@@ -850,8 +906,9 @@ def local_lexical_search(query: str) -> list[dict]:
         })
 
     # Search runs (summary.md, tool-traces.jsonl, commands.log)
-    runs_dir = ROOT / ".aiw" / "runs"
-    if runs_dir.exists():
+    for scope, runs_dir in iter_artifact_dirs("runs", workspace_id):
+        if not runs_dir.exists():
+            continue
         for run_path in runs_dir.iterdir():
             if not run_path.is_dir(): continue
             rel_run = str(run_path.relative_to(ROOT))
@@ -874,7 +931,7 @@ def local_lexical_search(query: str) -> list[dict]:
                     except Exception:
                         pass
             if score > 0:
-                add_res("run", title, f"Run {run_path.name}", snip or "...", f"/run?path={quote(rel_run)}", score)
+                add_res("run", title, f"Run {run_path.name} · {scope}", snip or "...", f"/run?path={quote(rel_run)}", score)
 
     # Search tasks
     tasks_dir = ROOT / ".aiw" / "tasks"
@@ -895,8 +952,9 @@ def local_lexical_search(query: str) -> list[dict]:
                     except Exception: pass
 
     # Search patches
-    patches_dir = ROOT / ".aiw" / "patches"
-    if patches_dir.exists():
+    for scope, patches_dir in iter_artifact_dirs("patches", workspace_id):
+        if not patches_dir.exists():
+            continue
         for ppath in patches_dir.glob("*.json"):
             try:
                 data = read_json(ppath)
@@ -917,7 +975,7 @@ def local_lexical_search(query: str) -> list[dict]:
                     score += 5
                     if not snip: snip = diff[max(0, idx2-40):idx2+100]
                 if score > 0:
-                    add_res("patch", f"Patch {ppath.stem}", "Patch", snip, "/", score)
+                    add_res("patch", f"Patch {ppath.stem}", f"Patch · {scope}", snip, "/", score)
             except Exception: pass
 
     # Search docs and README
@@ -944,13 +1002,13 @@ def local_lexical_search(query: str) -> list[dict]:
     return results[:50]
 
 
-def context_health() -> dict:
+def context_health(workspace_id: str | None = None) -> dict:
+    workspace_id = active_workspace_id(workspace_id)
     docs_dir = ROOT / "docs"
     runbooks_dir = ROOT / "docs" / "runbooks"
     architecture_dir = ROOT / "docs" / "architecture"
     roadmap_dir = ROOT / "docs" / "roadmap"
     model_bench_dir = ROOT / "docs" / "model-bench"
-    runs_dir = ROOT / ".aiw" / "runs"
     docs_count = len(list(docs_dir.rglob("*.md"))) if docs_dir.is_dir() else 0
     runbook_files = sorted(runbooks_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True) if runbooks_dir.is_dir() else []
     arch_files = list(architecture_dir.glob("*.md")) if architecture_dir.is_dir() else []
@@ -963,8 +1021,10 @@ def context_health() -> dict:
         "scripts/aiw-runner-once",
     ]
     runs = []
-    if runs_dir.exists():
-        runs = sorted([p for p in runs_dir.iterdir() if p.is_dir()], reverse=True)
+    for scope, runs_dir in iter_artifact_dirs("runs", workspace_id):
+        if runs_dir.exists():
+            runs.extend([p for p in runs_dir.iterdir() if p.is_dir()])
+    runs = sorted(runs, reverse=True)
 
     last_offline = "-"
     last_online = "-"
@@ -991,7 +1051,7 @@ def context_health() -> dict:
     ]
     score = sum(1 for ok in checks_ok if ok)
 
-    idx = get_search_index(ROOT)
+    idx = get_search_index(ROOT, workspace_id)
     if idx:
         indexable_docs = idx.get("document_count", 0)
         indexable_runs = len([d for d in idx.get("documents", []) if d["type"] == "run"])
@@ -1007,13 +1067,16 @@ def context_health() -> dict:
     else:
         indexable_docs = docs_count + (1 if (ROOT / "README.md").is_file() else 0)
         indexable_runs = len(runs)
-        indexable_patches = len(list((ROOT / ".aiw" / "patches").glob("*.json"))) if (ROOT / ".aiw" / "patches").exists() else 0
+        indexable_patches = sum(len(list(d.glob("*.json"))) for _, d in iter_artifact_dirs("patches", workspace_id) if d.exists())
         last_index_update = "-"
         context_status = "Sem índice, usando varredura direta"
         source_label = "direct"
 
     return {
         "README": (ROOT / "README.md").is_file(),
+        "workspace_id": workspace_id,
+        "artifact_scope": "scoped",
+        "context_dir": str(workspace_context_dir(ROOT, workspace_id)),
         "docs": docs_dir.is_dir(),
         "docs_count": docs_count,
         "runbooks": runbooks_dir.is_dir(),
@@ -1074,10 +1137,12 @@ def list_inbox_tasks(limit: int = 20) -> list[dict]:
 
 
 def status_payload() -> dict:
+    workspace_id = active_workspace_id()
     return {
         "root": str(ROOT),
+        "workspace_id": workspace_id,
         "queues": {q: count_tasks(q) for q in TASK_QUEUES},
-        "runs": list_runs(25),
+        "runs": list_runs(25, workspace_id),
     }
 
 
@@ -2141,6 +2206,7 @@ def render_page() -> str:
             '<span class="tag status-failed">Failed Tool</span>' if cls["failed_tool"] else "",
             '<span class="tag status-failed">Failed</span>' if cls["failed"] else "",
             '<span class="tag status-offline">Offline</span>' if cls["mode"] == "Offline" else "",
+            f'<span class="tag">{html.escape(row.get("artifact_scope", "legacy"))}</span>',
         ]
         return f"""
         <div class="mini-run" data-run-filter="{html.escape(filter_data)}">
@@ -2175,6 +2241,8 @@ def render_page() -> str:
         diff = html.escape(patch["diff"] or "")
         run_assoc = html.escape(patch["run_id"] or "sem run associado")
         created = html.escape(patch.get("created_at") or "-")
+        scope = html.escape(patch.get("artifact_scope") or "legacy")
+        ws_id = html.escape(patch.get("workspace_id") or active_workspace)
         diff_stats = html.escape(diff_summary(patch["diff"]))
         apply_btn = ""
         if patch["status"] == "preview":
@@ -2194,6 +2262,8 @@ def render_page() -> str:
           <div class="card-meta">
             <span class="tag">{created}</span>
             <span class="tag">{diff_stats}</span>
+            <span class="tag">{ws_id}</span>
+            <span class="tag">{scope}</span>
           </div>
           <details>
             <summary style="cursor:pointer;color:var(--muted);font-size:12px">Unified diff log</summary>
@@ -2213,9 +2283,12 @@ def render_page() -> str:
     health_rows = f"""
             <div class="context-status">{html.escape(health["context_status"])} · {html.escape(health["score"])}</div>
       <div style="margin-bottom:12px;display:flex;justify-content:space-between">
-        <a href="/api/context/pack" target="_blank" class="api-link" style="font-size:12px">Ver fontes de contexto</a>
+        <a href="/api/context/pack?workspace={html.escape(active_workspace)}" target="_blank" class="api-link" style="font-size:12px">Ver fontes de contexto</a>
         <button class="btn btn-ghost" onclick="rebuildContextIndex(event)" style="padding:4px 8px;font-size:11px">Reconstruir índice</button>
       </div>
+      <div class="health-row"><span>Workspace ativo</span><span class="tag">{html.escape(active_workspace)}</span></div>
+      <div class="health-row"><span>Artifact scope</span><span class="tag">{html.escape(health["artifact_scope"])}</span></div>
+      <div class="health-row"><span>Context cache</span><span class="tag">{html.escape(health["context_dir"])}</span></div>
       <div class="health-row"><span>README</span>{health_tag(health["README"])}</div>
       <div class="health-row"><span>Docs indexáveis</span><span class="tag">{health["indexable_docs"]}</span></div>
       <div class="health-row"><span>Runs indexáveis</span><span class="tag">{health["indexable_runs"]}</span></div>
@@ -2690,7 +2763,7 @@ def render_page() -> str:
       btn.innerText = "Reconstruindo...";
       btn.disabled = true;
       try {{
-        const res = await fetch('/api/context/rebuild', {{method: 'POST'}});
+        const res = await fetch('/api/context/rebuild?workspace={html.escape(active_workspace)}', {{method: 'POST'}});
         const data = await res.json();
         if(res.ok) {{
            location.reload();
@@ -2712,7 +2785,7 @@ def render_page() -> str:
           document.getElementById('search-empty').style.display = 'none';
           return;
       }}
-      const res = await fetch('/api/search?q=' + encodeURIComponent(q));
+      const res = await fetch('/api/search?q=' + encodeURIComponent(q) + '&workspace={html.escape(active_workspace)}');
       const data = await res.json();
       const container = document.getElementById('search-results');
       const sourceLabel = document.getElementById('search-source');
@@ -2779,6 +2852,14 @@ def render_page() -> str:
 </html>"""
 
 
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def safe_run_dir(raw_path: str) -> Path | None:
     if not raw_path:
         return None
@@ -2786,15 +2867,15 @@ def safe_run_dir(raw_path: str) -> Path | None:
     if raw_path.startswith("/") or ".." in raw_path:
         return None
 
-    if not raw_path.startswith(".aiw/runs/"):
+    allowed_roots = [(ROOT / ".aiw" / "runs").resolve()]
+    scoped_root = (ROOT / ".aiw" / "workspaces" / active_workspace_id() / "runs").resolve()
+    allowed_roots.insert(0, scoped_root)
+
+    if not (raw_path.startswith(".aiw/runs/") or raw_path.startswith(".aiw/workspaces/")):
         return None
 
     run_dir = (ROOT / raw_path).resolve()
-    runs_root = (ROOT / ".aiw" / "runs").resolve()
-
-    try:
-        run_dir.relative_to(runs_root)
-    except ValueError:
+    if not any(_is_relative_to(run_dir, root) for root in allowed_roots):
         return None
 
     if not run_dir.exists() or not run_dir.is_dir():
@@ -2809,8 +2890,10 @@ def resolve_run_ref(raw_ref: str) -> Path | None:
         return None
     if run_ref.startswith(".aiw/runs/"):
         return safe_run_dir(run_ref)
+    if run_ref.startswith(".aiw/workspaces/"):
+        return safe_run_dir(run_ref)
 
-    runs_root = (ROOT / ".aiw" / "runs").resolve()
+    runs_root = (ROOT / ".aiw" / "workspaces" / active_workspace_id() / "runs").resolve()
     run_dir = (runs_root / run_ref).resolve()
     try:
         run_dir.relative_to(runs_root)
@@ -2875,6 +2958,7 @@ def run_once_from_cockpit(llm_enabled: str = "1", model: str = "dev-gemini-fast"
     env = os.environ.copy()
     env["AIW_LLM_ENABLED"] = enabled
     env["AIW_MODEL"] = model
+    env["AIW_WORKSPACE_ID"] = active_workspace_id()
 
     try:
         completed = subprocess.run(
@@ -2910,6 +2994,7 @@ def run_agent_from_cockpit(model: str = "dev-coder", offline: bool = False) -> t
 
     env = os.environ.copy()
     env["AIW_MODEL"] = model
+    env["AIW_WORKSPACE_ID"] = active_workspace_id()
     if offline:
         env["AIW_AGENT_OFFLINE"] = "1"
 
@@ -3317,12 +3402,13 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/search") and self.command == "GET":
             query = parse_qs(urlparse(self.path).query)
             q = query.get("q", [""])[0].strip()
+            workspace_id = active_workspace_id(query.get("workspace", [""])[0])
             if len(q) < 2:
-                self.send_json({"query": q, "count": 0, "results": []})
+                self.send_json({"query": q, "workspace_id": workspace_id, "count": 0, "results": []})
                 return
 
             q_lower = q.lower()
-            idx = get_search_index(ROOT)
+            idx = get_search_index(ROOT, workspace_id)
             if idx:
                 results = []
                 for doc in idx.get("documents", []):
@@ -3341,24 +3427,30 @@ class Handler(BaseHTTPRequestHandler):
                             "path_label": doc.get("id", ""),
                             "snippet": doc.get("snippet", ""),
                             "url": url,
-                            "score": score
+                            "score": score,
+                            "workspace_id": doc.get("workspace_id", workspace_id),
+                            "artifact_scope": doc.get("scope", doc.get("artifact_scope", "")),
                         })
                 results.sort(key=lambda x: x["score"], reverse=True)
                 results = results[:50]
-                self.send_json({"query": q, "count": len(results), "source": "cache", "results": results})
+                self.send_json({"query": q, "workspace_id": workspace_id, "count": len(results), "source": "cache", "results": results})
                 return
 
             # Fallback to direct search
-            results = local_lexical_search(q)
-            self.send_json({"query": q, "count": len(results), "source": "direct", "results": results})
+            results = local_lexical_search(q, workspace_id)
+            self.send_json({"query": q, "workspace_id": workspace_id, "count": len(results), "source": "direct", "results": results})
             return
 
         if path == "/api/context/status":
-            self.send_json(context_health())
+            query = parse_qs(urlparse(self.path).query)
+            workspace_id = active_workspace_id(query.get("workspace", [""])[0])
+            self.send_json(context_health(workspace_id))
             return
 
         if path == "/api/context/pack":
-            pack = get_context_pack(ROOT)
+            query = parse_qs(urlparse(self.path).query)
+            workspace_id = active_workspace_id(query.get("workspace", [""])[0])
+            pack = get_context_pack(ROOT, workspace_id)
             if pack:
                 self.send_json(pack)
             else:
@@ -3610,7 +3702,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/context/rebuild":
-            res = rebuild_indexes(ROOT)
+            query = parse_qs(urlparse(self.path).query)
+            workspace_id = active_workspace_id(query.get("workspace", [""])[0])
+            res = rebuild_indexes(ROOT, workspace_id)
             if res.get("ok"):
                 self.send_json(res)
             else:
@@ -3738,6 +3832,7 @@ class Handler(BaseHTTPRequestHandler):
                 if str(ROOT) not in sys.path:
                     sys.path.insert(0, str(ROOT))
                 from aiw_runtime.tools import project_patch_apply
+                os.environ["AIW_WORKSPACE_ID"] = active_workspace_id()
                 res = project_patch_apply(patch_id)
                 ok = res.get("ok", False)
                 output = res.get("error", "Unknown error")
@@ -3751,6 +3846,7 @@ class Handler(BaseHTTPRequestHandler):
                 if str(ROOT) not in sys.path:
                     sys.path.insert(0, str(ROOT))
                 from aiw_runtime.tools import project_patch_rollback
+                os.environ["AIW_WORKSPACE_ID"] = active_workspace_id()
                 res = project_patch_rollback(patch_id)
                 ok = res.get("ok", False)
                 output = res.get("error", "Unknown error")
