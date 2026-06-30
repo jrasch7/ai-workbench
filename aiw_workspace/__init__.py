@@ -13,6 +13,13 @@ from .profiles import (
     add_workspace,
     remove_workspace,
 )
+from .test_runner import (
+    tests_payload,
+    preview_test_command,
+    run_test_command,
+    list_test_runs,
+    get_test_run,
+)
 
 __all__ = [
     "DEFAULT_WORKSPACE",
@@ -26,4 +33,9 @@ __all__ = [
     "validate_test_command",
     "add_workspace",
     "remove_workspace",
+    "tests_payload",
+    "preview_test_command",
+    "run_test_command",
+    "list_test_runs",
+    "get_test_run",
 ]

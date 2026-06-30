@@ -43,6 +43,11 @@ from aiw_workspace import (
     validate_profile as validate_workspace_profile,
     add_workspace,
     remove_workspace,
+    tests_payload,
+    preview_test_command,
+    run_test_command,
+    list_test_runs,
+    get_test_run,
 )
 
 TASK_QUEUES = ["inbox", "running", "blocked", "queued", "done", "failed"]
@@ -2317,14 +2322,36 @@ def render_page() -> str:
         active_tag = '<span class="tag status-done">ativo</span>' if ws["id"] == active_workspace else '<span class="tag">disponível</span>'
         dirty_tag = '<span class="tag status-preview">dirty</span>' if ws.get("dirty") else '<span class="tag status-done">clean</span>'
         profile = validate_workspace_profile(ws["id"])
+        tests = tests_payload(ws["id"])
         stack = profile.get("stack", {})
         profile_status = profile.get("status", "needs_attention")
         profile_cls = "status-done" if profile_status == "valid" else ("status-preview" if profile_status == "incomplete" else "status-failed")
         source_roots = ", ".join(profile.get("source_roots", [])) or "-"
         test_commands = profile.get("test_commands", [])
-        test_command_rows = "".join(f'<div class="signal-row"><span class="signal-name">{html.escape(c.get("command", ""))}</span><span class="tag {"status-done" if c.get("ok") else "status-failed"}">{ "ok" if c.get("ok") else html.escape(c.get("reason", "blocked")) }</span></div>' for c in profile.get("test_command_checks", []))
+        test_command_rows = ""
+        for idx, c in enumerate(profile.get("test_command_checks", [])):
+            cmd = html.escape(c.get("command", ""))
+            status_cls = "status-done" if c.get("ok") else "status-failed"
+            status_label = "permitido" if c.get("ok") else html.escape(c.get("reason", "bloqueado"))
+            test_command_rows += f"""
+            <div class="signal-row">
+              <span class="signal-name">{cmd}</span>
+              <span class="tag {status_cls}">{status_label}</span>
+              <form method="post" action="/api/workspaces/{html.escape(ws["id"])}/tests/preview" style="display:inline">
+                <input type="hidden" name="command_index" value="{idx}">
+                <button class="btn btn-ghost" type="submit" style="padding:4px 8px;font-size:11px">Preview</button>
+              </form>
+              <form method="post" action="/api/workspaces/{html.escape(ws["id"])}/tests/run" style="display:inline">
+                <input type="hidden" name="command_index" value="{idx}">
+                <input type="hidden" name="confirm" value="true">
+                <button class="btn btn-secondary" type="submit" style="padding:4px 8px;font-size:11px">Executar teste</button>
+              </form>
+            </div>
+            """
         if not test_command_rows:
             test_command_rows = '<div class="signal-row"><span class="signal-name">Test commands</span><span class="tag">nenhum</span></div>'
+        last_test = tests.get("last_result") or {}
+        last_test_label = f"{last_test.get('test_run_id', '-')} · {last_test.get('status', '-')}" if last_test else "nenhum"
         warnings = "; ".join(profile.get("warnings", [])) or "sem warnings"
         activate_btn = ""
         if ws["id"] != active_workspace:
@@ -2375,14 +2402,18 @@ def render_page() -> str:
 	            <div class="signal-row"><span class="signal-name">README</span><span class="tag">{str(ws.get("readme")).lower()}</span></div>
 	            <div class="signal-row"><span class="signal-name">docs/</span><span class="tag">{str(ws.get("docs")).lower()}</span></div>
 	            <div class="signal-row"><span class="signal-name">Último commit</span><span class="tag">{html.escape(ws.get("last_commit", "-")[:80])}</span></div>
-	            <div class="signal-row"><span class="signal-name">Warnings</span><span class="tag">{html.escape(warnings[:120])}</span></div>
-	            {test_command_rows}
-	          </div>
-		          <div class="card-actions" style="margin-top:12px">
-		            {activate_btn}{exec_buttons}{remove_btn}
-		            <a class="btn btn-ghost" href="/api/workspaces/{html.escape(ws["id"])}/profile/validate" target="_blank">Validar perfil</a>
-		            <a class="btn btn-ghost" href="/api/workspaces/{html.escape(ws["id"])}/execution-policy" target="_blank">Ver política de execução</a>
+		            <div class="signal-row"><span class="signal-name">Warnings</span><span class="tag">{html.escape(warnings[:120])}</span></div>
+		            <div class="signal-row"><span class="signal-name">Test Commands</span><span class="tag">Profile only</span><span class="tag">Sem commit</span><span class="tag">Sem push</span><span class="tag">Sem auto-apply</span></div>
+		            <div class="signal-row"><span class="signal-name">Último teste</span><span class="tag">{html.escape(last_test_label)}</span></div>
+		            {test_command_rows}
 		          </div>
+			          <div class="card-actions" style="margin-top:12px">
+		            {activate_btn}{exec_buttons}{remove_btn}
+			            <a class="btn btn-ghost" href="/api/workspaces/{html.escape(ws["id"])}/profile/validate" target="_blank">Validar perfil</a>
+			            <a class="btn btn-ghost" href="/api/workspaces/{html.escape(ws["id"])}/execution-policy" target="_blank">Ver política de execução</a>
+			            <a class="btn btn-ghost" href="/api/workspaces/{html.escape(ws["id"])}/tests" target="_blank">Ver Test Commands</a>
+			            <a class="btn btn-ghost" href="/api/workspaces/{html.escape(ws["id"])}/tests/runs" target="_blank">Logs de testes</a>
+			          </div>
 	        </div>
 	        """
 
@@ -3235,6 +3266,13 @@ def render_run_detail(run_dir: Path) -> str:
     </div>
     """ if result_text else ""
 
+    next_test_block = f"""
+    <div class="priority-block" style="background:var(--panel2); border:1px solid var(--line);">
+      <h3>Próximo passo sugerido</h3>
+      <div class="result-text">Rodar Test Commands do workspace <strong>{html.escape(run_workspace_name)}</strong> manualmente pelo painel Workspaces.</div>
+    </div>
+    """
+
     file_block = ""
     if generated_file:
         file_block = f"""
@@ -3426,8 +3464,9 @@ def render_run_detail(run_dir: Path) -> str:
 
       {objective_block}
       {context_used}
-      {result_block}
-      {patches_html}
+	      {result_block}
+	      {next_test_block}
+	      {patches_html}
       {tools_html}
       {timeline_html}
       {file_block}
@@ -3578,6 +3617,25 @@ class Handler(BaseHTTPRequestHandler):
             query = parse_qs(urlparse(self.path).query)
             raw_path = query.get("path", [""])[0]
             self.send_json(validate_workspace_path(raw_path))
+            return
+
+        if path.startswith("/api/workspaces/") and "/tests/runs/" in path:
+            rest = path[len("/api/workspaces/"):]
+            ws_id, test_run_id = rest.split("/tests/runs/", 1)
+            payload = get_test_run(ws_id.strip("/"), test_run_id.strip("/"))
+            self.send_json(payload, status=200 if payload.get("ok") else 404)
+            return
+
+        if path.startswith("/api/workspaces/") and path.endswith("/tests/runs"):
+            ws_id = path[len("/api/workspaces/"):-len("/tests/runs")].strip("/")
+            payload = list_test_runs(ws_id)
+            self.send_json(payload, status=200 if payload.get("ok") else 404)
+            return
+
+        if path.startswith("/api/workspaces/") and path.endswith("/tests"):
+            ws_id = path[len("/api/workspaces/"):-len("/tests")].strip("/")
+            payload = tests_payload(ws_id)
+            self.send_json(payload, status=200 if payload.get("ok") else 404)
             return
 
         if path.startswith("/api/workspaces/") and path.endswith("/health"):
@@ -3892,6 +3950,31 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
             else:
                 self.send_json(res, status=400)
+            return
+
+        if path.startswith("/api/workspaces/") and path.endswith("/tests/preview"):
+            ws_id = path[len("/api/workspaces/"):-len("/tests/preview")].strip("/")
+            command_index = request_data.get("command_index")
+            command = request_data.get("command")
+            try:
+                command_index = int(command_index) if command_index not in (None, "") else None
+            except Exception:
+                command_index = None
+            res = preview_test_command(ws_id, command_index=command_index, command=command)
+            self.send_json(res, status=200 if res.get("ok") else 400)
+            return
+
+        if path.startswith("/api/workspaces/") and path.endswith("/tests/run"):
+            ws_id = path[len("/api/workspaces/"):-len("/tests/run")].strip("/")
+            command_index = request_data.get("command_index")
+            command = request_data.get("command")
+            confirm = str(request_data.get("confirm", "")).lower() in ("1", "true", "yes", "on")
+            try:
+                command_index = int(command_index) if command_index not in (None, "") else None
+            except Exception:
+                command_index = None
+            res = run_test_command(ws_id, command_index=command_index, command=command, confirm=confirm)
+            self.send_json(res, status=200 if res.get("status") in ("succeeded", "failed", "timed_out") else 400)
             return
 
         if path == "/api/git/branch/create":

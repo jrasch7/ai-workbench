@@ -104,6 +104,7 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 * [Workspace-Scoped Artifacts](docs/runbooks/AIW_WORKSPACE_SCOPED_ARTIFACTS.md)
 * [External Workspace Agent Execution](docs/runbooks/AIW_EXTERNAL_WORKSPACE_AGENT_EXECUTION.md)
 * [Workspace Onboarding](docs/runbooks/AIW_WORKSPACE_ONBOARDING.md)
+* [Profile Test Runner](docs/runbooks/AIW_PROFILE_TEST_RUNNER.md)
 
 ## Próximos Passos (Roadmap Resumido)
 

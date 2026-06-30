@@ -12,6 +12,8 @@ Workspaces continuam configurados localmente em `.aiw/workspaces.json`, ignorado
 
 O onboarding controlado pelo Cockpit esta documentado em `docs/runbooks/AIW_WORKSPACE_ONBOARDING.md`.
 
+Test commands de profiles agora podem ser executados manualmente pelo Profile Test Runner, documentado em `docs/runbooks/AIW_PROFILE_TEST_RUNNER.md`.
+
 Cada profile define:
 
 - `safe_roots`

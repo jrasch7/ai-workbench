@@ -49,6 +49,8 @@ O endpoint `GET /api/workspaces/<workspace_id>/profile/validate` retorna:
 
 Test commands sao apenas validados nesta fase. Nenhum teste e executado.
 
+Execucao assistida dos comandos validados foi adicionada em `docs/runbooks/AIW_PROFILE_TEST_RUNNER.md`.
+
 ## Seguranca
 
 - nao le `.env`;

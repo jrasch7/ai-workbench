@@ -267,6 +267,9 @@ def validate_test_command(command: str) -> dict:
     if not parts:
         return {"command": command, "ok": False, "reason": "empty_command"}
     lower = command.lower()
+    for op in (";", "&&", "||", "|", ">", "<", "`", "$("):
+        if op in command:
+            return {"command": command, "ok": False, "reason": "blocked_operator"}
     if any(f" {b} " in f" {lower} " or lower.startswith(f"{b} ") for b in blocked):
         return {"command": command, "ok": False, "reason": "blocked_command"}
     if "git push" in lower or "git add ." in lower or "git reset" in lower or "git clean" in lower:
@@ -279,6 +282,10 @@ def validate_test_command(command: str) -> dict:
     elif parts == ["npm", "test"] or parts == ["npm", "run", "test"] or parts == ["npm", "run", "lint"] or parts == ["npm", "run", "build"]:
         ok = True
     elif parts == ["pnpm", "test"] or parts == ["pnpm", "lint"] or parts == ["pnpm", "build"]:
+        ok = True
+    elif parts == ["pnpm", "run", "test"] or parts == ["pnpm", "run", "lint"] or parts == ["pnpm", "run", "build"]:
+        ok = True
+    elif parts == ["yarn", "test"] or parts == ["yarn", "lint"] or parts == ["yarn", "build"]:
         ok = True
     return {"command": command, "ok": ok, "reason": "" if ok else "not_in_allowlist"}
 

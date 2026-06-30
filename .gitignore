@@ -59,3 +59,4 @@ reports/provider-smoke/*.md
 .aiw/workspaces/*/runs/
 .aiw/workspaces/*/patches/
 .aiw/workspaces/*/context/
+.aiw/workspaces/*/test-runs/

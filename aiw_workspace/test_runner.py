@@ -1,0 +1,274 @@
+import datetime
+import json
+import os
+import shlex
+import subprocess
+import time
+import glob
+from pathlib import Path
+
+from .profiles import resolve_workspace, validate_profile, validate_test_command
+
+
+MAX_LOG_CHARS = 120_000
+SUMMARY_CHARS = 4_000
+DEFAULT_TIMEOUT = 120
+MAX_TIMEOUT = 300
+SENSITIVE_PARTS = (".env", "token", "secret", "password", "credential", "private_key", "client_secret", "api_key")
+
+
+def _now() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def _workspace_base(workspace_id: str) -> Path:
+    return Path(__file__).resolve().parents[1] / ".aiw" / "workspaces" / workspace_id
+
+
+def _mask(text: str) -> str:
+    value = text or ""
+    lowered = value.lower()
+    if any(part in lowered for part in SENSITIVE_PARTS):
+        value = value.replace(".env", "[masked-env]")
+        for part in SENSITIVE_PARTS[1:]:
+            value = value.replace(part, "[masked]")
+            value = value.replace(part.upper(), "[masked]")
+    if len(value) > MAX_LOG_CHARS:
+        return value[:MAX_LOG_CHARS] + "\n[truncated]\n"
+    return value
+
+
+def _minimal_env() -> dict:
+    env = {}
+    for key in ("PATH", "HOME", "LANG", "LC_ALL", "TERM"):
+        if os.environ.get(key):
+            env[key] = os.environ[key]
+    return env
+
+
+def _resolve_inside(root: Path, candidate: Path) -> Path:
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        raise ValueError("path_escape_blocked")
+    if any(part in {".git", ".venv", "node_modules", "vendor", "__pycache__"} for part in resolved.relative_to(root).parts):
+        raise ValueError("blocked_path")
+    return resolved
+
+
+def _expand_arg(root: Path, arg: str) -> list[str]:
+    if not any(ch in arg for ch in ("*", "?", "[")):
+        if arg.startswith("/") or ".." in Path(arg).parts:
+            raise ValueError("unsafe_relative_path")
+        return [arg]
+    if arg.startswith("/") or ".." in Path(arg).parts:
+        raise ValueError("unsafe_glob")
+    matches = []
+    for match in glob.glob(str(root / arg)):
+        resolved = _resolve_inside(root, Path(match))
+        matches.append(str(resolved.relative_to(root)))
+    return sorted(matches) if matches else [arg]
+
+
+def _prepare_argv(root: Path, command: str) -> list[str]:
+    parts = shlex.split(command)
+    argv = []
+    for part in parts:
+        argv.extend(_expand_arg(root, part))
+    return argv
+
+
+def _command_from_profile(workspace_id: str, command_index: int | None = None, command: str | None = None) -> tuple[dict | None, str | None]:
+    profile = validate_profile(workspace_id)
+    if not profile.get("ok"):
+        return None, "invalid_profile"
+    commands = [str(cmd) for cmd in profile.get("test_commands", [])]
+    selected = None
+    if command_index is not None:
+        if command_index < 0 or command_index >= len(commands):
+            return None, "command_index_out_of_range"
+        selected = commands[command_index]
+    elif command is not None:
+        if command not in commands:
+            return None, "command_not_in_profile"
+        selected = command
+    else:
+        return None, "command_required"
+    return {"profile": profile, "command": selected, "command_index": commands.index(selected)}, None
+
+
+def preview_test_command(workspace_id: str, command_index: int | None = None, command: str | None = None, timeout: int = DEFAULT_TIMEOUT) -> dict:
+    ws = resolve_workspace(workspace_id)
+    if not ws or not ws.get("exists"):
+        return {"ok": False, "allowed": False, "error": "unknown_or_missing_workspace"}
+    selected, error = _command_from_profile(workspace_id, command_index, command)
+    if error:
+        return {"ok": False, "allowed": False, "error": error}
+    command_text = selected["command"]
+    validation = validate_test_command(command_text)
+    root = Path(ws["resolved_path"]).resolve()
+    timeout = max(1, min(int(timeout or DEFAULT_TIMEOUT), MAX_TIMEOUT))
+    argv = []
+    argv_error = ""
+    if validation.get("ok"):
+        try:
+            argv = _prepare_argv(root, command_text)
+        except Exception as exc:
+            argv_error = str(exc)
+            validation = {"command": command_text, "ok": False, "reason": argv_error}
+    return {
+        "ok": validation.get("ok", False),
+        "allowed": validation.get("ok", False),
+        "reason": validation.get("reason", ""),
+        "command": command_text,
+        "command_index": selected["command_index"],
+        "argv": argv,
+        "workspace_id": ws["id"],
+        "workspace_name": ws["name"],
+        "cwd": str(root),
+        "timeout": timeout,
+        "auto_commit": False,
+        "auto_apply": False,
+        "push_enabled": False,
+    }
+
+
+def _write_json(path: Path, payload: dict) -> None:
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def run_test_command(workspace_id: str, command_index: int | None = None, command: str | None = None, confirm: bool = False, timeout: int = DEFAULT_TIMEOUT) -> dict:
+    if not confirm:
+        return {"ok": False, "status": "blocked", "error": "confirm_required"}
+    preview = preview_test_command(workspace_id, command_index, command, timeout)
+    if not preview.get("allowed"):
+        return {"ok": False, "status": "blocked", "preview": preview, "error": preview.get("error") or preview.get("reason")}
+
+    test_run_id = "test-" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_dir = _workspace_base(preview["workspace_id"]) / "test-runs" / test_run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    started = _now()
+    start_time = time.monotonic()
+    status = "failed"
+    exit_code = None
+    stdout = ""
+    stderr = ""
+    try:
+        proc = subprocess.run(
+            preview["argv"],
+            cwd=preview["cwd"],
+            shell=False,
+            capture_output=True,
+            text=True,
+            timeout=preview["timeout"],
+            env=_minimal_env(),
+        )
+        exit_code = proc.returncode
+        stdout = _mask(proc.stdout)
+        stderr = _mask(proc.stderr)
+        status = "succeeded" if proc.returncode == 0 else "failed"
+    except subprocess.TimeoutExpired as exc:
+        stdout = _mask(exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode("utf-8", "replace"))
+        stderr = _mask(exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode("utf-8", "replace"))
+        status = "timed_out"
+    except Exception as exc:
+        stderr = _mask(str(exc))
+        status = "blocked"
+
+    duration = round(time.monotonic() - start_time, 3)
+    finished = _now()
+    metadata = {
+        "test_run_id": test_run_id,
+        "workspace_id": preview["workspace_id"],
+        "workspace_name": preview["workspace_name"],
+        "workspace_root": preview["cwd"],
+        "started_at": started,
+        "finished_at": finished,
+        "status": status,
+        "command": preview["command"],
+        "exit_code": exit_code,
+        "duration_seconds": duration,
+    }
+    result = {"ok": status == "succeeded", **metadata}
+    _write_json(run_dir / "metadata.json", metadata)
+    _write_json(run_dir / "command.json", preview)
+    (run_dir / "stdout.log").write_text(stdout, encoding="utf-8")
+    (run_dir / "stderr.log").write_text(stderr, encoding="utf-8")
+    _write_json(run_dir / "result.json", result)
+    (run_dir / "summary.md").write_text(
+        f"# Profile Test Run\n\n"
+        f"- Workspace: {preview['workspace_name']} (`{preview['workspace_id']}`)\n"
+        f"- Command: `{preview['command']}`\n"
+        f"- Status: {status}\n"
+        f"- Exit code: {exit_code}\n"
+        f"- Duration: {duration}s\n",
+        encoding="utf-8",
+    )
+    return {"ok": status == "succeeded", "status": status, "test_run_id": test_run_id, "result": result, "run_dir": str(run_dir)}
+
+
+def list_test_runs(workspace_id: str, limit: int = 30) -> dict:
+    ws = resolve_workspace(workspace_id)
+    if not ws:
+        return {"ok": False, "error": "unknown_workspace"}
+    root = _workspace_base(ws["id"]) / "test-runs"
+    rows = []
+    if root.is_dir():
+        for run_dir in sorted([p for p in root.iterdir() if p.is_dir()], reverse=True)[:limit]:
+            meta_path = run_dir / "metadata.json"
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                meta = {"test_run_id": run_dir.name, "status": "invalid"}
+            rows.append(meta)
+    return {"ok": True, "workspace_id": ws["id"], "runs": rows}
+
+
+def get_test_run(workspace_id: str, test_run_id: str) -> dict:
+    ws = resolve_workspace(workspace_id)
+    if not ws:
+        return {"ok": False, "error": "unknown_workspace"}
+    if not test_run_id.startswith("test-") or "/" in test_run_id or ".." in test_run_id:
+        return {"ok": False, "error": "invalid_test_run_id"}
+    run_dir = _workspace_base(ws["id"]) / "test-runs" / test_run_id
+    if not run_dir.is_dir():
+        return {"ok": False, "error": "test_run_not_found"}
+    def read_json_file(name):
+        try:
+            return json.loads((run_dir / name).read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    def read_text_file(name):
+        try:
+            return (run_dir / name).read_text(encoding="utf-8", errors="replace")[:SUMMARY_CHARS]
+        except Exception:
+            return ""
+    return {
+        "ok": True,
+        "workspace_id": ws["id"],
+        "test_run_id": test_run_id,
+        "metadata": read_json_file("metadata.json"),
+        "command": read_json_file("command.json"),
+        "result": read_json_file("result.json"),
+        "stdout": read_text_file("stdout.log"),
+        "stderr": read_text_file("stderr.log"),
+        "summary": read_text_file("summary.md"),
+    }
+
+
+def tests_payload(workspace_id: str) -> dict:
+    profile = validate_profile(workspace_id)
+    if not profile.get("ok"):
+        return profile
+    runs = list_test_runs(workspace_id, limit=1)
+    return {
+        "ok": True,
+        "workspace_id": profile["workspace_id"],
+        "workspace_name": profile["workspace_name"],
+        "stack": profile.get("stack", {}),
+        "warnings": profile.get("warnings", []),
+        "commands": profile.get("test_command_checks", []),
+        "last_result": runs.get("runs", [None])[0] if runs.get("runs") else None,
+    }
