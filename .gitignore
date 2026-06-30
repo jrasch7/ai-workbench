@@ -60,3 +60,4 @@ reports/provider-smoke/*.md
 .aiw/workspaces/*/patches/
 .aiw/workspaces/*/context/
 .aiw/workspaces/*/test-runs/
+.aiw/workspaces/*/validation-plans/

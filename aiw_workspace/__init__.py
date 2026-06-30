@@ -28,6 +28,11 @@ from .test_runner import (
 )
 from .validation_plan import (
     validation_plan_for_patch,
+    ensure_validation_plan_snapshot,
+    list_validation_plan_snapshots,
+    get_validation_plan_snapshot,
+    compare_validation_plan_snapshots,
+    validation_reliability,
     preview_validation_plan_command,
     run_validation_plan_commands,
 )
@@ -56,6 +61,11 @@ __all__ = [
     "preview_patch_suggested_test",
     "run_patch_suggested_test",
     "validation_plan_for_patch",
+    "ensure_validation_plan_snapshot",
+    "list_validation_plan_snapshots",
+    "get_validation_plan_snapshot",
+    "compare_validation_plan_snapshots",
+    "validation_reliability",
     "preview_validation_plan_command",
     "run_validation_plan_commands",
 ]

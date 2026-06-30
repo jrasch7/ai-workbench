@@ -37,6 +37,16 @@ O plano usa as sugestoes existentes como entrada. Quando um mapping bate, o coma
 
 O painel de patches mostra `Plano de validação sugerido`, com grupos ordenados, score, motivo, matched files e botoes manuais de Preview/Executar.
 
+Ao abrir o plano pelo Cockpit ou pela API, o AIW materializa um snapshot local quando ainda nao existe snapshot identico sem execucao. O snapshot fica em `.aiw/workspaces/<workspace_id>/validation-plans/<patch_id>/<snapshot_id>/`.
+
+Execucoes confirmadas do plano criam um novo snapshot, gravam `validation_snapshot_id` no test-run e atualizam `executions.json` e `comparison.json`.
+
+Endpoints relacionados:
+
+- `GET /api/workspaces/<workspace_id>/patches/<patch_id>/validation-plan/snapshots`;
+- `GET /api/workspaces/<workspace_id>/patches/<patch_id>/validation-plan/snapshots/<snapshot_id>`;
+- `GET /api/workspaces/<workspace_id>/patches/<patch_id>/validation-plan/compare`.
+
 ## Seguranca
 
 - nao executa automaticamente;
@@ -61,4 +71,4 @@ Ver relatorio final da rodada.
 
 ## Proximo passo recomendado
 
-Persistir snapshots de planos executados por patch e comparar resultados entre reruns.
+Usar os snapshots para guiar a selecao de validacoes por area e evoluir o cockpit para uma visao operacional de qualidade por patch.

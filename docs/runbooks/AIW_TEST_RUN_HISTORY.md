@@ -34,6 +34,8 @@ A resposta inclui metadata, command, result, stdout/stderr resumidos, summary e 
 
 Quando um test-run nasce de uma sugestao de patch, a metadata inclui `trigger: patch_suggestion` e `patch_id`.
 
+Quando nasce de um Validation Plan, a metadata inclui `trigger: validation_plan`, `patch_id`, `validation_snapshot_id`, `validation_group`, `score`, `mapping_name` e `matched_files`. O Cockpit mostra o badge `Validation plan` e linka o snapshot quando disponivel.
+
 ## Safe Rerun
 
 O endpoint:
@@ -65,4 +67,4 @@ Ver relatorio final da rodada de implementacao.
 
 ## Proximo passo recomendado
 
-Conectar o historico de testes ao fluxo de patch preview para sugerir o comando mais relevante por workspace, ainda mantendo execucao manual e confirmada pelo humano.
+Usar o historico local para mostrar confiabilidade por area/source root e orientar quais validacoes devem ser priorizadas em cada patch.

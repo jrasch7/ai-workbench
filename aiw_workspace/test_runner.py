@@ -161,6 +161,9 @@ def run_test_command(
     patch_id: str | None = None,
     validation_group: str | None = None,
     validation_score: int | None = None,
+    validation_snapshot_id: str | None = None,
+    mapping_name: str | None = None,
+    matched_files: list[str] | None = None,
 ) -> dict:
     if not confirm:
         return {"ok": False, "status": "blocked", "error": "confirm_required"}
@@ -225,6 +228,12 @@ def run_test_command(
         metadata["validation_group"] = validation_group
     if validation_score is not None:
         metadata["score"] = validation_score
+    if validation_snapshot_id:
+        metadata["validation_snapshot_id"] = validation_snapshot_id
+    if mapping_name:
+        metadata["mapping_name"] = mapping_name
+    if matched_files:
+        metadata["matched_files"] = [str(item) for item in matched_files]
     result = {"ok": status == "succeeded", **metadata}
     _write_json(run_dir / "metadata.json", metadata)
     _write_json(run_dir / "command.json", preview)

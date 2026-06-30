@@ -54,6 +54,11 @@ from aiw_workspace import (
     preview_patch_suggested_test,
     run_patch_suggested_test,
     validation_plan_for_patch,
+    ensure_validation_plan_snapshot,
+    list_validation_plan_snapshots,
+    get_validation_plan_snapshot,
+    compare_validation_plan_snapshots,
+    validation_reliability,
     preview_validation_plan_command,
     run_validation_plan_commands,
 )
@@ -2348,7 +2353,10 @@ def render_page() -> str:
         changed_files = patch.get("changed_files") or ([patch.get("path")] if patch.get("path") else [])
         changed_files_html = "".join(f'<span class="tag">{html.escape(str(p))}</span>' for p in changed_files) or '<span class="tag">sem arquivos registrados</span>'
         suggestions_payload = suggest_tests_for_patch(patch.get("workspace_id") or active_workspace, patch["patch_id"])
-        validation_plan_payload = validation_plan_for_patch(patch.get("workspace_id") or active_workspace, patch["patch_id"])
+        validation_snapshot_payload = ensure_validation_plan_snapshot(patch.get("workspace_id") or active_workspace, patch["patch_id"])
+        validation_plan_payload = validation_snapshot_payload.get("plan", validation_snapshot_payload)
+        validation_snapshot = validation_snapshot_payload.get("snapshot", {})
+        validation_snapshots_payload = list_validation_plan_snapshots(patch.get("workspace_id") or active_workspace, patch["patch_id"])
         suggestion_rows = ""
         if suggestions_payload.get("ok") and suggestions_payload.get("suggestions"):
             for suggestion in suggestions_payload.get("suggestions", []):
@@ -2445,6 +2453,34 @@ def render_page() -> str:
             validation_plan_rows = '<div class="signal-note">Nenhum grupo de validacao sugerido para este patch.</div>'
         else:
             validation_plan_rows = f'<div class="signal-note">Plano indisponivel: {html.escape(str(validation_plan_payload.get("error", "unknown")))}</div>'
+        snapshot_history_rows = ""
+        if validation_snapshots_payload.get("ok") and validation_snapshots_payload.get("snapshots"):
+            for snap in validation_snapshots_payload.get("snapshots", [])[:6]:
+                sid_raw = str(snap.get("snapshot_id", ""))
+                sid = html.escape(sid_raw)
+                created_at = html.escape(str(snap.get("created_at") or "-"))
+                execution_count = html.escape(str(snap.get("execution_count", 0)))
+                status_summary = snap.get("status_summary", {})
+                comparison_summary = snap.get("comparison_summary", {})
+                status_tags = "".join(f'<span class="tag">{html.escape(str(k))} {html.escape(str(v))}</span>' for k, v in status_summary.items()) or '<span class="tag">sem execucoes</span>'
+                comparison_tags = "".join(
+                    f'<span class="tag">{html.escape(label)} {html.escape(str(comparison_summary.get(key, 0)))}</span>'
+                    for key, label in (("improved", "melhorou"), ("regressed", "regrediu"), ("unchanged", "inalterado"), ("new", "novo"))
+                )
+                snapshot_history_rows += f"""
+                <div class="signal-row">
+                  <span class="signal-name"><a class="api-link" href="/api/workspaces/{ws_id}/patches/{pid}/validation-plan/snapshots/{sid}" target="_blank">{sid}</a></span>
+                  <span class="tag">{created_at}</span>
+                  <span class="tag">{execution_count} exec</span>
+                  {status_tags}
+                  {comparison_tags}
+                </div>
+                """
+        elif validation_snapshots_payload.get("ok"):
+            snapshot_history_rows = '<div class="signal-note">Nenhum snapshot registrado para este patch.</div>'
+        else:
+            snapshot_history_rows = f'<div class="signal-note">Historico indisponivel: {html.escape(str(validation_snapshots_payload.get("error", "unknown")))}</div>'
+        active_snapshot_id = html.escape(str(validation_plan_payload.get("snapshot_id") or validation_snapshot.get("snapshot_id") or "-"))
         return f"""
         <div class="patch-item" data-patch-filter="{status}">
           <div class="patch-head">
@@ -2477,11 +2513,17 @@ def render_page() -> str:
           </details>
           <details open style="margin-top:10px">
             <summary style="cursor:pointer;color:var(--muted);font-size:12px">Plano de validação sugerido</summary>
-            <div class="signal-note" style="margin:8px 0">{html.escape(str(validation_plan_payload.get("summary", "")))} Nada e executado automaticamente. Comandos precisam estar no profile. Sem commit, sem apply, sem push.</div>
+            <div class="signal-note" style="margin:8px 0">{html.escape(str(validation_plan_payload.get("summary", "")))} Snapshot atual: <code>{active_snapshot_id}</code>. Nada e executado automaticamente. Comandos precisam estar no profile. Sem commit, sem apply, sem push.</div>
             <div class="tool-evidence-list">{validation_plan_rows}</div>
             <div style="margin-top:10px">
               <a class="btn btn-ghost" href="/api/workspaces/{ws_id}/patches/{pid}/validation-plan" target="_blank">Ver plano JSON</a>
+              <a class="btn btn-ghost" href="/api/workspaces/{ws_id}/patches/{pid}/validation-plan/snapshots" target="_blank">Snapshots</a>
+              <a class="btn btn-ghost" href="/api/workspaces/{ws_id}/patches/{pid}/validation-plan/compare" target="_blank">Comparar</a>
             </div>
+          </details>
+          <details open style="margin-top:10px">
+            <summary style="cursor:pointer;color:var(--muted);font-size:12px">Histórico do plano de validação</summary>
+            <div class="signal-list" style="margin-top:8px">{snapshot_history_rows}</div>
           </details>
           <div class="patch-actions">{apply_btn}</div>
         </div>
@@ -2598,6 +2640,23 @@ def render_page() -> str:
             """
         if not validation_group_rows:
             validation_group_rows = '<div class="signal-note">Profile sem validation_groups; plano usa sugestoes diretas quando possivel.</div>'
+        reliability_payload = validation_reliability(ws["id"])
+        reliability_rows = ""
+        if reliability_payload.get("ok") and reliability_payload.get("areas"):
+            for area in reliability_payload.get("areas", [])[:5]:
+                rate = int(float(area.get("success_rate", 0)) * 100)
+                reliability_rows += f"""
+                <div class="signal-row">
+                  <span class="signal-name">{html.escape(str(area.get("name", "-")))}</span>
+                  <span class="tag">{html.escape(str(area.get("runs", 0)))} runs</span>
+                  <span class="tag">{rate}% ok</span>
+                  <span class="tag {status_tag_class(area.get("last_status"))}">{html.escape(str(area.get("last_status", "-")))}</span>
+                </div>
+                """
+        elif reliability_payload.get("ok"):
+            reliability_rows = '<div class="signal-note">Sem histórico validation_plan suficiente para tendência.</div>'
+        else:
+            reliability_rows = f'<div class="signal-note">Confiabilidade indisponivel: {html.escape(str(reliability_payload.get("error", "unknown")))}</div>'
         last_test = tests.get("last_result") or {}
         last_test_label = f"{last_test.get('test_run_id', '-')} · {last_test.get('status', '-')}" if last_test else "nenhum"
         warnings = "; ".join(profile.get("warnings", [])) or "sem warnings"
@@ -2665,6 +2724,10 @@ def render_page() -> str:
 		            <summary style="cursor:pointer;color:var(--muted);font-size:12px">Validation Groups</summary>
 		            <div class="tool-evidence-list" style="margin-top:10px">{validation_group_rows}</div>
 		          </details>
+		          <details style="margin-top:12px">
+		            <summary style="cursor:pointer;color:var(--muted);font-size:12px">Confiabilidade por área</summary>
+		            <div class="signal-list" style="margin-top:10px">{reliability_rows}</div>
+		          </details>
 			          <div class="card-actions" style="margin-top:12px">
 		            {activate_btn}{exec_buttons}{remove_btn}
 			            <a class="btn btn-ghost" href="/api/workspaces/{html.escape(ws["id"])}/profile/validate" target="_blank">Validar perfil</a>
@@ -2697,7 +2760,12 @@ def render_page() -> str:
             patch_label = html.escape(patch_id or "patch")
             validation_group = html.escape(str(row.get("validation_group", "")))
             score = html.escape(str(row.get("score", "")))
-            patch_tag = f'<span class="tag status-preview">Validation plan</span><a class="tag" href="/api/workspaces/{ws_id}/patches/{patch_label}/validation-plan" target="_blank">{patch_label}</a><span class="tag">{validation_group}</span><span class="tag">score {score}</span>'
+            snapshot_id = str(row.get("validation_snapshot_id", ""))
+            snapshot_tag = ""
+            if snapshot_id:
+                snapshot_label = html.escape(snapshot_id)
+                snapshot_tag = f'<a class="tag" href="/api/workspaces/{ws_id}/patches/{patch_label}/validation-plan/snapshots/{snapshot_label}" target="_blank">{snapshot_label}</a>'
+            patch_tag = f'<span class="tag status-preview">Validation plan</span><a class="tag" href="/api/workspaces/{ws_id}/patches/{patch_label}/validation-plan" target="_blank">{patch_label}</a>{snapshot_tag}<span class="tag">{validation_group}</span><span class="tag">score {score}</span>'
         return f"""
         <div class="test-run-row" data-test-index="{index}" data-test-status="{status}" data-test-workspace="{ws_id}" data-test-command="{command.lower()}" data-test-trigger="{html.escape(trigger)}" data-test-patch="{html.escape(patch_id)}">
           <div>
@@ -4010,10 +4078,44 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(payload, status=200 if payload.get("ok") else 404)
             return
 
+        if path.startswith("/api/workspaces/") and path.endswith("/validation/reliability"):
+            ws_id = path[len("/api/workspaces/"):-len("/validation/reliability")].strip("/")
+            payload = validation_reliability(ws_id)
+            self.send_json(payload, status=200 if payload.get("ok") else 404)
+            return
+
+        parsed_snapshots = parse_workspace_patch_path(path, "/validation-plan/snapshots")
+        if parsed_snapshots:
+            ws_id, patch_id = parsed_snapshots
+            payload = list_validation_plan_snapshots(ws_id, patch_id)
+            self.send_json(payload, status=200 if payload.get("ok") else 404)
+            return
+
+        if path.startswith("/api/workspaces/") and "/validation-plan/snapshots/" in path:
+            rest = path[len("/api/workspaces/"):]
+            try:
+                ws_id, patch_rest = rest.split("/patches/", 1)
+                patch_id, snapshot_id = patch_rest.split("/validation-plan/snapshots/", 1)
+            except ValueError:
+                self.send_json({"ok": False, "error": "invalid_snapshot_path"}, status=404)
+                return
+            payload = get_validation_plan_snapshot(ws_id.strip("/"), patch_id.strip("/"), snapshot_id.strip("/"))
+            self.send_json(payload, status=200 if payload.get("ok") else 404)
+            return
+
+        parsed_compare = parse_workspace_patch_path(path, "/validation-plan/compare")
+        if parsed_compare:
+            ws_id, patch_id = parsed_compare
+            query = parse_qs(urlparse(self.path).query)
+            snapshot_id = query.get("snapshot_id", [""])[0].strip() or None
+            payload = compare_validation_plan_snapshots(ws_id, patch_id, snapshot_id=snapshot_id)
+            self.send_json(payload, status=200 if payload.get("ok") else 404)
+            return
+
         parsed_plan = parse_workspace_patch_path(path, "/validation-plan")
         if parsed_plan:
             ws_id, patch_id = parsed_plan
-            payload = validation_plan_for_patch(ws_id, patch_id)
+            payload = ensure_validation_plan_snapshot(ws_id, patch_id)
             self.send_json(payload, status=200 if payload.get("ok") else 404)
             return
 
