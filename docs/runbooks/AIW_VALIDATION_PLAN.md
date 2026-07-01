@@ -72,3 +72,7 @@ Ver relatorio final da rodada.
 ## Proximo passo recomendado
 
 Usar os snapshots para guiar a selecao de validacoes por area e evoluir o cockpit para uma visao operacional de qualidade por patch.
+
+## Patch Review Gate
+
+O resultado final do plano de validação alimenta o [Patch Review Gate](AIW_PATCH_REVIEW_GATE.md) para aprovação de commits/apply.

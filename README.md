@@ -123,3 +123,5 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 8. Hermes integration deixado em standby apenas para quando e se for estritamente viável operá-lo semanticamente na stack atual.
 
 *(Veja o arquivo completo em `ROADMAP.md` e o snapshot situacional em `docs/snapshots/SNAPSHOT_AIW_2026-06-29.md`).*
+
+- [Patch Review Gate](docs/runbooks/AIW_PATCH_REVIEW_GATE.md) avalia segurança de apply.

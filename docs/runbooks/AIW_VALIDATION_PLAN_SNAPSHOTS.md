@@ -85,3 +85,7 @@ Ver relatorio final da rodada de implementacao.
 ## Proximo passo recomendado
 
 Usar os snapshots para montar uma trilha visual de qualidade por patch e, depois, conectar isso ao harness de agentes estilo Manus/Devin/CodeAct com selecao assistida de planos de validacao.
+
+## Patch Review Gate
+
+Os snapshots agora são lidos pelo [Patch Review Gate](AIW_PATCH_REVIEW_GATE.md) para autorizar aplicaçoes manuais com maior segurança.
