@@ -76,3 +76,7 @@ Usar os snapshots para guiar a selecao de validacoes por area e evoluir o cockpi
 ## Patch Review Gate
 
 O resultado final do plano de validação alimenta o [Patch Review Gate](AIW_PATCH_REVIEW_GATE.md) para aprovação de commits/apply.
+
+## Test Coverage Intent
+
+Veja também o [Patch Test Coverage Intent](AIW_PATCH_TEST_COVERAGE_INTENT.md).

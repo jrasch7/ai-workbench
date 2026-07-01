@@ -80,3 +80,7 @@ No painel (Bancada) do AIW Cockpit:
 ## Próximo passo recomendado
 
 Expandir a heurística de score para verificar cobertura de mutação de testes (verificando se o patch não quebrou testes intencionalmente).
+
+## Test Coverage Intent
+
+O [Patch Test Coverage Intent](AIW_PATCH_TEST_COVERAGE_INTENT.md) penaliza ou bonifica o Readiness Score.

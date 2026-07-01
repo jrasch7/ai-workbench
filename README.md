@@ -125,3 +125,5 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 *(Veja o arquivo completo em `ROADMAP.md` e o snapshot situacional em `docs/snapshots/SNAPSHOT_AIW_2026-06-29.md`).*
 
 - [Patch Review Gate](docs/runbooks/AIW_PATCH_REVIEW_GATE.md) avalia segurança de apply.
+
+- [Patch Test Coverage Intent](docs/runbooks/AIW_PATCH_TEST_COVERAGE_INTENT.md) avalia intenção de cobertura.

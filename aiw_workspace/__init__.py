@@ -41,6 +41,7 @@ from .patch_gate import (
     list_review_gates,
     apply_reviewed_patch,
 )
+from .test_coverage_intent import analyze_test_coverage_intent
 
 __all__ = [
     "DEFAULT_WORKSPACE",
@@ -76,4 +77,5 @@ __all__ = [
     "review_gate_for_patch",
     "list_review_gates",
     "apply_reviewed_patch",
+    "analyze_test_coverage_intent",
 ]

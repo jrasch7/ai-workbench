@@ -64,6 +64,7 @@ from aiw_workspace import (
     review_gate_for_patch,
     list_review_gates,
     apply_reviewed_patch,
+    analyze_test_coverage_intent,
 )
 
 TASK_QUEUES = ["inbox", "running", "blocked", "queued", "done", "failed"]
@@ -2359,8 +2360,54 @@ def render_page() -> str:
         if gate.get("ok") and gate.get("checks"):
             for chk in gate.get("checks", []):
                 chk_st = "status-done" if chk.get("status") == "passed" else "status-failed"
+                if chk.get("status") == "warning":
+                    chk_st = "status-warning"
+                elif chk.get("status") == "info":
+                    chk_st = "status-info"
                 gate_checks += f'<div class="tool-evidence-field" style="margin-top:6px;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg)"><strong>{html.escape(chk.get("name",""))}</strong> <span class="tag {chk_st}">{html.escape(chk.get("status",""))}</span><div style="font-size:12px;color:var(--muted);margin-top:4px">{html.escape(chk.get("reason",""))}</div></div>'
 
+        coverage_intent = analyze_test_coverage_intent(ws_id, patch["patch_id"], patch_payload_override={"ok": True, "patch": patch})
+        coverage_class = coverage_intent.get("classification", "unknown")
+        coverage_severity = coverage_intent.get("severity", "none")
+        coverage_code_files = coverage_intent.get("changed_code_files", [])
+        coverage_test_files = coverage_intent.get("changed_test_files", [])
+        coverage_summary = html.escape(coverage_intent.get("summary", ""))
+
+        coverage_badges = {
+            "code_with_tests": '<span class="tag status-passed">Code + tests</span>',
+            "code_without_tests": '<span class="tag status-warning">Code without tests</span>',
+            "docs_only": '<span class="tag status-passed">Docs only</span>',
+            "tests_only": '<span class="tag status-info">Tests only</span>',
+            "config_only": '<span class="tag status-info">Config only</span>',
+            "mixed": '<span class="tag status-info">Mixed</span>',
+        }
+        coverage_badge = coverage_badges.get(coverage_class, '<span class="tag">Unknown</span>')
+
+        coverage_block = f"""
+        <div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
+          <div style="font-weight:600;margin-bottom:6px">Cobertura/Test Intent</div>
+          <div class="card-meta" style="margin-bottom:6px">
+            <span class="tag">Classificação: {html.escape(coverage_class)}</span>
+            <span class="tag">Severity: {html.escape(coverage_severity)}</span>
+          </div>
+          <div class="signal-note" style="margin-bottom:6px">{coverage_summary}</div>
+        """
+
+        if coverage_class == "code_without_tests":
+            coverage_block += f'<div class="signal-note status-warning" style="margin-bottom:6px;color:var(--warn)">Este patch altera código, mas não altera arquivos de teste. Isso não bloqueia o apply nesta versão, mas reduz o score.</div>'
+
+        if coverage_code_files:
+            code_files_html = "".join(f'<span class="tag">{html.escape(f)}</span>' for f in coverage_code_files)
+            coverage_block += f'<div class="signal-note" style="margin-bottom:4px">Code files: {code_files_html}</div>'
+        if coverage_test_files:
+            test_files_html = "".join(f'<span class="tag">{html.escape(f)}</span>' for f in coverage_test_files)
+            coverage_block += f'<div class="signal-note" style="margin-bottom:4px">Test files: {test_files_html}</div>'
+
+        if coverage_intent.get("recommendations"):
+            recs_html = "".join(f'<li>{html.escape(r)}</li>' for r in coverage_intent.get("recommendations", []))
+            coverage_block += f'<div class="signal-note">Recomendações: <ul style="margin:4px 0 0 16px;padding:0">{recs_html}</ul></div>'
+
+        coverage_block += "</div>"
         apply_btn = ""
         if patch["status"] == "preview":
             if gate.get("ok") and (gate.get("can_apply") or gate_status == "docs_only"):
@@ -2515,6 +2562,7 @@ def render_page() -> str:
             <span class="tag">{diff_stats}</span>
             <span class="tag">{ws_id}</span>
             <span class="tag">{scope}</span>
+            {coverage_badge}
           </div>
           <div class="signal-note" style="margin:8px 0">Arquivos alterados: {changed_files_html}</div>
           <details open style="margin-top:10px">
@@ -2525,6 +2573,7 @@ def render_page() -> str:
               <span class="tag">Score: {gate_score}</span>
             </div>
             <div>{gate_checks}</div>
+            {coverage_block}
             <div style="margin-top:10px">
               <a class="btn btn-ghost" href="/api/workspaces/{ws_id}/patches/{pid}/review-gate" target="_blank">Ver JSON do Gate</a>
             </div>
@@ -4154,6 +4203,13 @@ class Handler(BaseHTTPRequestHandler):
         if parsed_review_gate:
             ws_id, patch_id = parsed_review_gate
             payload = review_gate_for_patch(ws_id, patch_id)
+            self.send_json(payload, status=200 if payload.get("ok") else 404)
+            return
+
+        parsed_coverage = parse_workspace_patch_path(path, "/coverage-intent")
+        if parsed_coverage:
+            ws_id, patch_id = parsed_coverage
+            payload = analyze_test_coverage_intent(ws_id, patch_id)
             self.send_json(payload, status=200 if payload.get("ok") else 404)
             return
 

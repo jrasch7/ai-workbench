@@ -5,6 +5,7 @@ from .validation_plan import (
     compare_validation_plan_snapshots,
     validation_plan_for_patch
 )
+from .test_coverage_intent import analyze_test_coverage_intent
 
 def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -22,8 +23,24 @@ def review_gate_for_patch(workspace_id: str, patch_id: str) -> dict:
     if patch_status == "rolled_back":
         return _build_gate_response(workspace_id, patch_id, "rolled_back", 0, False, [], "Patch foi revertido.")
 
+    # Check 5: Test coverage intent
+    coverage_intent = analyze_test_coverage_intent(workspace_id, patch_id, patch_payload_override=patch_payload)
+    intent_class = coverage_intent.get("classification", "unknown")
+    intent_severity = coverage_intent.get("severity", "none")
+
+    intent_status = "unknown"
+    if intent_class in ("code_with_tests", "docs_only"):
+        intent_status = "passed"
+    elif intent_class == "code_without_tests" or (intent_class == "mixed" and intent_severity == "warning"):
+        intent_status = "warning"
+    elif intent_class in ("tests_only", "config_only") or (intent_class == "mixed" and intent_severity == "info"):
+        intent_status = "info"
+
+    coverage_check = {"name": "Test coverage intent", "status": intent_status, "reason": coverage_intent.get("summary", "")}
+
     checks = []
     score = 0
+
 
     # Check 1: Patch metadata
     changed_files = patch.get("changed_files", [])
@@ -37,7 +54,7 @@ def review_gate_for_patch(workspace_id: str, patch_id: str) -> dict:
     plan_payload = ensure_validation_plan_snapshot(workspace_id, patch_id)
     if not plan_payload.get("ok"):
         checks.append({"name": "Validation plan", "status": "failed", "reason": f"Falha ao obter validation plan: {plan_payload.get('error')}"})
-        return _build_gate_response(workspace_id, patch_id, "needs_validation", score, False, checks, "Falha ao gerar plano de validação.")
+        return _build_gate_response(workspace_id, patch_id, "needs_validation", score, False, checks, "Falha ao gerar plano de validação.", coverage_intent)
 
     plan = plan_payload.get("plan", {})
     snapshot = plan_payload.get("snapshot", {})
@@ -45,12 +62,13 @@ def review_gate_for_patch(workspace_id: str, patch_id: str) -> dict:
     if plan.get("docs_only"):
         score = 70
         checks.append({"name": "Validation plan", "status": "passed", "reason": "Patch altera apenas documentação."})
-        return _build_gate_response(workspace_id, patch_id, "docs_only", score, True, checks, "Patch altera apenas documentação, apply manual permitido com confirmação.")
+        checks.append(coverage_check)
+        return _build_gate_response(workspace_id, patch_id, "docs_only", score, True, checks, "Patch altera apenas documentação, apply manual permitido com confirmação.", coverage_intent)
 
     plan_groups = plan.get("plan", [])
     if not plan_groups:
         checks.append({"name": "Validation plan", "status": "failed", "reason": "Nenhum teste sugerido/obrigatório para este patch."})
-        return _build_gate_response(workspace_id, patch_id, "needs_validation", score, False, checks, "Nenhum plano de validação gerado.")
+        return _build_gate_response(workspace_id, patch_id, "needs_validation", score, False, checks, "Nenhum plano de validação gerado.", coverage_intent)
 
     checks.append({"name": "Validation plan", "status": "passed", "reason": "Plano de validação foi gerado."})
     score += 20
@@ -58,7 +76,7 @@ def review_gate_for_patch(workspace_id: str, patch_id: str) -> dict:
     executions = snapshot.get("executions", {}).get("executions", [])
     if not executions:
         checks.append({"name": "Required commands", "status": "failed", "reason": "Nenhum comando do plano foi executado."})
-        return _build_gate_response(workspace_id, patch_id, "needs_validation", score, False, checks, "Execute os comandos do plano de validação.")
+        return _build_gate_response(workspace_id, patch_id, "needs_validation", score, False, checks, "Execute os comandos do plano de validação.", coverage_intent)
 
     # Collect expected commands
     expected_commands = set()
@@ -100,17 +118,33 @@ def review_gate_for_patch(workspace_id: str, patch_id: str) -> dict:
         summary = "Regressão detectada nos testes."
     else:
         score += 15
-        checks.append({"name": "Regression check", "status": "passed", "reason": "Nenhuma regressão detectada em relação ao snapshot anterior."})
+        checks.append({"name": "Regression check", "status": "passed", "reason": "Nenhuma regressão detectada em relação snapshot anterior."})
+
+    checks.append(coverage_check)
+
+    if intent_class == "code_with_tests":
+        score += 5
+    elif intent_class == "code_without_tests" or (intent_class == "mixed" and intent_severity == "warning"):
+        score -= 10
+    elif intent_class == "tests_only":
+        score += 3
+    elif intent_class == "config_only":
+        score -= 5
 
     if gate_status == "failed":
         score = min(score, 40)
     elif gate_status == "partial":
         score = min(score, 65)
 
-    return _build_gate_response(workspace_id, patch_id, gate_status, score, can_apply, checks, summary)
+    if score > 100:
+        score = 100
+    if score < 0:
+        score = 0
 
-def _build_gate_response(workspace_id: str, patch_id: str, status: str, score: int, can_apply: bool, checks: list, summary: str) -> dict:
-    return {
+    return _build_gate_response(workspace_id, patch_id, gate_status, score, can_apply, checks, summary, coverage_intent)
+
+def _build_gate_response(workspace_id: str, patch_id: str, status: str, score: int, can_apply: bool, checks: list, summary: str, coverage_intent: dict = None) -> dict:
+    res = {
         "ok": True,
         "workspace_id": workspace_id,
         "patch_id": patch_id,
@@ -121,6 +155,13 @@ def _build_gate_response(workspace_id: str, patch_id: str, status: str, score: i
         "checks": checks,
         "summary": summary
     }
+    if coverage_intent:
+        res["coverage_intent"] = {
+            "classification": coverage_intent.get("classification"),
+            "severity": coverage_intent.get("severity"),
+            "summary": coverage_intent.get("summary")
+        }
+    return res
 
 def list_review_gates(workspace_id: str, status_filter: str = None, limit: int = 50) -> dict:
     rows = []
