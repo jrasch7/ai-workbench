@@ -72,3 +72,5 @@ O Review Gate agora prioriza relatórios de test-runs que estão ligados diretam
 ## Próximo passo recomendado
 
 Avaliar o suporte de captura nativa para frameworks frontend complexos e integração com Mutation Testing nos workflows assíncronos.
+
+Integra com o [Coverage Baseline and Diff](AIW_COVERAGE_BASELINE_DIFF.md).

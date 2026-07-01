@@ -7,6 +7,7 @@ from .validation_plan import (
 )
 from .test_coverage_intent import analyze_test_coverage_intent
 from .coverage_report import analyze_patch_coverage
+from .coverage_baseline import coverage_diff
 
 def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -105,11 +106,43 @@ def review_gate_for_patch(workspace_id: str, patch_id: str) -> dict:
 
     real_coverage_check = {"name": "Coverage report", "status": cov_chk_status, "reason": cov_reason}
 
+    # Check 7: Coverage Diff
+    diff_report = {}
+    diff_status = "no_current_coverage"
+    diff_chk_status = "info"
+    diff_reason = "Sem coverage atual para comparar."
+
+    if captured_report:
+        diff_payload = coverage_diff(workspace_id, captured_report.get("test_run_id"), patch_id)
+        diff_report = diff_payload
+        diff_status = diff_payload.get("status", "unknown")
+
+        if diff_status == "improved":
+            diff_chk_status = "passed"
+            diff_reason = diff_payload.get("summary", "Coverage melhorou.")
+            score += 5
+        elif diff_status == "unchanged":
+            diff_chk_status = "passed"
+            diff_reason = diff_payload.get("summary", "Coverage estável.")
+            score += 2
+        elif diff_status == "regressed":
+            diff_chk_status = "warning"
+            diff_reason = diff_payload.get("summary", "Coverage regrediu vs baseline.")
+            score -= 10
+        elif diff_status == "no_baseline":
+            diff_chk_status = "info"
+            diff_reason = "Nenhuma baseline configurada."
+    else:
+        diff_reason = "Sem coverage atual (test-run capture) para comparar contra baseline."
+
+    diff_check = {"name": "Coverage diff vs baseline", "status": diff_chk_status, "reason": diff_reason, "diff_payload": diff_report}
+
     if plan.get("docs_only"):
         score = 70
         checks.append({"name": "Validation plan", "status": "passed", "reason": "Patch altera apenas documentação."})
         checks.append(coverage_check)
         checks.append(real_coverage_check)
+        checks.append(diff_check)
         return _build_gate_response(workspace_id, patch_id, "docs_only", score, True, checks, "Patch altera apenas documentação, apply manual permitido com confirmação.", coverage_intent, coverage_report)
 
     plan_groups = plan.get("plan", [])
@@ -169,6 +202,7 @@ def review_gate_for_patch(workspace_id: str, patch_id: str) -> dict:
 
     checks.append(coverage_check)
     checks.append(real_coverage_check)
+    checks.append(diff_check)
 
     if intent_class == "code_with_tests":
         score += 5

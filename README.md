@@ -131,3 +131,5 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 - [Coverage Report Adapter](docs/runbooks/AIW_COVERAGE_REPORT_ADAPTER.md) adapta relatórios LCOV/XML.
 
 - [Coverage Run Capture](docs/runbooks/AIW_COVERAGE_RUN_CAPTURE.md) captura coverage e usa thresholds.
+
+- [Coverage Baseline and Diff](docs/runbooks/AIW_COVERAGE_BASELINE_DIFF.md) define baselines locais manuais e compara diffs.

@@ -2366,7 +2366,20 @@ def render_page() -> str:
                     chk_st = "status-warning"
                 elif chk.get("status") == "info":
                     chk_st = "status-info"
-                gate_checks += f'<div class="tool-evidence-field" style="margin-top:6px;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg)"><strong>{html.escape(chk.get("name",""))}</strong> <span class="tag {chk_st}">{html.escape(chk.get("status",""))}</span><div style="font-size:12px;color:var(--muted);margin-top:4px">{html.escape(chk.get("reason",""))}</div></div>'
+
+                details = ""
+                if chk.get("name") == "Coverage diff vs baseline":
+                    diff = chk.get("diff_payload", {})
+                    if diff and diff.get("status") not in ("no_current_coverage", "unknown"):
+                        base_id = html.escape(diff.get("baseline_id") or "none")
+                        delta = diff.get("delta", 0.0)
+                        details = f'<div style="margin-top:6px;font-size:12px;background:rgba(255,255,255,0.05);padding:6px;border-radius:4px"><div style="margin-bottom:4px">Delta: {delta*100:+.1f}% | Baseline: {base_id}</div>'
+                        if diff.get("files"):
+                            files_html = "".join([f'<li>{f["file"]}: {f["status"]} ({f["delta"]*100:+.1f}%)</li>' for f in diff["files"]])
+                            details += f'<ul style="margin:4px 0 0 16px;padding:0">{files_html}</ul>'
+                        details += "</div>"
+
+                gate_checks += f'<div class="tool-evidence-field" style="margin-top:6px;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg)"><strong>{html.escape(chk.get("name",""))}</strong> <span class="tag {chk_st}">{html.escape(chk.get("status",""))}</span><div style="font-size:12px;color:var(--muted);margin-top:4px">{html.escape(chk.get("reason",""))}</div>{details}</div>'
 
         coverage_intent = analyze_test_coverage_intent(ws_id, patch["patch_id"], patch_payload_override={"ok": True, "patch": patch})
         coverage_class = coverage_intent.get("classification", "unknown")
@@ -2816,6 +2829,15 @@ def render_page() -> str:
               <button class="btn btn-secondary" type="submit">Executar Agent Offline neste workspace</button>
             </form>
         """
+        from aiw_workspace.coverage_baseline import get_current_coverage_baseline
+        baseline_payload = get_current_coverage_baseline(ws["id"])
+        baseline_tags = ""
+        if baseline_payload.get("ok"):
+            b = baseline_payload["baseline"]
+            baseline_tags = f'<span class="tag status-info">{b.get("coverage_status", "unknown")}</span><span class="tag">Line-rate: {b.get("average_line_rate", 0.0)*100:.1f}%</span><span class="tag">Origem: {b.get("source_test_run_id", "")}</span><a class="tag" href="/api/workspaces/{ws["id"]}/coverage/baselines" target="_blank">Histórico</a><div class="signal-note">Baseline é promovida manualmente. O AIW não roda coverage nem troca branch automaticamente nesta versão.</div>'
+        else:
+            baseline_tags = f'<span class="tag status-warning">Sem baseline</span><span class="tag">{baseline_payload.get("error")}</span><div class="signal-note">Baseline é promovida manualmente. O AIW não roda coverage nem troca branch automaticamente nesta versão.</div>'
+
         workspace_cards += f"""
         <div class="card">
           <div class="card-title">{html.escape(ws["name"])}</div>
@@ -2844,6 +2866,7 @@ def render_page() -> str:
 		            <div class="signal-row"><span class="signal-name">Warnings</span><span class="tag">{html.escape(warnings[:120])}</span></div>
 		            <div class="signal-row"><span class="signal-name">Test Commands</span><span class="tag">Profile only</span><span class="tag">Sem commit</span><span class="tag">Sem push</span><span class="tag">Sem auto-apply</span></div>
 		            <div class="signal-row"><span class="signal-name">Último teste</span><span class="tag">{html.escape(last_test_label)}</span></div>
+		            <div class="signal-row"><span class="signal-name">Coverage Baseline</span>{baseline_tags}</div>
 		            {test_command_rows}
 		          </div>
 		          <details style="margin-top:12px">
@@ -2944,7 +2967,46 @@ def render_page() -> str:
             else:
                 test_run_html += '<div class="signal-note status-info">Nenhum relatório configurado ou existente. O AIW não executa coverage extra automaticamente.</div>'
 
-            test_run_html += "</div>"
+            from aiw_workspace.coverage_baseline import coverage_diff
+            diff_payload = coverage_diff(ws_id, test_id, patch_id)
+            if diff_payload.get("ok"):
+                d_status = diff_payload.get("status")
+                d_delta = diff_payload.get("delta", 0.0)
+                d_base_id = diff_payload.get("baseline_id")
+                d_tag = ""
+                if d_status == "improved":
+                    d_tag = '<span class="tag status-passed">Improved</span>'
+                elif d_status == "regressed":
+                    d_tag = '<span class="tag status-warning">Regressed</span>'
+                elif d_status == "unchanged":
+                    d_tag = '<span class="tag status-info">Unchanged</span>'
+                elif d_status == "no_baseline":
+                    d_tag = '<span class="tag status-info">Sem baseline atual</span>'
+
+                test_run_html += f"""
+                <div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.1)">
+                  <div style="font-weight:600;margin-bottom:6px;font-size:12px">Coverage Diff vs Baseline</div>
+                  <div class="card-meta" style="margin-bottom:6px">
+                    {d_tag}
+                    <span class="tag">Delta: {d_delta*100:+.1f}%</span>
+                    <span class="tag">Baseline: {d_base_id or 'none'}</span>
+                  </div>
+                  <div class="signal-note">{html.escape(diff_payload.get("summary", ""))}</div>
+                """
+                if diff_payload.get("files"):
+                    files_html = "".join([f'<li>{f["file"]}: {f["status"]} ({f["delta"]*100:+.1f}%)</li>' for f in diff_payload["files"]])
+                    test_run_html += f'<div class="signal-note"><ul style="margin:4px 0 0 16px;padding:0">{files_html}</ul></div>'
+
+                test_run_html += "</div>"
+
+            test_run_html += f"""
+            <form method="post" action="/api/workspaces/{ws_id}/coverage/baseline/promote" style="margin-top:8px">
+              <input type="hidden" name="test_run_id" value="{test_id}">
+              <input type="hidden" name="confirm" value="true">
+              <button class="btn btn-secondary" type="submit" style="font-size:11px;padding:4px 8px">Promover este coverage como baseline</button>
+            </form>
+            </div>
+            """
 
         test_run_html += f"""
           <div class="test-run-actions" style="margin-top:12px">
@@ -4361,20 +4423,50 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/api/workspaces/") and path.endswith("/health"):
-            ws_id = path[len("/api/workspaces/"):-len("/health")].strip("/")
-            health_payload = workspace_health(ws_id)
             self.send_json(health_payload, status=200 if health_payload.get("ok") else 404)
+            return
+
+        if path.startswith("/api/workspaces/") and path.endswith("/execution-policy"):
+            ws_id = path[len("/api/workspaces/"):-len("/execution-policy")].strip("/")
+            policy = get_workspace_execution_policy(ws_id)
+            return self._respond(policy, 200)
+
+        if path.startswith("/api/workspaces/") and path.endswith("/coverage/baselines"):
+            ws_id = path.split("/")[3]
+            from aiw_workspace.coverage_baseline import list_coverage_baselines
+            return self._respond(list_coverage_baselines(ws_id), 200)
+
+        if path.startswith("/api/workspaces/") and path.endswith("/coverage/baseline"):
+            ws_id = path.split("/")[3]
+            from aiw_workspace.coverage_baseline import get_current_coverage_baseline
+            return self._respond(get_current_coverage_baseline(ws_id), 200)
+
+        if path.startswith("/api/workspaces/") and "/tests/runs/" in path and path.endswith("/coverage-diff"):
+            parts = path.split("/")
+            from aiw_workspace.coverage_baseline import coverage_diff
+            return self._respond(coverage_diff(parts[3], parts[6]), 200)
+
+        if path.startswith("/api/workspaces/") and "/patches/" in path and path.endswith("/coverage-diff"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            patch_id = parts[5]
+            from aiw_workspace.test_runner import list_test_runs
+            runs_payload = list_test_runs(ws_id, limit=50)
+            cap_run_id = next((r.get("test_run_id") for r in runs_payload.get("runs", []) if r.get("patch_id") == patch_id and r.get("coverage_summary", {}).get("summary", {}).get("has_reports")), None)
+            from aiw_workspace.coverage_baseline import coverage_diff
+            if cap_run_id:
+                return self._respond(coverage_diff(ws_id, cap_run_id, patch_id), 200)
+            return self._respond({"ok": True, "status": "no_current_coverage", "error": "No captured run found for patch"}, 200)
+
+        if path.startswith("/api/workspaces/") and path.endswith("/execution-policy"):
+            ws_id = path[len("/api/workspaces/"):-len("/execution-policy")].strip("/")
+            payload = workspace_execution_policy(ws_id)
+            self.send_json(payload, status=200 if payload.get("ok") else 404)
             return
 
         if path.startswith("/api/workspaces/") and path.endswith("/profile/validate"):
             ws_id = path[len("/api/workspaces/"):-len("/profile/validate")].strip("/")
             payload = validate_workspace_profile(ws_id)
-            self.send_json(payload, status=200 if payload.get("ok") else 404)
-            return
-
-        if path.startswith("/api/workspaces/") and path.endswith("/execution-policy"):
-            ws_id = path[len("/api/workspaces/"):-len("/execution-policy")].strip("/")
-            payload = workspace_execution_policy(ws_id)
             self.send_json(payload, status=200 if payload.get("ok") else 404)
             return
 
