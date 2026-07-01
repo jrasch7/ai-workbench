@@ -52,3 +52,4 @@ Os evidence bundles e o risk level são renderizados na interface local, com bot
 
 Considerar adicionar Mutation Testing (v1) para aumentar a confiabilidade da intenção de cobertura, ou implementar Sync de estado com provedores externos via CLI local.
 - [AIW Patch Evidence Export](AIW_PATCH_EVIDENCE_EXPORT.md)
+- [AIW Integration Outbox](AIW_INTEGRATION_OUTBOX.md)

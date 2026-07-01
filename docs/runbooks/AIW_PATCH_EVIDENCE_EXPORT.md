@@ -44,3 +44,4 @@ Os exports podem ser acionados e baixados via interface local na sessão daquele
 ## Próximo passo recomendado
 
 Plugar automações simples CLI (ou agentes extras) que leiam o `pr-summary.md` gerado e usem o comando `gh pr edit` ou chamem APIs de tickets para espelhar as informações e facilitar o code-review assíncrono entre devs humanos e LLM.
+- [AIW Integration Outbox](AIW_INTEGRATION_OUTBOX.md)

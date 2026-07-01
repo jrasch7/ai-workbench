@@ -2619,6 +2619,61 @@ def render_page() -> str:
           </form>
         </div>
         """
+
+        from aiw_workspace.integration_outbox import list_outbox_items
+        outbox_payload = list_outbox_items(ws_id, pid)
+        outbox_items = outbox_payload.get("items", [])
+        latest_item = outbox_items[0] if outbox_items else None
+        
+        outbox_html = ""
+        if latest_item:
+            i_id = latest_item.get("item_id")
+            i_date = latest_item.get("created_at", "")
+            i_target = latest_item.get("target", "")
+            i_kind = latest_item.get("kind", "")
+            i_status = latest_item.get("status", "")
+            outbox_html = f"""
+            <div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
+              <div style="font-weight:600;margin-bottom:6px">Integration Outbox</div>
+              <div class="card-meta" style="margin-bottom:6px">
+                <span class="tag">Status: {i_status}</span>
+                <span class="tag">Target: {i_target}</span>
+                <span class="tag">Kind: {i_kind}</span>
+              </div>
+              <div class="signal-note" style="margin-bottom:6px">ID: {i_id} · {i_date}</div>
+              <div class="signal-note" style="margin-bottom:6px;color:var(--muted)">Integration Outbox é local. O AIW não envia para GitHub/Jira, não executa gh e não faz push nesta versão.</div>
+              <div class="patch-actions" style="margin-top:8px">
+                <form method="post" action="/api/workspaces/{ws_id}/integration-outbox/{i_id}/status" style="display:inline">
+                  <input type="hidden" name="status" value="ready">
+                  <input type="hidden" name="confirm" value="true">
+                  <button class="btn btn-secondary" type="submit">Marcar ready</button>
+                </form>
+                <form method="post" action="/api/workspaces/{ws_id}/integration-outbox/{i_id}/status" style="display:inline">
+                  <input type="hidden" name="status" value="copied">
+                  <input type="hidden" name="confirm" value="true">
+                  <button class="btn btn-run" type="submit">Marcar copied</button>
+                </form>
+                <form method="post" action="/api/workspaces/{ws_id}/integration-outbox/{i_id}/status" style="display:inline">
+                  <input type="hidden" name="status" value="dismissed">
+                  <input type="hidden" name="confirm" value="true">
+                  <button class="btn btn-ghost" type="submit">Dismiss</button>
+                </form>
+                <a class="btn btn-ghost" href="/api/workspaces/{ws_id}/patches/{pid}/integration-outbox/{i_id}/file/payload.md" target="_blank">Ver payload.md</a>
+                <a class="btn btn-ghost" href="/api/workspaces/{ws_id}/patches/{pid}/integration-outbox/{i_id}/file/command-preview.sh" target="_blank">Ver command preview</a>
+              </div>
+            </div>
+            """
+        
+        outbox_html += f"""
+        <div style="margin-top:8px;margin-bottom:12px">
+          <form method="post" action="/api/workspaces/{ws_id}/patches/{pid}/integration-outbox" style="display:inline">
+            <input type="hidden" name="target" value="github_pr">
+            <input type="hidden" name="kind" value="pr_summary">
+            <input type="hidden" name="confirm" value="true">
+            <button class="btn btn-secondary" type="submit">Criar GitHub PR Draft</button>
+          </form>
+        </div>
+        """
         apply_btn = ""
         if patch["status"] == "preview":
             if gate.get("ok") and (gate.get("can_apply") or gate_status == "docs_only"):
@@ -2820,6 +2875,7 @@ def render_page() -> str:
           </details>
           {bundle_html}
           {export_html}
+          {outbox_html}
           <div class="patch-actions" style="margin-top:12px">{apply_btn}</div>
         </div>
         """
@@ -4682,6 +4738,52 @@ class Handler(BaseHTTPRequestHandler):
             from aiw_workspace.evidence_export import list_evidence_exports
             return self._respond(list_evidence_exports(ws_id, patch_id), 200)
 
+        if path.startswith("/api/workspaces/") and "/patches/" in path and "/integration-outbox/" in path and "/file/" in path:
+            parts = path.split("/")
+            ws_id = parts[3]
+            patch_id = parts[5]
+            item_id = parts[7]
+            filename = parts[9]
+            from aiw_workspace.integration_outbox import resolve_outbox_item_file
+            fpath = resolve_outbox_item_file(ws_id, item_id, filename)
+            if not fpath:
+                self.send_json({"ok": False, "error": "file_not_found"}, status=404)
+                return
+            content = fpath.read_text(encoding="utf-8")
+            self.send_response(200)
+            if filename.endswith(".json"):
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+            elif filename.endswith(".md"):
+                self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            elif filename.endswith(".sh"):
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(content.encode("utf-8"))))
+            self.end_headers()
+            self.wfile.write(content.encode("utf-8"))
+            return
+
+        if path.startswith("/api/workspaces/") and "/integration-outbox/" in path and not "/file/" in path and not path.endswith("/status"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            if "/patches/" in path:
+                item_id = parts[7]
+            else:
+                item_id = parts[5]
+            from aiw_workspace.integration_outbox import read_outbox_item
+            return self._respond(read_outbox_item(ws_id, item_id), 200)
+
+        if path.startswith("/api/workspaces/") and "/patches/" in path and path.endswith("/integration-outbox"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            patch_id = parts[5]
+            from aiw_workspace.integration_outbox import list_outbox_items
+            return self._respond(list_outbox_items(ws_id, patch_id), 200)
+
+        if path.startswith("/api/workspaces/") and path.endswith("/integration-outbox"):
+            ws_id = path[len("/api/workspaces/"):-len("/integration-outbox")].strip("/")
+            from aiw_workspace.integration_outbox import list_outbox_items
+            return self._respond(list_outbox_items(ws_id), 200)
+
         if path.startswith("/api/workspaces/") and path.endswith("/execution-policy"):
             ws_id = path[len("/api/workspaces/"):-len("/execution-policy")].strip("/")
             policy = get_workspace_execution_policy(ws_id)
@@ -5189,6 +5291,39 @@ class Handler(BaseHTTPRequestHandler):
             formats = request_data.get("formats")
             from aiw_workspace.evidence_export import create_evidence_export
             res = create_evidence_export(ws_id, patch_id, bundle_id, formats)
+            self.send_json(res, status=200 if res.get("ok") else 400)
+            return
+
+        if path.startswith("/api/workspaces/") and "/patches/" in path and path.endswith("/integration-outbox"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            patch_id = parts[5]
+            confirm = str(request_data.get("confirm", "")).lower() in ("1", "true", "yes", "on")
+            if not confirm:
+                self.send_json({"ok": False, "error": "confirmation_required"}, status=400)
+                return
+            target = request_data.get("target")
+            kind = request_data.get("kind")
+            export_id = request_data.get("export_id")
+            from aiw_workspace.integration_outbox import create_outbox_item
+            res = create_outbox_item(ws_id, patch_id, target, kind, export_id)
+            self.send_json(res, status=200 if res.get("ok") else 400)
+            return
+
+        if path.startswith("/api/workspaces/") and "/integration-outbox/" in path and path.endswith("/status"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            if "/patches/" in path:
+                item_id = parts[7]
+            else:
+                item_id = parts[5]
+            confirm = str(request_data.get("confirm", "")).lower() in ("1", "true", "yes", "on")
+            if not confirm:
+                self.send_json({"ok": False, "error": "confirmation_required"}, status=400)
+                return
+            status = request_data.get("status")
+            from aiw_workspace.integration_outbox import update_outbox_item_status
+            res = update_outbox_item_status(ws_id, item_id, status)
             self.send_json(res, status=200 if res.get("ok") else 400)
             return
 

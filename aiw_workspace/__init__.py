@@ -48,6 +48,7 @@ from .changed_lines_coverage import analyze_changed_lines_coverage
 from .test_result_report import analyze_test_results
 from .evidence_bundle import create_evidence_bundle, list_evidence_bundles, read_evidence_bundle, record_patch_decision
 from .evidence_export import create_evidence_export, list_evidence_exports, read_evidence_export, resolve_evidence_export_file
+from .integration_outbox import create_outbox_item, list_outbox_items, read_outbox_item, update_outbox_item_status, resolve_outbox_item_file
 
 __all__ = [
     "DEFAULT_WORKSPACE",
@@ -99,4 +100,9 @@ __all__ = [
     "list_evidence_exports",
     "read_evidence_export",
     "resolve_evidence_export_file",
+    "create_outbox_item",
+    "list_outbox_items",
+    "read_outbox_item",
+    "update_outbox_item_status",
+    "resolve_outbox_item_file",
 ]
