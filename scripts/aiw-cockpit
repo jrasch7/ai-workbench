@@ -2587,6 +2587,38 @@ def render_page() -> str:
         </div>
         """
 
+        from aiw_workspace.evidence_export import list_evidence_exports
+        ex_payload = list_evidence_exports(ws_id, pid)
+        exports = ex_payload.get("exports", [])
+        latest_export = exports[0] if exports else None
+        
+        export_html = ""
+        if latest_export:
+            e_id = latest_export.get("export_id")
+            e_date = latest_export.get("created_at", "")
+            e_bundle = latest_export.get("bundle_id", "")
+            export_html = f"""
+            <div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
+              <div style="font-weight:600;margin-bottom:6px">Evidence Export</div>
+              <div class="signal-note" style="margin-bottom:6px">ID: {e_id} · {e_date} · Origem: {e_bundle}</div>
+              <div class="signal-note" style="margin-bottom:6px;color:var(--muted)">Evidence Export é um pacote local de auditoria/handoff. Ele não aplica patch, não commita, não faz push e não envia para sistemas externos.</div>
+              <div class="patch-actions" style="margin-top:8px">
+                <a class="btn btn-ghost" href="/api/workspaces/{ws_id}/patches/{pid}/evidence-exports/{e_id}/file/pr-summary.md" target="_blank">Ver PR Summary</a>
+                <a class="btn btn-ghost" href="/api/workspaces/{ws_id}/patches/{pid}/evidence-exports/{e_id}/file/handoff.md" target="_blank">Ver Handoff</a>
+                <a class="btn btn-ghost" href="/api/workspaces/{ws_id}/patches/{pid}/evidence-exports/{e_id}/file/export.json" target="_blank">Ver JSON</a>
+                <a class="btn btn-ghost" href="/api/workspaces/{ws_id}/patches/{pid}/evidence-exports/{e_id}/file/evidence-export.zip" target="_blank">Baixar ZIP</a>
+              </div>
+            </div>
+            """
+        
+        export_html += f"""
+        <div style="margin-top:8px;margin-bottom:12px">
+          <form method="post" action="/api/workspaces/{ws_id}/patches/{pid}/evidence-exports" style="display:inline">
+            <input type="hidden" name="confirm" value="true">
+            <button class="btn btn-secondary" type="submit">Gerar export</button>
+          </form>
+        </div>
+        """
         apply_btn = ""
         if patch["status"] == "preview":
             if gate.get("ok") and (gate.get("can_apply") or gate_status == "docs_only"):
@@ -2787,6 +2819,7 @@ def render_page() -> str:
             <div class="signal-list" style="margin-top:8px">{snapshot_history_rows}</div>
           </details>
           {bundle_html}
+          {export_html}
           <div class="patch-actions" style="margin-top:12px">{apply_btn}</div>
         </div>
         """
@@ -4604,6 +4637,51 @@ class Handler(BaseHTTPRequestHandler):
             from aiw_workspace.evidence_bundle import list_evidence_bundles
             return self._respond(list_evidence_bundles(ws_id, patch_id), 200)
 
+        if path.startswith("/api/workspaces/") and "/patches/" in path and "/evidence-exports/" in path and "/file/" in path:
+            parts = path.split("/")
+            ws_id = parts[3]
+            patch_id = parts[5]
+            export_id = parts[7]
+            filename = parts[9]
+            from aiw_workspace.evidence_export import resolve_evidence_export_file
+            fpath = resolve_evidence_export_file(ws_id, patch_id, export_id, filename)
+            if not fpath:
+                self.send_json({"ok": False, "error": "file_not_found"}, status=404)
+                return
+            if filename.endswith(".zip"):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                content = fpath.read_bytes()
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+                return
+            content = fpath.read_text(encoding="utf-8")
+            self.send_response(200)
+            if filename.endswith(".json"):
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+            elif filename.endswith(".md"):
+                self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.send_header("Content-Length", str(len(content.encode("utf-8"))))
+            self.end_headers()
+            self.wfile.write(content.encode("utf-8"))
+            return
+
+        if path.startswith("/api/workspaces/") and "/patches/" in path and "/evidence-exports/" in path:
+            parts = path.split("/")
+            ws_id = parts[3]
+            patch_id = parts[5]
+            export_id = parts[7]
+            from aiw_workspace.evidence_export import read_evidence_export
+            return self._respond(read_evidence_export(ws_id, patch_id, export_id), 200)
+
+        if path.startswith("/api/workspaces/") and "/patches/" in path and path.endswith("/evidence-exports"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            patch_id = parts[5]
+            from aiw_workspace.evidence_export import list_evidence_exports
+            return self._respond(list_evidence_exports(ws_id, patch_id), 200)
+
         if path.startswith("/api/workspaces/") and path.endswith("/execution-policy"):
             ws_id = path[len("/api/workspaces/"):-len("/execution-policy")].strip("/")
             policy = get_workspace_execution_policy(ws_id)
@@ -5096,6 +5174,21 @@ class Handler(BaseHTTPRequestHandler):
                 return
             from aiw_workspace.evidence_bundle import create_evidence_bundle
             res = create_evidence_bundle(ws_id, patch_id)
+            self.send_json(res, status=200 if res.get("ok") else 400)
+            return
+
+        if path.startswith("/api/workspaces/") and "/patches/" in path and path.endswith("/evidence-exports"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            patch_id = parts[5]
+            confirm = str(request_data.get("confirm", "")).lower() in ("1", "true", "yes", "on")
+            if not confirm:
+                self.send_json({"ok": False, "error": "confirmation_required"}, status=400)
+                return
+            bundle_id = request_data.get("bundle_id")
+            formats = request_data.get("formats")
+            from aiw_workspace.evidence_export import create_evidence_export
+            res = create_evidence_export(ws_id, patch_id, bundle_id, formats)
             self.send_json(res, status=200 if res.get("ok") else 400)
             return
 
