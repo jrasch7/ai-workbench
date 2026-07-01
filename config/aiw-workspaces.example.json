@@ -85,6 +85,18 @@
           ".venv",
           "vendor",
           "__pycache__"
+        ],
+        "coverage_reports": [
+          {
+            "name": "Python coverage XML",
+            "format": "cobertura_xml",
+            "path": "coverage.xml"
+          },
+          {
+            "name": "Frontend LCOV",
+            "format": "lcov",
+            "path": "coverage/lcov.info"
+          }
         ]
       }
     }

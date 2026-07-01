@@ -58,3 +58,5 @@ No cabeçalho do patch, foi introduzida uma tag extra visualizando imediatamente
 ## Próximo passo recomendado
 
 Implementar a análise de coverage real e/ou mutation testing. Ao invés de inferir a presença de testes via nomes, integrar um `pytest --cov` (ou análogo) sobre os arquivos modificados para comprovar tecnicamente a proteção.
+
+Veja também o [Coverage Report Adapter](AIW_COVERAGE_REPORT_ADAPTER.md).

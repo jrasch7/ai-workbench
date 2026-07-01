@@ -133,6 +133,21 @@ def _merge_profile(profile: dict | None) -> dict:
             merged["validation_groups"] = groups
         elif "validation_groups" not in profile:
             merged["validation_groups"] = []
+
+        if isinstance(profile.get("coverage_reports"), list):
+            reports = []
+            for item in profile["coverage_reports"]:
+                if not isinstance(item, dict):
+                    continue
+                reports.append({
+                    "name": str(item.get("name", "")),
+                    "format": str(item.get("format", "unknown")),
+                    "path": str(item.get("path", "")),
+                })
+            merged["coverage_reports"] = reports
+        elif "coverage_reports" not in profile:
+            merged["coverage_reports"] = []
+
     return merged
 
 
@@ -592,6 +607,39 @@ def validate_profile(workspace_id: str | None = None) -> dict:
     warnings.extend(group_warnings)
     if group_errors:
         warnings.append("validation_groups contem entradas invalidas")
+
+    coverage_reports = profile.get("coverage_reports", [])
+    coverage_checks = []
+    for report in coverage_reports:
+        r_path = report.get("path", "")
+        name = report.get("name", "")
+        normalized, error = _normalize_rel_pattern(r_path)
+        blocked = bool(normalized and _blocked_pattern(normalized, profile.get("blocked_paths", [])))
+        if blocked:
+            error = "blocked_pattern"
+        exists = False
+        if normalized and not error and root.is_dir():
+            p = (root / normalized).resolve()
+            try:
+                if str(p).startswith(str(root)):
+                    exists = p.is_file()
+                else:
+                    error = "unsafe_pattern"
+            except Exception:
+                error = "unsafe_pattern"
+        if error:
+            warnings.append(f"coverage_report '{name}' path invalido: {error}")
+        elif not exists:
+            warnings.append(f"coverage_report '{name}' arquivo ausente: {normalized}")
+        coverage_checks.append({
+            "name": name,
+            "path": normalized or r_path,
+            "format": report.get("format", "unknown"),
+            "ok": not error,
+            "error": error,
+            "exists": exists
+        })
+
     status = "valid" if not warnings and not mapping_errors and not group_errors else ("incomplete" if profile else "needs_attention")
     return {
         "ok": True,
@@ -614,6 +662,8 @@ def validate_profile(workspace_id: str | None = None) -> dict:
         "validation_group_errors": group_errors,
         "source_root_checks": source_checks,
         "test_command_checks": command_checks,
+        "coverage_reports": coverage_reports,
+        "coverage_report_checks": coverage_checks,
         "warnings": warnings,
         "stack": detect_stack(root) if root.is_dir() else {"primary": "unknown", "stacks": ["unknown"]},
     }

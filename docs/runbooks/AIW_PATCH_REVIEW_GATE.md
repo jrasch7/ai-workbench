@@ -84,3 +84,7 @@ Expandir a heurística de score para verificar cobertura de mutação de testes 
 ## Test Coverage Intent
 
 O [Patch Test Coverage Intent](AIW_PATCH_TEST_COVERAGE_INTENT.md) penaliza ou bonifica o Readiness Score.
+
+## Coverage Report
+
+O gate avalia pontuações reais com base no [Coverage Report Adapter](AIW_COVERAGE_REPORT_ADAPTER.md).

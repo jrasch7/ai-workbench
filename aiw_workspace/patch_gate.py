@@ -59,11 +59,38 @@ def review_gate_for_patch(workspace_id: str, patch_id: str) -> dict:
     plan = plan_payload.get("plan", {})
     snapshot = plan_payload.get("snapshot", {})
 
+    # Check 6: Real Coverage Report
+    changed_files = patch.get("changed_files", [])
+    coverage_report = analyze_patch_coverage(workspace_id, patch_id, changed_files)
+    cov_status = coverage_report.get("summary", {}).get("status", "unknown")
+
+    if cov_status == "covered":
+        cov_chk_status = "passed"
+        cov_reason = "Arquivos alterados possuem cobertura de testes suficiente."
+        score += 5
+    elif cov_status == "partial":
+        cov_chk_status = "warning"
+        cov_reason = "Arquivos alterados possuem cobertura parcial ou abaixo do esperado."
+        score -= 5
+    elif cov_status == "missing":
+        cov_chk_status = "warning"
+        cov_reason = "Relatório de cobertura existe, mas arquivos alterados não foram cobertos."
+        score -= 10
+    elif cov_status == "no_report":
+        cov_chk_status = "info"
+        cov_reason = "Nenhum relatório de cobertura configurado ou existente."
+    else:
+        cov_chk_status = "info"
+        cov_reason = "Status de cobertura desconhecido ou erro ao processar relatório."
+
+    real_coverage_check = {"name": "Coverage report", "status": cov_chk_status, "reason": cov_reason}
+
     if plan.get("docs_only"):
         score = 70
         checks.append({"name": "Validation plan", "status": "passed", "reason": "Patch altera apenas documentação."})
         checks.append(coverage_check)
-        return _build_gate_response(workspace_id, patch_id, "docs_only", score, True, checks, "Patch altera apenas documentação, apply manual permitido com confirmação.", coverage_intent)
+        checks.append(real_coverage_check)
+        return _build_gate_response(workspace_id, patch_id, "docs_only", score, True, checks, "Patch altera apenas documentação, apply manual permitido com confirmação.", coverage_intent, coverage_report)
 
     plan_groups = plan.get("plan", [])
     if not plan_groups:
@@ -121,6 +148,7 @@ def review_gate_for_patch(workspace_id: str, patch_id: str) -> dict:
         checks.append({"name": "Regression check", "status": "passed", "reason": "Nenhuma regressão detectada em relação snapshot anterior."})
 
     checks.append(coverage_check)
+    checks.append(real_coverage_check)
 
     if intent_class == "code_with_tests":
         score += 5
@@ -141,9 +169,9 @@ def review_gate_for_patch(workspace_id: str, patch_id: str) -> dict:
     if score < 0:
         score = 0
 
-    return _build_gate_response(workspace_id, patch_id, gate_status, score, can_apply, checks, summary, coverage_intent)
+    return _build_gate_response(workspace_id, patch_id, gate_status, score, can_apply, checks, summary, coverage_intent, coverage_report)
 
-def _build_gate_response(workspace_id: str, patch_id: str, status: str, score: int, can_apply: bool, checks: list, summary: str, coverage_intent: dict = None) -> dict:
+def _build_gate_response(workspace_id: str, patch_id: str, status: str, score: int, can_apply: bool, checks: list, summary: str, coverage_intent: dict = None, coverage_report: dict = None) -> dict:
     res = {
         "ok": True,
         "workspace_id": workspace_id,
@@ -161,6 +189,8 @@ def _build_gate_response(workspace_id: str, patch_id: str, status: str, score: i
             "severity": coverage_intent.get("severity"),
             "summary": coverage_intent.get("summary")
         }
+    if coverage_report:
+        res["coverage_report"] = coverage_report
     return res
 
 def list_review_gates(workspace_id: str, status_filter: str = None, limit: int = 50) -> dict:

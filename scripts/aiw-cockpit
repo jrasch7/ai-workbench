@@ -65,6 +65,8 @@ from aiw_workspace import (
     list_review_gates,
     apply_reviewed_patch,
     analyze_test_coverage_intent,
+    analyze_patch_coverage,
+    load_patch_preview,
 )
 
 TASK_QUEUES = ["inbox", "running", "blocked", "queued", "done", "failed"]
@@ -2408,6 +2410,51 @@ def render_page() -> str:
             coverage_block += f'<div class="signal-note">Recomendações: <ul style="margin:4px 0 0 16px;padding:0">{recs_html}</ul></div>'
 
         coverage_block += "</div>"
+
+        coverage_report = gate.get("coverage_report") or analyze_patch_coverage(ws_id, patch["patch_id"], patch.get("changed_files") or [patch.get("path")] if patch.get("path") else [])
+        real_cov_status = coverage_report.get("summary", {}).get("status", "no_report")
+        real_cov_reports_found = [r.get("name") for r in coverage_report.get("reports", []) if r.get("exists")]
+        real_cov_avg = coverage_report.get("summary", {}).get("average_changed_file_line_rate", 0.0)
+
+        real_cov_badges = {
+            "covered": '<span class="tag status-passed">Coverage: covered</span>',
+            "partial": '<span class="tag status-warning">Coverage: partial</span>',
+            "missing": '<span class="tag status-warning" style="color:var(--warn)">Coverage: missing</span>',
+            "no_report": '<span class="tag status-info">Coverage: no report</span>',
+            "unknown": '<span class="tag status-info">Coverage: unknown</span>'
+        }
+        real_cov_badge = real_cov_badges.get(real_cov_status, '<span class="tag">Coverage: Unknown</span>')
+
+        real_cov_block = f"""
+        <div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
+          <div style="font-weight:600;margin-bottom:6px">Coverage Report</div>
+          <div class="card-meta" style="margin-bottom:6px">
+            <span class="tag">Status: {html.escape(real_cov_status)}</span>
+            <span class="tag">Line-rate: {html.escape(f"{real_cov_avg*100:.1f}%")}</span>
+          </div>
+        """
+
+        if not real_cov_reports_found:
+            real_cov_block += '<div class="signal-note status-info" style="margin-bottom:6px">Coverage real é lido apenas de relatórios já existentes/configurados. O AIW não instala dependências nem executa coverage automaticamente nesta versão.</div>'
+        else:
+            reps_html = "".join(f'<span class="tag">{html.escape(r)}</span>' for r in real_cov_reports_found)
+            real_cov_block += f'<div class="signal-note" style="margin-bottom:6px">Relatórios encontrados: {reps_html}</div>'
+
+        found_html = ""
+        missing_html = ""
+        for fc in coverage_report.get("changed_files_coverage", []):
+            if fc.get("found_in_report"):
+                found_html += f'<li>{html.escape(fc["file"])} ({fc["line_rate"]*100:.1f}%)</li>'
+            else:
+                missing_html += f'<li>{html.escape(fc["file"])}</li>'
+
+        if found_html:
+            real_cov_block += f'<div class="signal-note">Encontrados:<ul style="margin:4px 0 0 16px;padding:0;color:var(--success)">{found_html}</ul></div>'
+        if missing_html:
+            real_cov_block += f'<div class="signal-note" style="margin-top:6px">Não encontrados:<ul style="margin:4px 0 0 16px;padding:0;color:var(--warn)">{missing_html}</ul></div>'
+
+        real_cov_block += "</div>"
+
         apply_btn = ""
         if patch["status"] == "preview":
             if gate.get("ok") and (gate.get("can_apply") or gate_status == "docs_only"):
@@ -2563,6 +2610,7 @@ def render_page() -> str:
             <span class="tag">{ws_id}</span>
             <span class="tag">{scope}</span>
             {coverage_badge}
+            {real_cov_badge}
           </div>
           <div class="signal-note" style="margin:8px 0">Arquivos alterados: {changed_files_html}</div>
           <details open style="margin-top:10px">
@@ -2574,6 +2622,7 @@ def render_page() -> str:
             </div>
             <div>{gate_checks}</div>
             {coverage_block}
+            {real_cov_block}
             <div style="margin-top:10px">
               <a class="btn btn-ghost" href="/api/workspaces/{ws_id}/patches/{pid}/review-gate" target="_blank">Ver JSON do Gate</a>
             </div>
@@ -4211,6 +4260,18 @@ class Handler(BaseHTTPRequestHandler):
             ws_id, patch_id = parsed_coverage
             payload = analyze_test_coverage_intent(ws_id, patch_id)
             self.send_json(payload, status=200 if payload.get("ok") else 404)
+            return
+
+        parsed_coverage_report = parse_workspace_patch_path(path, "/coverage-report")
+        if parsed_coverage_report:
+            ws_id, patch_id = parsed_coverage_report
+            # To get changed files, we need patch metadata. But analyze_patch_coverage requires changed_files.
+            patch_data = load_patch_preview(ws_id, patch_id)
+            changed_files = patch_data.get("patch", {}).get("changed_files", []) if patch_data.get("ok") else []
+            payload = analyze_patch_coverage(ws_id, patch_id, changed_files)
+            # Make sure to return ok=True from our endpoint structure
+            payload["ok"] = True
+            self.send_json(payload, status=200)
             return
 
         if path.startswith("/api/workspaces/") and path.endswith("/patches/review-gates"):
