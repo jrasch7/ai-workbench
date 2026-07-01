@@ -56,3 +56,5 @@ O Review Gate não bloqueia patches por falta de cobertura total, atuando apenas
 ## Próximo passo recomendado
 
 Permitir configuração dinâmica de _threshold_ por `workspace_profile` e avaliar a adição de Mutation Testing para robustez avançada de testes automatizados com IA, bloqueando fixamente applies onde linhas vitais introduzidas ficaram orfãs.
+
+Veja também a captura por [Coverage Run Capture](AIW_COVERAGE_RUN_CAPTURE.md).

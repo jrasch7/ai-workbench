@@ -9,6 +9,7 @@ import fnmatch
 from pathlib import Path
 
 from .profiles import load_workspaces_config, resolve_workspace, validate_profile, validate_test_command
+from .coverage_report import load_coverage_reports
 
 
 MAX_LOG_CHARS = 120_000
@@ -249,6 +250,10 @@ def run_test_command(
         f"- Duration: {duration}s\n",
         encoding="utf-8",
     )
+
+    from .coverage_report import capture_test_run_coverage
+    capture_test_run_coverage(preview["workspace_id"], test_run_id)
+
     return {"ok": status == "succeeded", "status": status, "test_run_id": test_run_id, "result": result, "run_dir": str(run_dir)}
 
 
@@ -353,12 +358,13 @@ def get_test_run(workspace_id: str, test_run_id: str) -> dict:
         "metadata": read_json_file("metadata.json"),
         "command": read_json_file("command.json"),
         "result": read_json_file("result.json"),
+        "coverage_summary": read_json_file("coverage-summary.json"),
         "stdout": _mask(read_text_file("stdout.log")),
         "stderr": _mask(read_text_file("stderr.log")),
         "summary": read_text_file("summary.md"),
         "artifacts": {
             name: str(run_dir / name)
-            for name in ("metadata.json", "command.json", "stdout.log", "stderr.log", "result.json", "summary.md")
+            for name in ("metadata.json", "command.json", "stdout.log", "stderr.log", "result.json", "summary.md", "coverage-summary.json", "coverage-summary.md")
             if (run_dir / name).exists()
         },
     }

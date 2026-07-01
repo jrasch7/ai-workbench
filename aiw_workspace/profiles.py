@@ -139,14 +139,25 @@ def _merge_profile(profile: dict | None) -> dict:
             for item in profile["coverage_reports"]:
                 if not isinstance(item, dict):
                     continue
-                reports.append({
+                parsed_item = {
                     "name": str(item.get("name", "")),
                     "format": str(item.get("format", "unknown")),
                     "path": str(item.get("path", "")),
-                })
+                }
+                if "threshold" in item:
+                    try:
+                        parsed_item["threshold"] = float(item["threshold"])
+                    except Exception:
+                        parsed_item["threshold"] = item["threshold"]
+                reports.append(parsed_item)
             merged["coverage_reports"] = reports
         elif "coverage_reports" not in profile:
             merged["coverage_reports"] = []
+
+        if isinstance(profile.get("coverage"), dict):
+            merged["coverage"] = profile["coverage"]
+        elif "coverage" not in profile:
+            merged["coverage"] = {}
 
     return merged
 
@@ -610,9 +621,31 @@ def validate_profile(workspace_id: str | None = None) -> dict:
 
     coverage_reports = profile.get("coverage_reports", [])
     coverage_checks = []
+
+    global_cov = profile.get("coverage", {})
+    if not isinstance(global_cov, dict):
+        warnings.append("coverage configuracao invalida")
+    else:
+        for key in ["default_threshold", "changed_file_threshold"]:
+            if key in global_cov:
+                try:
+                    val = float(global_cov[key])
+                    if not (0.0 <= val <= 1.0):
+                        warnings.append(f"coverage.{key} fora do range 0-1: {val}")
+                except Exception:
+                    warnings.append(f"coverage.{key} invalido: esperado float 0-1")
+
     for report in coverage_reports:
         r_path = report.get("path", "")
         name = report.get("name", "")
+        threshold = report.get("threshold")
+        if threshold is not None:
+            try:
+                val = float(threshold)
+                if not (0.0 <= val <= 1.0):
+                    warnings.append(f"coverage_report '{name}' threshold fora do range 0-1: {val}")
+            except Exception:
+                warnings.append(f"coverage_report '{name}' threshold invalido: {threshold}")
         normalized, error = _normalize_rel_pattern(r_path)
         blocked = bool(normalized and _blocked_pattern(normalized, profile.get("blocked_paths", [])))
         if blocked:
@@ -635,6 +668,7 @@ def validate_profile(workspace_id: str | None = None) -> dict:
             "name": name,
             "path": normalized or r_path,
             "format": report.get("format", "unknown"),
+            "threshold": threshold,
             "ok": not error,
             "error": error,
             "exists": exists
@@ -662,6 +696,7 @@ def validate_profile(workspace_id: str | None = None) -> dict:
         "validation_group_errors": group_errors,
         "source_root_checks": source_checks,
         "test_command_checks": command_checks,
+        "coverage": profile.get("coverage", {}),
         "coverage_reports": coverage_reports,
         "coverage_report_checks": coverage_checks,
         "warnings": warnings,

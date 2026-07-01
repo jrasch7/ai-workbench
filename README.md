@@ -129,3 +129,5 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 - [Patch Test Coverage Intent](docs/runbooks/AIW_PATCH_TEST_COVERAGE_INTENT.md) avalia intenção de cobertura.
 
 - [Coverage Report Adapter](docs/runbooks/AIW_COVERAGE_REPORT_ADAPTER.md) adapta relatórios LCOV/XML.
+
+- [Coverage Run Capture](docs/runbooks/AIW_COVERAGE_RUN_CAPTURE.md) captura coverage e usa thresholds.

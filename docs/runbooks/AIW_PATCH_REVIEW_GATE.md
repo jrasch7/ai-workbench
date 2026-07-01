@@ -88,3 +88,5 @@ O [Patch Test Coverage Intent](AIW_PATCH_TEST_COVERAGE_INTENT.md) penaliza ou bo
 ## Coverage Report
 
 O gate avalia pontuações reais com base no [Coverage Report Adapter](AIW_COVERAGE_REPORT_ADAPTER.md).
+
+Também pode verificar dados do [Coverage Run Capture](AIW_COVERAGE_RUN_CAPTURE.md).

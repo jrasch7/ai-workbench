@@ -1,11 +1,12 @@
 import datetime
-from .test_runner import load_patch_preview
+from .test_runner import load_patch_preview, list_test_runs
 from .validation_plan import (
     ensure_validation_plan_snapshot,
     compare_validation_plan_snapshots,
     validation_plan_for_patch
 )
 from .test_coverage_intent import analyze_test_coverage_intent
+from .coverage_report import analyze_patch_coverage
 
 def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -61,7 +62,26 @@ def review_gate_for_patch(workspace_id: str, patch_id: str) -> dict:
 
     # Check 6: Real Coverage Report
     changed_files = patch.get("changed_files", [])
-    coverage_report = analyze_patch_coverage(workspace_id, patch_id, changed_files)
+
+    # Busca captures do run deste patch
+    runs_payload = list_test_runs(workspace_id, limit=50)
+    runs_for_patch = [r for r in runs_payload.get("runs", []) if r.get("patch_id") == patch_id]
+
+    captured_report = None
+    for r in runs_for_patch:
+        if r.get("coverage_summary") and r["coverage_summary"].get("summary", {}).get("has_reports"):
+            captured_report = r["coverage_summary"]
+            break
+
+    if captured_report:
+        coverage_report = captured_report
+        coverage_report["source"] = "test_run_capture"
+        # We need changed_files_coverage to be compatible with UI
+        coverage_report["changed_files_coverage"] = []
+    else:
+        coverage_report = analyze_patch_coverage(workspace_id, patch_id, changed_files)
+        coverage_report["source"] = "workspace_report" if coverage_report.get("reports") else "no_report"
+
     cov_status = coverage_report.get("summary", {}).get("status", "unknown")
 
     if cov_status == "covered":

@@ -2429,6 +2429,7 @@ def render_page() -> str:
         <div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
           <div style="font-weight:600;margin-bottom:6px">Coverage Report</div>
           <div class="card-meta" style="margin-bottom:6px">
+            <span class="tag">Source: {html.escape(coverage_report.get("source", "workspace_report"))}</span>
             <span class="tag">Status: {html.escape(real_cov_status)}</span>
             <span class="tag">Line-rate: {html.escape(f"{real_cov_avg*100:.1f}%")}</span>
           </div>
@@ -2895,7 +2896,7 @@ def render_page() -> str:
                 snapshot_label = html.escape(snapshot_id)
                 snapshot_tag = f'<a class="tag" href="/api/workspaces/{ws_id}/patches/{patch_label}/validation-plan/snapshots/{snapshot_label}" target="_blank">{snapshot_label}</a>'
             patch_tag = f'<span class="tag status-preview">Validation plan</span><a class="tag" href="/api/workspaces/{ws_id}/patches/{patch_label}/validation-plan" target="_blank">{patch_label}</a>{snapshot_tag}<span class="tag">{validation_group}</span><span class="tag">score {score}</span>'
-        return f"""
+        test_run_html = f"""
         <div class="test-run-row" data-test-index="{index}" data-test-status="{status}" data-test-workspace="{ws_id}" data-test-command="{command.lower()}" data-test-trigger="{html.escape(trigger)}" data-test-patch="{html.escape(patch_id)}">
           <div>
             <div class="test-run-title">{command}</div>
@@ -2909,7 +2910,44 @@ def render_page() -> str:
             </div>
             <div class="card-doc" style="margin-top:6px;margin-bottom:0">{test_id} · {started}</div>
           </div>
-          <div class="test-run-actions">
+          """
+
+        coverage = row.get("coverage_summary")
+        if coverage:
+            cov_status = coverage.get("summary", {}).get("status", "no_report")
+            cov_avg = coverage.get("summary", {}).get("average_line_rate", 0.0)
+            cov_reports = [r.get("name") for r in coverage.get("reports", []) if r.get("exists")]
+            reps_html = "".join(f'<span class="tag">{html.escape(r)}</span>' for r in cov_reports)
+
+            cov_status_tag = ""
+            if cov_status == "covered":
+                cov_status_tag = '<span class="tag status-passed">Coverage: covered</span>'
+            elif cov_status == "partial":
+                cov_status_tag = '<span class="tag status-warning">Coverage: partial</span>'
+            elif cov_status == "no_report":
+                cov_status_tag = '<span class="tag status-info">Coverage: no report</span>'
+            else:
+                cov_status_tag = '<span class="tag status-info">Coverage: unknown</span>'
+
+            test_run_html += f"""
+            <div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
+              <div style="font-weight:600;margin-bottom:6px">Coverage capturado</div>
+              <div class="card-meta" style="margin-bottom:6px">
+                {cov_status_tag}
+                <span class="tag">Line-rate: {html.escape(f"{cov_avg*100:.1f}%")}</span>
+                <span class="tag">Source: test_run_capture</span>
+              </div>
+            """
+
+            if cov_reports:
+                test_run_html += f'<div class="signal-note">Relatórios: {reps_html}</div>'
+            else:
+                test_run_html += '<div class="signal-note status-info">Nenhum relatório configurado ou existente. O AIW não executa coverage extra automaticamente.</div>'
+
+            test_run_html += "</div>"
+
+        test_run_html += f"""
+          <div class="test-run-actions" style="margin-top:12px">
             <a class="btn btn-secondary" href="/api/workspaces/{ws_id}/tests/runs/{test_id}" target="_blank">Ver detalhes</a>
             <form method="post" action="/api/workspaces/{ws_id}/tests/runs/{test_id}/rerun" style="display:inline">
               <input type="hidden" name="confirm" value="true">
@@ -2918,6 +2956,7 @@ def render_page() -> str:
           </div>
         </div>
         """
+        return test_run_html
 
     test_runs_rows = "".join(test_run_row(r, idx) for idx, r in enumerate(test_runs_payload.get("runs", []), start=1))
     if not test_runs_rows:
