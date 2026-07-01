@@ -2533,10 +2533,64 @@ def render_page() -> str:
 
         real_cov_block += "</div>"
 
+        from aiw_workspace.evidence_bundle import list_evidence_bundles
+        eb_payload = list_evidence_bundles(ws_id, pid)
+        bundles = eb_payload.get("bundles", [])
+        latest_bundle = bundles[0] if bundles else None
+        
+        bundle_html = ""
+        if latest_bundle:
+            b_id = latest_bundle.get("bundle_id")
+            b_status = latest_bundle.get("review_gate", {}).get("status", "unknown")
+            b_score = latest_bundle.get("review_gate", {}).get("readiness_score", 0)
+            b_risk = latest_bundle.get("risk_summary", {}).get("level", "unknown")
+            b_dec = latest_bundle.get("decision_record", {}).get("decision", "pending")
+            b_date = latest_bundle.get("created_at", "")
+            bundle_html = f"""
+            <div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
+              <div style="font-weight:600;margin-bottom:6px">Evidence Bundle</div>
+              <div class="card-meta" style="margin-bottom:6px">
+                <span class="tag">Status gate: {b_status}</span>
+                <span class="tag">Score: {b_score}</span>
+                <span class="tag">Risk: {b_risk}</span>
+                <span class="tag">Decision: {b_dec}</span>
+              </div>
+              <div class="signal-note" style="margin-bottom:6px">ID: {b_id} · {b_date}</div>
+              <div class="patch-actions" style="margin-top:8px">
+                <form method="post" action="/api/workspaces/{ws_id}/patches/{pid}/evidence-bundles/{b_id}/decision" style="display:inline">
+                  <input type="hidden" name="decision" value="approved">
+                  <input type="hidden" name="confirm" value="true">
+                  <button class="btn btn-secondary" type="submit">Aprovar</button>
+                </form>
+                <form method="post" action="/api/workspaces/{ws_id}/patches/{pid}/evidence-bundles/{b_id}/decision" style="display:inline">
+                  <input type="hidden" name="decision" value="rejected">
+                  <input type="hidden" name="confirm" value="true">
+                  <input type="hidden" name="reason" value="Rejected via Cockpit">
+                  <button class="btn btn-danger" type="submit">Rejeitar</button>
+                </form>
+                <form method="post" action="/api/workspaces/{ws_id}/patches/{pid}/evidence-bundles/{b_id}/decision" style="display:inline">
+                  <input type="hidden" name="decision" value="needs_work">
+                  <input type="hidden" name="confirm" value="true">
+                  <button class="btn btn-warning" style="background:#cc8800;border:none;color:#fff" type="submit">Marcar needs work</button>
+                </form>
+                <a class="btn btn-ghost" href="/api/workspaces/{ws_id}/patches/{pid}/evidence-bundles/{b_id}" target="_blank">Ver detalhes</a>
+              </div>
+            </div>
+            """
+        
+        bundle_html += f"""
+        <div style="margin-top:8px;margin-bottom:12px">
+          <form method="post" action="/api/workspaces/{ws_id}/patches/{pid}/evidence-bundles" style="display:inline">
+            <input type="hidden" name="confirm" value="true">
+            <button class="btn btn-secondary" type="submit">Criar evidence bundle</button>
+          </form>
+        </div>
+        """
+
         apply_btn = ""
         if patch["status"] == "preview":
             if gate.get("ok") and (gate.get("can_apply") or gate_status == "docs_only"):
-                apply_btn = f'''<form method="post" action="/api/workspaces/{ws_id}/patches/{pid}/apply-reviewed"><input type="hidden" name="confirm" value="true"><input type="hidden" name="acknowledge_status" value="{gate_status}"><button class="btn btn-run" type="submit">Apply reviewed</button></form><div class="signal-note" style="margin-top:8px">O gate não aplica nada automaticamente. Apply exige confirmação manual.</div>'''
+                apply_btn = f'''<form method="post" action="/api/workspaces/{ws_id}/patches/{pid}/apply-reviewed"><input type="hidden" name="confirm" value="true"><input type="hidden" name="acknowledge_status" value="{gate_status}"><button class="btn btn-run" type="submit">Apply reviewed</button></form><div class="signal-note" style="margin-top:8px">Apply-reviewed registra a decisão 'applied' e salva um snapshot. Evidence Bundle é um snapshot auditável local. Ele não aplica patch, não commita e não faz push.</div>'''
             else:
                 apply_btn = f'''<div class="signal-note" style="margin-top:8px">Apply bloqueado nesta versão. Rode/repare validações antes.</div>'''
         elif patch["status"] == "applied":
@@ -2732,7 +2786,8 @@ def render_page() -> str:
             <summary style="cursor:pointer;color:var(--muted);font-size:12px">Histórico do plano de validação</summary>
             <div class="signal-list" style="margin-top:8px">{snapshot_history_rows}</div>
           </details>
-          <div class="patch-actions">{apply_btn}</div>
+          {bundle_html}
+          <div class="patch-actions" style="margin-top:12px">{apply_btn}</div>
         </div>
         """
 
@@ -4534,6 +4589,21 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(health_payload, status=200 if health_payload.get("ok") else 404)
             return
 
+        if path.startswith("/api/workspaces/") and "/patches/" in path and "/evidence-bundles/" in path:
+            parts = path.split("/")
+            ws_id = parts[3]
+            patch_id = parts[5]
+            bundle_id = parts[7]
+            from aiw_workspace.evidence_bundle import read_evidence_bundle
+            return self._respond(read_evidence_bundle(ws_id, patch_id, bundle_id), 200)
+
+        if path.startswith("/api/workspaces/") and "/patches/" in path and path.endswith("/evidence-bundles"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            patch_id = parts[5]
+            from aiw_workspace.evidence_bundle import list_evidence_bundles
+            return self._respond(list_evidence_bundles(ws_id, patch_id), 200)
+
         if path.startswith("/api/workspaces/") and path.endswith("/execution-policy"):
             ws_id = path[len("/api/workspaces/"):-len("/execution-policy")].strip("/")
             policy = get_workspace_execution_policy(ws_id)
@@ -4997,6 +5067,35 @@ class Handler(BaseHTTPRequestHandler):
             confirm = str(request_data.get("confirm", "")).lower() in ("1", "true", "yes", "on") or request_data.get("confirm") is True
             ack_status = request_data.get("acknowledge_status", "")
             res = apply_reviewed_patch(ws_id, patch_id, confirm=confirm, acknowledge_status=ack_status)
+            self.send_json(res, status=200 if res.get("ok") else 400)
+            return
+
+        if path.startswith("/api/workspaces/") and "/patches/" in path and "/evidence-bundles/" in path and path.endswith("/decision"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            patch_id = parts[5]
+            bundle_id = parts[7]
+            decision = request_data.get("decision", "")
+            reason = request_data.get("reason", "")
+            confirm = str(request_data.get("confirm", "")).lower() in ("1", "true", "yes", "on")
+            if not confirm:
+                self.send_json({"ok": False, "error": "confirmation_required"}, status=400)
+                return
+            from aiw_workspace.evidence_bundle import record_patch_decision
+            res = record_patch_decision(ws_id, patch_id, bundle_id, decision, reason)
+            self.send_json(res, status=200 if res.get("ok") else 400)
+            return
+
+        if path.startswith("/api/workspaces/") and "/patches/" in path and path.endswith("/evidence-bundles"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            patch_id = parts[5]
+            confirm = str(request_data.get("confirm", "")).lower() in ("1", "true", "yes", "on")
+            if not confirm:
+                self.send_json({"ok": False, "error": "confirmation_required"}, status=400)
+                return
+            from aiw_workspace.evidence_bundle import create_evidence_bundle
+            res = create_evidence_bundle(ws_id, patch_id)
             self.send_json(res, status=200 if res.get("ok") else 400)
             return
 

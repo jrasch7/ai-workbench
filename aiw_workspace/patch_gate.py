@@ -396,6 +396,10 @@ def apply_reviewed_patch(workspace_id: str, patch_id: str, confirm: bool, acknow
     if acknowledge_status and acknowledge_status != gate_status:
         return {"ok": False, "error": "status_mismatch"}
 
+    from aiw_workspace.evidence_bundle import create_evidence_bundle, record_patch_decision
+    bundle_res = create_evidence_bundle(workspace_id, patch_id)
+    bundle_id = bundle_res.get("bundle", {}).get("bundle_id") if bundle_res.get("ok") else None
+
     # We use the existing project_patch_apply tool logic
     import subprocess
     import json
@@ -407,6 +411,9 @@ def apply_reviewed_patch(workspace_id: str, patch_id: str, confirm: bool, acknow
 
     # actually `project_patch_apply` might expect kwargs
     result = project_patch_apply(patch_id=patch_id)
+    
+    if result.get("ok") and bundle_id:
+        record_patch_decision(workspace_id, patch_id, bundle_id, "applied", reason="Applied via review gate")
 
     return {
         "ok": result.get("ok", False),
@@ -414,5 +421,6 @@ def apply_reviewed_patch(workspace_id: str, patch_id: str, confirm: bool, acknow
         "workspace_id": workspace_id,
         "status": "applied" if result.get("ok") else "failed",
         "result": result,
+        "bundle_id": bundle_id,
         "note": "apply_manual_gate_reviewed"
     }

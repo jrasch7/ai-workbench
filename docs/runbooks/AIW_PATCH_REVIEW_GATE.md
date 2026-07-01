@@ -94,3 +94,4 @@ Também pode verificar dados do [Coverage Run Capture](AIW_COVERAGE_RUN_CAPTURE.
 Inclui check nativo do [Coverage Baseline and Diff](AIW_COVERAGE_BASELINE_DIFF.md).
 
 Inclui check nativo do [Changed Lines Coverage](AIW_CHANGED_LINES_COVERAGE.md).
+- [AIW Patch Evidence Bundle](AIW_PATCH_EVIDENCE_BUNDLE.md)

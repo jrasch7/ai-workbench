@@ -46,6 +46,7 @@ from .coverage_report import analyze_patch_coverage
 from .coverage_baseline import get_current_coverage_baseline, promote_coverage_baseline, list_coverage_baselines, coverage_diff
 from .changed_lines_coverage import analyze_changed_lines_coverage
 from .test_result_report import analyze_test_results
+from .evidence_bundle import create_evidence_bundle, list_evidence_bundles, read_evidence_bundle, record_patch_decision
 
 __all__ = [
     "DEFAULT_WORKSPACE",
@@ -89,4 +90,8 @@ __all__ = [
     "coverage_diff",
     "analyze_changed_lines_coverage",
     "analyze_test_results",
+    "create_evidence_bundle",
+    "list_evidence_bundles",
+    "read_evidence_bundle",
+    "record_patch_decision",
 ]

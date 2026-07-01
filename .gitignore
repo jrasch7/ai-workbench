@@ -62,3 +62,4 @@ reports/provider-smoke/*.md
 .aiw/workspaces/*/test-runs/
 .aiw/workspaces/*/validation-plans/
 .aiw/workspaces/*/coverage-baselines/
+.aiw/workspaces/*/evidence-bundles/
