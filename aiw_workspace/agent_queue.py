@@ -283,3 +283,119 @@ def run_queue_item_offline(workspace_id: str, queue_item_id: str, confirm: bool 
         return {"ok": True, "attempt": attempt_data}
     else:
         return {"ok": False, "error": attempt_data["reason"], "attempt": attempt_data}
+
+def run_queue_item_llm(workspace_id: str, queue_item_id: str, confirm_llm: bool = False, dry_run: bool = False, model: str = None) -> dict:
+    ws = resolve_workspace(workspace_id)
+    if not ws:
+        return {"ok": False, "error": "workspace_not_found"}
+        
+    base_dir = AIW_ROOT / ".aiw" / "workspaces" / ws["id"] / "agent-queue" / queue_item_id
+    if not base_dir.is_dir() or not (base_dir / "item.json").exists():
+        return {"ok": False, "error": "item_not_found"}
+        
+    data = json.loads((base_dir / "item.json").read_text(encoding="utf-8"))
+    
+    if data.get("status") != "ready":
+        return {"ok": False, "error": "item must be ready"}
+        
+    profile = ws.get("profile", {})
+    llm_config = profile.get("llm_execution", {})
+    
+    if not llm_config.get("enabled"):
+        return {"ok": False, "error": "llm_execution not enabled in profile"}
+        
+    allowed_models = llm_config.get("allowed_models", [])
+    default_model = llm_config.get("default_model", "")
+    
+    if not model:
+        model = default_model
+        
+    if not model or model not in allowed_models:
+        return {"ok": False, "error": f"model {model} not allowed"}
+        
+    attempts_dir = base_dir / "attempts"
+    attempts_dir.mkdir(parents=True, exist_ok=True)
+    
+    attempt_id = f"att-{uuid.uuid4().hex[:8]}"
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    
+    if dry_run or not confirm_llm:
+        attempt_data = {
+            "attempt_id": attempt_id,
+            "created_at": now_iso,
+            "mode": "llm_dry_run",
+            "model": model,
+            "executed": False,
+            "status": "dry_run",
+            "reason": "LLM execution not performed because --confirm-llm was not provided or --dry-run was set."
+        }
+        (attempts_dir / f"{attempt_id}.json").write_text(json.dumps(attempt_data, indent=2), encoding="utf-8")
+        return {"ok": True, "attempt": attempt_data}
+        
+    update_queue_item_status(workspace_id, queue_item_id, "running", confirm=True)
+    
+    cmd_args = ["./scripts/aiw-runner-agent"]
+    timeout_secs = llm_config.get("timeout_seconds", 300)
+    
+    attempt_data = {
+        "attempt_id": attempt_id,
+        "created_at": now_iso,
+        "mode": "llm",
+        "model": model,
+        "executed": False,
+        "exit_code": None,
+        "status": "running",
+        "timeout_seconds": timeout_secs,
+        "stdout_tail": "",
+        "stderr_tail": ""
+    }
+    
+    try:
+        import os
+        env = os.environ.copy()
+        env["AIW_WORKSPACE_ID"] = ws["id"]
+        env["AIW_LLM_ENABLED"] = "1"
+        env["AIW_MODEL"] = model
+        env["AIW_AGENT_OFFLINE"] = "0"
+        
+        proc = subprocess.run(
+            cmd_args,
+            cwd=str(AIW_ROOT),
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=timeout_secs,
+            shell=False
+        )
+        
+        attempt_data["executed"] = True
+        attempt_data["exit_code"] = proc.returncode
+        
+        max_stdout = llm_config.get("max_stdout_chars", 12000)
+        max_stderr = llm_config.get("max_stderr_chars", 12000)
+        
+        attempt_data["stdout_tail"] = proc.stdout[-max_stdout:] if proc.stdout else ""
+        attempt_data["stderr_tail"] = proc.stderr[-max_stderr:] if proc.stderr else ""
+        
+        if proc.returncode == 0:
+            attempt_data["status"] = "succeeded"
+            update_queue_item_status(workspace_id, queue_item_id, "completed", confirm=True)
+        else:
+            attempt_data["status"] = "failed"
+            update_queue_item_status(workspace_id, queue_item_id, "failed", confirm=True)
+            
+    except subprocess.TimeoutExpired as e:
+        attempt_data["status"] = "failed"
+        attempt_data["stderr_tail"] = f"Timeout ({timeout_secs}s) expired.\n" + (e.stderr[-2000:] if e.stderr and isinstance(e.stderr, str) else "")
+        update_queue_item_status(workspace_id, queue_item_id, "failed", confirm=True)
+    except Exception as e:
+        attempt_data["status"] = "failed"
+        attempt_data["stderr_tail"] = f"Execution error: {e}"
+        update_queue_item_status(workspace_id, queue_item_id, "failed", confirm=True)
+        
+    (attempts_dir / f"{attempt_id}.json").write_text(json.dumps(attempt_data, indent=2), encoding="utf-8")
+    
+    if attempt_data["status"] == "succeeded":
+        return {"ok": True, "attempt": attempt_data}
+    else:
+        return {"ok": False, "error": attempt_data.get("stderr_tail", "failed"), "attempt": attempt_data}

@@ -56,6 +56,19 @@
             "commands": []
           }
         ],
+        "test_result_reports": {
+          "enabled": true,
+          "format": "junitxml",
+          "path_glob": "reports/junit-*.xml"
+        },
+        "llm_execution": {
+          "enabled": false,
+          "allowed_models": ["dev-coder", "dev-review", "dev-architect"],
+          "default_model": "dev-coder",
+          "timeout_seconds": 300,
+          "max_stdout_chars": 12000,
+          "max_stderr_chars": 12000
+        },
         "validation_groups": [
           {
             "name": "Syntax",

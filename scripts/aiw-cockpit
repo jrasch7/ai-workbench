@@ -2939,6 +2939,28 @@ def render_page() -> str:
     from aiw_workspace.agent_queue import list_queue_items
     queue_res = list_queue_items(active_workspace)
     queue_html_list = []
+    
+    ws_profile = validate_workspace_profile(active_workspace)
+    llm_execution = ws_profile.get("llm_execution", {})
+    llm_enabled = llm_execution.get("enabled", False)
+    allowed_models = llm_execution.get("allowed_models", [])
+    default_model = llm_execution.get("default_model", "")
+    
+    llm_tag = '<span class="tag status-passed">LLM Enabled</span>' if llm_enabled else '<span class="tag status-failed">LLM Disabled</span>'
+    allowed_models_html = ", ".join(allowed_models) if allowed_models else "Nenhum"
+    
+    queue_html_list.append(f"""
+    <div style="margin-bottom:12px;padding:12px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
+        <div style="font-weight:600;margin-bottom:8px">LLM Execution Guard</div>
+        <div class="card-meta">
+            {llm_tag}
+            <span class="tag">Allowed Models: {html.escape(allowed_models_html)}</span>
+            <span class="tag">Default Model: {html.escape(default_model)}</span>
+        </div>
+        <div class="signal-note" style="margin-top:8px">O Cockpit não executa LLM. Execução LLM só ocorre pela CLI manual com --run-llm --confirm-llm e modelo permitido no workspace profile.</div>
+    </div>
+    """)
+    
     if queue_res.get("ok"):
         for q in queue_res.get("items", []):
             q_id = q.get("queue_item_id")
@@ -2970,7 +2992,14 @@ def render_page() -> str:
                 <a class="btn btn-ghost" href="/api/workspaces/{active_workspace}/agent-queue/{q_id}/file/task.md" target="_blank">Ver Task Prompt</a>
                 <a class="btn btn-ghost" href="/api/workspaces/{active_workspace}/agent-queue/{q_id}/attempts" target="_blank">Ver Attempts</a>
               </div>
-              <pre style="margin-top:8px;background:var(--bg);border-radius:8px;font-size:11px">./scripts/aiw-agent-queue --workspace {active_workspace} --item {q_id} --run-offline --confirm</pre>
+              <div style="margin-top:12px">
+                <div style="font-size:11px;font-weight:600;margin-bottom:4px">Offline runner:</div>
+                <pre style="margin:0;background:var(--bg);border-radius:8px;font-size:11px">./scripts/aiw-agent-queue --workspace {active_workspace} --item {q_id} --run-offline --confirm</pre>
+              </div>
+              <div style="margin-top:8px">
+                <div style="font-size:11px;font-weight:600;margin-bottom:4px">LLM runner (exige allowlist):</div>
+                <pre style="margin:0;background:var(--bg);border-radius:8px;font-size:11px">./scripts/aiw-agent-queue --workspace {active_workspace} --item {q_id} --run-llm --confirm-llm --model {html.escape(default_model) or 'dev-coder'}</pre>
+              </div>
             </div>
             """)
             

@@ -50,3 +50,4 @@ No Cockpit UI, os itens ganham visibilidade total, podendo ser avançados para `
 ## Próximo passo recomendado
 
 Finalmente introduzir a **Background Agent Queue v2** acionando o Agent via LiteLLM de verdade (`--run-llm`) usando a CLI manual, deixando que o LiteLLM crie de fato as propostas de patch para os tickets do GitHub importados!
+- [AIW LLM Queue Execution Guard](AIW_LLM_QUEUE_EXECUTION_GUARD.md)

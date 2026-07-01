@@ -172,6 +172,26 @@ def _merge_profile(profile: dict | None) -> dict:
             merged["test_result_reports"] = tr_reports
         elif "test_result_reports" not in profile:
             merged["test_result_reports"] = []
+            
+        if isinstance(profile.get("llm_execution"), dict):
+            llm_config = profile["llm_execution"]
+            merged["llm_execution"] = {
+                "enabled": bool(llm_config.get("enabled", False)),
+                "allowed_models": [str(x) for x in llm_config.get("allowed_models", []) if isinstance(x, str)],
+                "default_model": str(llm_config.get("default_model", "")),
+                "timeout_seconds": max(30, min(1800, int(llm_config.get("timeout_seconds", 300)))),
+                "max_stdout_chars": max(1000, min(100000, int(llm_config.get("max_stdout_chars", 12000)))),
+                "max_stderr_chars": max(1000, min(100000, int(llm_config.get("max_stderr_chars", 12000)))),
+            }
+        elif "llm_execution" not in profile:
+            merged["llm_execution"] = {
+                "enabled": False,
+                "allowed_models": [],
+                "default_model": "",
+                "timeout_seconds": 300,
+                "max_stdout_chars": 12000,
+                "max_stderr_chars": 12000
+            }
 
     return merged
 
