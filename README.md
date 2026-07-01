@@ -84,6 +84,45 @@ AIW_AGENT_OFFLINE=1 AIW_USE_CONTEXT_PACK=1 ./scripts/aiw-runner-agent --offline
 python3 -m aiw_context.indexer
 ```
 
+
+## Estado operacional atual
+
+O AIW possui hoje um fluxo local e auditável:
+
+GitHub Intake
+→ Integration Inbox
+→ Patch Intent
+→ Agent Queue
+→ LLM Queue Guard
+→ Patch Preview
+→ Validation Plan
+→ Review Gate
+→ Evidence Bundle
+→ Evidence Export
+→ Integration Outbox
+→ Integration Worker CLI
+→ External Worker Policy
+
+Nenhum daemon externo roda por padrão.
+Nenhuma ação GitHub/Jira é executada pela UI.
+Toda integração externa exige CLI manual, confirmação explícita e policy permitindo.
+
+## Inspirações
+
+O AIW se inspira em Devin, Manus, OpenHands, CodeAct/Cyber Bench e workspaces locais como Odysseus.
+
+Odysseus fica como inspiração para:
+- local-first AI workspace;
+- model cockpit;
+- local models;
+- MCP/tools;
+- cookbook de modelos;
+- deep research;
+- memory/skills;
+- UX de bancada pessoal de IA.
+
+Odysseus não é dependência do AIW neste momento.
+
 ## Documentação operacional
 
 Manuais detalhados (Runbooks) do funcionamento real das camadas:
@@ -143,3 +182,4 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 - [AIW Agent Run Queue](docs/runbooks/AIW_AGENT_RUN_QUEUE.md)
 - [AIW LLM Queue Execution Guard](docs/runbooks/AIW_LLM_QUEUE_EXECUTION_GUARD.md)
 - [AIW Agent Patch Review & Apply Flow](docs/runbooks/AIW_AGENT_PATCH_REVIEW_FLOW.md)
+- [AIW GitHub Worker Policy Integration](docs/runbooks/AIW_GITHUB_WORKER_POLICY_INTEGRATION.md)

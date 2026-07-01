@@ -62,3 +62,6 @@ No Cockpit, adicionamos um bloco **read-only** no modal/painel de configuração
 ## Próximos Passos
 
 Com a barreira consolidada, podemos com segurança evoluir o CLI de `aiw-integration-worker` para um daemon opcional (`aiw-worker-daemon`) que apenas consome intents e tenta aplicar ações **apenas se a Policy permitir**.
+
+## Atualizações
+A política agora está ativamente integrada ao *Integration Worker CLI*, bloqueando gh pr edit na origem se as diretrizes rejeitarem. Veja [AIW GitHub Worker Policy Integration](AIW_GITHUB_WORKER_POLICY_INTEGRATION.md).

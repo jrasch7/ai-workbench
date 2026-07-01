@@ -68,19 +68,38 @@ def run_worker(workspace_id: str, item_id: str, dry_run: bool = True, confirm_ex
     
     cmd_args = ["gh", "pr", "edit", str(pr_number or "123"), "--body-file", "payload.md"]
     
+    from .external_worker_policy import can_worker_execute
+    policy_res = can_worker_execute(
+        workspace_id=workspace_id,
+        worker_name="github_pr_edit",
+        action="pr_edit",
+        mode="manual_cli_only"
+    )
+    
     attempt_data = {
         "attempt_id": attempt_id,
         "created_at": now_iso,
         "mode": "dry_run" if dry_run else "execute",
         "target": "github_pr",
         "kind": "pr_summary",
+        "worker_name": "github_pr_edit",
+        "action": "pr_edit",
         "pr_number": pr_number,
         "command": cmd_args,
+        "policy_checked": True,
+        "policy_allowed": policy_res.get("allowed", False),
+        "policy_reason": policy_res.get("reason", ""),
         "executed": False,
         "exit_code": None,
         "status": "dry_run",
         "reason": ""
     }
+    
+    if not policy_res.get("allowed"):
+        attempt_data["status"] = "blocked"
+        attempt_data["reason"] = policy_res.get("reason", "Blocked by policy")
+        (attempts_dir / f"{attempt_id}.json").write_text(json.dumps(attempt_data, indent=2), encoding="utf-8")
+        return {"ok": False, "error": attempt_data["reason"], "attempt": attempt_data}
     
     if dry_run:
         attempt_data["reason"] = "dry run success"

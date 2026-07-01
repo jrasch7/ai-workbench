@@ -48,3 +48,6 @@ Toda execução (seja dry-run, seja execute, seja com erro) registra um artefato
 Avaliar se devemos migrar esse script para um daemon (Integration Sync Worker) que monitore localmente a pasta de Outbox buscando `ready` para processar a cada X minutos via cron.
 - [AIW GitHub Intake CLI](AIW_GITHUB_INTAKE_CLI.md)
 - [AIW Agent Run Queue](AIW_AGENT_RUN_QUEUE.md)
+
+## Integração de Política (v1)
+A partir da v1 de Policy, o worker invoca a External Worker Policy antes de permitir qualquer envio real (gh). Veja [AIW GitHub Worker Policy Integration](AIW_GITHUB_WORKER_POLICY_INTEGRATION.md).

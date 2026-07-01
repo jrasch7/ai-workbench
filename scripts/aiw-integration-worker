@@ -47,7 +47,10 @@ def main():
     else:
         print(f"Integration worker failed: {result.get('error')}", file=sys.stderr)
         if "attempt" in result:
-            print(json.dumps(result["attempt"], indent=2), file=sys.stderr)
+            attempt = result["attempt"]
+            if attempt.get("policy_checked") and not attempt.get("policy_allowed"):
+                print(f"POLICY BLOCKED: {attempt.get('policy_reason')}", file=sys.stderr)
+            print(json.dumps(attempt, indent=2), file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":

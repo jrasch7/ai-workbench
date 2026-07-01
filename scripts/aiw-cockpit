@@ -2646,7 +2646,7 @@ def render_page() -> str:
                 {ext_meta}
               </div>
               <div class="signal-note" style="margin-bottom:6px">ID: {i_id} · {i_date}</div>
-              <div class="signal-note" style="margin-bottom:6px;color:var(--muted)">A UI não envia para GitHub. Para enviar, rode a CLI manualmente com --execute --confirm-external-send --pr-number.</div>
+              <div class="signal-note" style="margin-bottom:6px;color:var(--muted)">O Cockpit não executa GitHub/Jira. O Integration Worker só executa via CLI manual e agora também precisa passar pela External Worker Policy.</div>
               <pre style="margin-top:8px;background:var(--bg);border-radius:8px;font-size:11px">./scripts/aiw-integration-worker --workspace {ws_id} --item {i_id} --execute --confirm-external-send --pr-number &lt;PR_NUMBER&gt;</pre>
               <div class="patch-actions" style="margin-top:8px">
                 <form method="post" action="/api/workspaces/{ws_id}/integration-outbox/{i_id}/status" style="display:inline">
