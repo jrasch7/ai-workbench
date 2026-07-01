@@ -399,3 +399,50 @@ def run_queue_item_llm(workspace_id: str, queue_item_id: str, confirm_llm: bool 
         return {"ok": True, "attempt": attempt_data}
     else:
         return {"ok": False, "error": attempt_data.get("stderr_tail", "failed"), "attempt": attempt_data}
+
+def set_queue_dispatch(workspace_id: str, queue_item_id: str, mode: str, model: str = None, confirm: bool = False) -> dict:
+    if not confirm:
+        return {"ok": False, "error": "confirm_required"}
+        
+    ws = resolve_workspace(workspace_id)
+    if not ws:
+        return {"ok": False, "error": "workspace_not_found"}
+        
+    allowed_modes = {"offline", "llm"}
+    if mode not in allowed_modes:
+        return {"ok": False, "error": "invalid_mode"}
+        
+    if mode == "llm" and not model:
+        return {"ok": False, "error": "model_required_for_llm_mode"}
+        
+    base_dir = AIW_ROOT / ".aiw" / "workspaces" / ws["id"] / "agent-queue" / queue_item_id
+    if not base_dir.is_dir() or not (base_dir / "item.json").exists():
+        return {"ok": False, "error": "item_not_found"}
+        
+    dispatch_id = f"dsp-{uuid.uuid4().hex[:8]}"
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    
+    dispatch_data = {
+        "dispatch_id": dispatch_id,
+        "created_at": now_iso,
+        "mode": mode,
+        "model": model,
+        "enabled": True,
+        "confirm_dispatch": True
+    }
+    
+    (base_dir / "dispatch.json").write_text(json.dumps(dispatch_data, indent=2), encoding="utf-8")
+    
+    attempts_dir = base_dir / "attempts"
+    attempts_dir.mkdir(parents=True, exist_ok=True)
+    attempt_id = f"att-{uuid.uuid4().hex[:8]}"
+    attempt_data = {
+        "attempt_id": attempt_id,
+        "created_at": now_iso,
+        "mode": "dispatch_configured",
+        "status": "dispatch_configured",
+        "reason": f"Dispatch configured manually via CLI for mode {mode}"
+    }
+    (attempts_dir / f"{attempt_id}.json").write_text(json.dumps(attempt_data, indent=2), encoding="utf-8")
+    
+    return {"ok": True, "dispatch": dispatch_data}

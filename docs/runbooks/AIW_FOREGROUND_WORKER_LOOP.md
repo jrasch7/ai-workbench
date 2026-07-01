@@ -59,3 +59,5 @@ Se a aba estiver bloqueada via `.json` (`enabled: false`), o worker reportará `
 - Sem retry automático nos itens falhos pelo loop.
 - Sem systemd, scheduler daemon.
 - Sem Jira, issue create ou merge.
+
+Análogo ao Worker Loop, temos agora o [AIW Agent Queue Foreground Dispatcher](AIW_AGENT_QUEUE_FOREGROUND_DISPATCHER.md) com as mesmas premissas de UX local.

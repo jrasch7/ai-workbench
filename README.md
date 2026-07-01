@@ -203,3 +203,4 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 - [AIW Agent Patch Review & Apply Flow](docs/runbooks/AIW_AGENT_PATCH_REVIEW_FLOW.md)
 - [AIW GitHub Worker Policy Integration](docs/runbooks/AIW_GITHUB_WORKER_POLICY_INTEGRATION.md)
 - [AIW Foreground Worker Loop](docs/runbooks/AIW_FOREGROUND_WORKER_LOOP.md)
+- [AIW Agent Queue Foreground Dispatcher](docs/runbooks/AIW_AGENT_QUEUE_FOREGROUND_DISPATCHER.md)

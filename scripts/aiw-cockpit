@@ -3079,6 +3079,36 @@ def render_page() -> str:
     </div>
     ''')
 
+    from aiw_workspace.agent_dispatcher import list_agent_dispatcher_runs
+    adr_res = list_agent_dispatcher_runs(active_workspace)
+    adr_runs = adr_res.get("runs", [])
+    adr_runs_html = ""
+    for r in adr_runs[:3]:
+        r_mode = r.get("mode")
+        r_mode_cls = "status-preview" if r_mode == "dry_run" else "status-run"
+        r_loop = r.get("loop_mode")
+        adr_runs_html += f'''
+        <div style="margin-top:6px;font-size:12px;border-top:1px solid rgba(255,255,255,0.05);padding-top:6px">
+          <strong>Run {r.get("run_id")}</strong> ({r.get("created_at")})<br>
+          <span class="tag {r_mode_cls}">{r_mode}</span> <span class="tag">{r_loop}</span><br>
+          <span style="color:var(--muted)">Seen: {r.get("items_seen")} | Eligible: {r.get("items_eligible")} | Blocked: {r.get("items_blocked")} | Executed: {r.get("items_executed")} | Succeeded: {r.get("items_succeeded")} | Failed: {r.get("items_failed")}</span>
+        </div>
+        '''
+        
+    queue_html_list.append(f'''
+    <div style="margin-bottom:12px;padding:12px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
+        <div style="font-weight:600;margin-bottom:8px">Agent Queue Foreground Dispatcher</div>
+        <div class="signal-note" style="margin-top:8px;color:var(--muted)">
+            O Agent Dispatcher processa a Agent Queue e converte Intents em Patches chamando o aiw-agent-queue e o LLM Execution Guard ou Offline Runner. Ele roda apenas via CLI em foreground.
+        </div>
+        <div style="margin-top:8px">
+            <pre style="background:var(--bg);padding:6px;border-radius:4px;font-size:11px;margin-bottom:4px">./scripts/aiw-agent-dispatcher --workspace {active_workspace} --once --dry-run</pre>
+            <pre style="background:var(--bg);padding:6px;border-radius:4px;font-size:11px">./scripts/aiw-agent-dispatcher --workspace {active_workspace} --once --execute --confirm-agent-dispatcher</pre>
+        </div>
+        {adr_runs_html}
+    </div>
+    ''')
+
     if queue_res.get("ok"):
         for q in queue_res.get("items", []):
             q_id = q.get("queue_item_id")
@@ -5084,6 +5114,18 @@ class Handler(BaseHTTPRequestHandler):
             run_id = parts[6]
             from aiw_workspace.worker_loop import read_worker_loop_run
             return self._respond(read_worker_loop_run(ws_id, run_id), 200)
+
+        if path.startswith("/api/workspaces/") and path.endswith("/agent-dispatcher/runs"):
+            ws_id = path[len("/api/workspaces/"):-len("/agent-dispatcher/runs")].strip("/")
+            from aiw_workspace.agent_dispatcher import list_agent_dispatcher_runs
+            return self._respond(list_agent_dispatcher_runs(ws_id), 200)
+
+        if path.startswith("/api/workspaces/") and "/agent-dispatcher/runs/" in path:
+            parts = path.split("/")
+            ws_id = parts[3]
+            run_id = parts[6]
+            from aiw_workspace.agent_dispatcher import read_agent_dispatcher_run
+            return self._respond(read_agent_dispatcher_run(ws_id, run_id), 200)
 
         if path.startswith("/api/workspaces/") and "/integration-inbox/" in path and "/file/" in path:
             parts = path.split("/")

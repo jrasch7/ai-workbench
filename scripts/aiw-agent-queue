@@ -18,7 +18,8 @@ from aiw_workspace.agent_queue import (
     create_queue_item_from_inbox,
     update_queue_item_status,
     run_queue_item_offline,
-    run_queue_item_llm
+    run_queue_item_llm,
+    set_queue_dispatch
 )
 
 def main():
@@ -34,6 +35,8 @@ def main():
     parser.add_argument("--model", help="Model to use")
     parser.add_argument("--dismiss", action="store_true", help="Dismiss item")
     parser.add_argument("--confirm", action="store_true", help="Confirm action")
+    parser.add_argument("--set-dispatch", action="store_true", help="Set dispatch metadata for foreground dispatcher")
+    parser.add_argument("--dispatch-mode", choices=["offline", "llm"], help="Mode for dispatch (offline or llm)")
     
     args = parser.parse_args()
     
@@ -51,9 +54,28 @@ def main():
         print("Must provide either --from-inbox or --item", file=sys.stderr)
         sys.exit(1)
         
-    if not args.confirm and (args.mark_ready or args.run_offline or args.dismiss):
+    if not args.confirm and (args.mark_ready or args.run_offline or args.dismiss or args.set_dispatch):
         print("Action requires --confirm", file=sys.stderr)
         sys.exit(1)
+        
+    if args.set_dispatch:
+        if not args.dispatch_mode:
+            print("Must provide --dispatch-mode with --set-dispatch", file=sys.stderr)
+            sys.exit(1)
+        result = set_queue_dispatch(
+            workspace_id=args.workspace,
+            queue_item_id=args.item,
+            mode=args.dispatch_mode,
+            model=args.model,
+            confirm=args.confirm
+        )
+        if result.get("ok"):
+            print("Queue dispatch configured successfully.")
+            print(json.dumps(result.get("dispatch", {}), indent=2))
+            sys.exit(0)
+        else:
+            print(f"Failed to configure dispatch: {result.get('error')}", file=sys.stderr)
+            sys.exit(1)
         
     if args.mark_ready:
         result = update_queue_item_status(args.workspace, args.item, "ready", confirm=True)

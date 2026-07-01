@@ -55,3 +55,5 @@ Mensagem gravada na UI reforça a tese de segurança: "Apply reviewed usa o patc
 ## Próximo passo recomendado
 
 O ciclo de AIW está muito forte no aspecto offline e CI/CD defensivo. O proximo passo pode envolver a **Automatização de Integrações Externas Seguras** - por exemplo, background daemon restrito que possa sincronizar apenas Inbox/Outbox periodicamente, reduzindo comandos manuais de Intake, e preparando o terreno real para Continuous Agent Workflow.
+
+A entrada deste fluxo pode ser impulsionada pelo batch do [AIW Agent Queue Foreground Dispatcher](AIW_AGENT_QUEUE_FOREGROUND_DISPATCHER.md).
