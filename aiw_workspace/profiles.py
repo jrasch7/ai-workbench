@@ -159,6 +159,20 @@ def _merge_profile(profile: dict | None) -> dict:
         elif "coverage" not in profile:
             merged["coverage"] = {}
 
+        if isinstance(profile.get("test_result_reports"), list):
+            tr_reports = []
+            for item in profile["test_result_reports"]:
+                if not isinstance(item, dict):
+                    continue
+                tr_reports.append({
+                    "name": str(item.get("name", "")),
+                    "format": str(item.get("format", "unknown")),
+                    "path": str(item.get("path", "")),
+                })
+            merged["test_result_reports"] = tr_reports
+        elif "test_result_reports" not in profile:
+            merged["test_result_reports"] = []
+
     return merged
 
 
@@ -621,6 +635,9 @@ def validate_profile(workspace_id: str | None = None) -> dict:
 
     coverage_reports = profile.get("coverage_reports", [])
     coverage_checks = []
+    
+    test_result_reports = profile.get("test_result_reports", [])
+    test_result_checks = []
 
     global_cov = profile.get("coverage", {})
     if not isinstance(global_cov, dict):
@@ -674,6 +691,36 @@ def validate_profile(workspace_id: str | None = None) -> dict:
             "exists": exists
         })
 
+    for report in test_result_reports:
+        r_path = report.get("path", "")
+        name = report.get("name", "")
+        normalized, error = _normalize_rel_pattern(r_path)
+        blocked = bool(normalized and _blocked_pattern(normalized, profile.get("blocked_paths", [])))
+        if blocked:
+            error = "blocked_pattern"
+        exists = False
+        if normalized and not error and root.is_dir():
+            p = (root / normalized).resolve()
+            try:
+                if str(p).startswith(str(root)):
+                    exists = p.is_file()
+                else:
+                    error = "unsafe_pattern"
+            except Exception:
+                error = "unsafe_pattern"
+        if error:
+            warnings.append(f"test_result_report '{name}' path invalido: {error}")
+        elif not exists:
+            warnings.append(f"test_result_report '{name}' arquivo ausente: {normalized}")
+        test_result_checks.append({
+            "name": name,
+            "path": normalized or r_path,
+            "format": report.get("format", "unknown"),
+            "ok": not error,
+            "error": error,
+            "exists": exists
+        })
+
     status = "valid" if not warnings and not mapping_errors and not group_errors else ("incomplete" if profile else "needs_attention")
     return {
         "ok": True,
@@ -699,6 +746,8 @@ def validate_profile(workspace_id: str | None = None) -> dict:
         "coverage": profile.get("coverage", {}),
         "coverage_reports": coverage_reports,
         "coverage_report_checks": coverage_checks,
+        "test_result_reports": test_result_reports,
+        "test_result_report_checks": test_result_checks,
         "warnings": warnings,
         "stack": detect_stack(root) if root.is_dir() else {"primary": "unknown", "stacks": ["unknown"]},
     }

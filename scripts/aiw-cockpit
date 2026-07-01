@@ -2420,6 +2420,28 @@ def render_page() -> str:
 
                         gate_checks += f'<div class="tool-evidence-field" style="margin-top:6px;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg)"><strong>{chk_name}</strong> <span class="tag {chk_st}">{html.escape(chk.get("status",""))}</span><div style="font-size:12px;color:var(--muted);margin-top:4px">{html.escape(chk.get("reason",""))}</div><div class="signal-note" style="margin-top:4px">O AIW cruza linhas adicionadas no patch com relatórios de coverage já existentes/capturados. Ele não roda coverage automaticamente.</div>{details}</div>'
                         continue
+                        
+                elif chk.get("name") == "Test result report":
+                    tr = chk.get("tr_payload", {})
+                    if tr and "summary" in tr:
+                        summ = tr["summary"]
+                        source = tr.get("source", "unknown")
+                        details = f'<div style="margin-top:6px;font-size:12px;background:rgba(255,255,255,0.05);padding:6px;border-radius:4px">'
+                        details += f'<div style="margin-bottom:4px">Source: {source}</div>'
+                        details += f'<div style="margin-bottom:4px">Tests: {summ.get("tests", 0)} total, {summ.get("passed", 0)} passed, {summ.get("failed", 0)} failed, {summ.get("errors", 0)} errors, {summ.get("skipped", 0)} skipped</div>'
+                        
+                        failed_cases = tr.get("failed_cases", [])
+                        if failed_cases:
+                            details += '<div style="margin-top:4px"><strong>Failed cases:</strong></div>'
+                            details += '<ul style="margin:4px 0 0 16px;padding:0">'
+                            for fc in failed_cases[:5]:
+                                details += f'<li>{html.escape(fc.get("classname", ""))}.{html.escape(fc.get("name", ""))} ({html.escape(fc.get("type", ""))}): {html.escape(fc.get("message", ""))}</li>'
+                            if len(failed_cases) > 5:
+                                details += f'<li>... e mais {len(failed_cases)-5}</li>'
+                            details += '</ul>'
+                        details += "</div>"
+                        gate_checks += f'<div class="tool-evidence-field" style="margin-top:6px;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg)"><strong>{html.escape(chk.get("name",""))}</strong> <span class="tag {chk_st}">{html.escape(chk.get("status",""))}</span><div style="font-size:12px;color:var(--muted);margin-top:4px">{html.escape(chk.get("reason",""))}</div><div class="signal-note" style="margin-top:4px">JUnit XML é relatório de resultado de testes, não relatório de coverage. O AIW apenas captura relatórios já gerados por comandos aprovados do profile.</div>{details}</div>'
+                        continue
 
                 gate_checks += f'<div class="tool-evidence-field" style="margin-top:6px;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg)"><strong>{html.escape(chk.get("name",""))}</strong> <span class="tag {chk_st}">{html.escape(chk.get("status",""))}</span><div style="font-size:12px;color:var(--muted);margin-top:4px">{html.escape(chk.get("reason",""))}</div>{details}</div>'
 
@@ -3008,6 +3030,50 @@ def render_page() -> str:
                 test_run_html += f'<div class="signal-note">Relatórios: {reps_html}</div>'
             else:
                 test_run_html += '<div class="signal-note status-info">Nenhum relatório configurado ou existente. O AIW não executa coverage extra automaticamente.</div>'
+                
+        tr = row.get("test_results")
+        if tr:
+            tr_status = tr.get("summary", {}).get("status", "no_report")
+            tr_tests = tr.get("summary", {}).get("tests", 0)
+            tr_passed = tr.get("summary", {}).get("passed", 0)
+            tr_failed = tr.get("summary", {}).get("failed", 0)
+            tr_errors = tr.get("summary", {}).get("errors", 0)
+            
+            tr_status_tag = ""
+            if tr_status == "passed":
+                tr_status_tag = '<span class="tag status-passed">Test Results: passed</span>'
+            elif tr_status == "failed" or tr_status == "error":
+                tr_status_tag = f'<span class="tag status-failed">Test Results: {tr_status}</span>'
+            elif tr_status == "no_report":
+                tr_status_tag = '<span class="tag status-info">Test Results: no report</span>'
+            else:
+                tr_status_tag = f'<span class="tag status-info">Test Results: {tr_status}</span>'
+                
+            test_run_html += f"""
+            <div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
+              <div style="font-weight:600;margin-bottom:6px">Test Results capturados</div>
+              <div class="card-meta" style="margin-bottom:6px">
+                {tr_status_tag}
+                <span class="tag">Tests: {tr_passed}/{tr_tests} passed</span>
+              </div>
+              <div class="signal-note">Source: test_run_capture</div>
+            """
+            
+            if tr_failed > 0 or tr_errors > 0:
+                fc = tr.get("failed_cases", [])
+                if fc:
+                    test_run_html += '<div class="signal-note" style="margin-top:4px"><strong>Failed cases:</strong></div>'
+                    test_run_html += '<ul style="margin:4px 0 0 16px;padding:0;font-size:12px;color:var(--muted)">'
+                    for c in fc[:3]:
+                        test_run_html += f'<li>{html.escape(c.get("classname", ""))}.{html.escape(c.get("name", ""))} ({html.escape(c.get("type", ""))}): {html.escape(c.get("message", ""))}</li>'
+                    if len(fc) > 3:
+                        test_run_html += f'<li>... e mais {len(fc)-3}</li>'
+                    test_run_html += '</ul>'
+                    
+            if not tr.get("summary", {}).get("has_reports"):
+                test_run_html += '<div class="signal-note status-info" style="margin-top:4px">Nenhum relatório configurado ou existente. O AIW não executa suites extras automaticamente.</div>'
+                
+            test_run_html += "</div>"
 
             from aiw_workspace.coverage_baseline import coverage_diff
             diff_payload = coverage_diff(ws_id, test_id, patch_id)
@@ -4511,6 +4577,32 @@ class Handler(BaseHTTPRequestHandler):
             from aiw_workspace.changed_lines_coverage import analyze_changed_lines_coverage
             cl_payload = analyze_changed_lines_coverage(ws_id, patch_id, test_run_id)
             return self._respond(cl_payload, 200)
+
+        if path.startswith("/api/workspaces/") and "/tests/runs/" in path and path.endswith("/test-results"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            run_id = parts[6]
+            from aiw_workspace.test_runner import get_test_run
+            run_payload = get_test_run(ws_id, run_id)
+            tr = run_payload.get("test_results") or {"ok": True, "summary": {"has_reports": False, "status": "no_report"}, "failed_cases": []}
+            return self._respond(tr, 200)
+
+        if path.startswith("/api/workspaces/") and "/patches/" in path and path.endswith("/test-results"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            patch_id = parts[5]
+            from aiw_workspace.test_runner import list_test_runs
+            runs_payload = list_test_runs(ws_id, limit=50)
+            cap_run = next((r for r in runs_payload.get("runs", []) if r.get("patch_id") == patch_id and r.get("test_results", {}).get("summary", {}).get("has_reports")), None)
+            if cap_run:
+                tr = cap_run["test_results"]
+                tr["source"] = "test_run_capture"
+                return self._respond(tr, 200)
+            
+            from aiw_workspace.test_result_report import analyze_test_results
+            tr = analyze_test_results(ws_id)
+            tr["source"] = "workspace_report" if tr.get("summary", {}).get("has_reports") else "no_report"
+            return self._respond(tr, 200)
 
         if path.startswith("/api/workspaces/") and path.endswith("/execution-policy"):
             ws_id = path[len("/api/workspaces/"):-len("/execution-policy")].strip("/")

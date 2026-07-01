@@ -70,9 +70,14 @@ def review_gate_for_patch(workspace_id: str, patch_id: str) -> dict:
     runs_for_patch = [r for r in runs_payload.get("runs", []) if r.get("patch_id") == patch_id]
 
     captured_report = None
+    captured_test_result = None
     for r in runs_for_patch:
         if r.get("coverage_summary") and r["coverage_summary"].get("summary", {}).get("has_reports"):
             captured_report = r["coverage_summary"]
+        if r.get("test_results") and r["test_results"].get("summary", {}).get("has_reports"):
+            captured_test_result = r["test_results"]
+            
+        if captured_report and captured_test_result:
             break
 
     if captured_report:
@@ -172,6 +177,45 @@ def review_gate_for_patch(workspace_id: str, patch_id: str) -> dict:
 
     cl_check = {"name": "Changed lines coverage", "status": cl_chk_status, "reason": cl_reason, "cl_payload": cl_report}
 
+    # Check 9: Test result report
+    tr_report = {}
+    tr_status = "unknown"
+    tr_chk_status = "info"
+    tr_reason = "Análise de resultados de testes não executada."
+    
+    if captured_test_result:
+        tr_report = captured_test_result
+        tr_report["source"] = "test_run_capture"
+    else:
+        from aiw_workspace.test_result_report import analyze_test_results
+        tr_report = analyze_test_results(workspace_id)
+        tr_report["source"] = "workspace_report" if tr_report.get("summary", {}).get("has_reports") else "no_report"
+        
+    tr_summ = tr_report.get("summary", {})
+    tr_status = tr_summ.get("status", "unknown")
+    
+    if tr_status == "passed":
+        tr_chk_status = "passed"
+        tr_reason = f"Todos os {tr_summ.get('tests', 0)} testes passaram."
+        score += 5
+    elif tr_status == "failed":
+        tr_chk_status = "failed"
+        tr_reason = f"{tr_summ.get('failed', 0)} falharam de {tr_summ.get('tests', 0)}."
+        score -= 15
+    elif tr_status == "error":
+        tr_chk_status = "failed"
+        tr_reason = f"{tr_summ.get('errors', 0)} com erros de {tr_summ.get('tests', 0)}."
+        score -= 20
+    elif tr_status == "no_report":
+        tr_chk_status = "info"
+        tr_reason = "Sem relatório de resultado de testes configurado ou existente."
+    else:
+        tr_chk_status = "warning"
+        tr_reason = "Status do resultado de testes desconhecido."
+        score -= 3
+        
+    tr_check = {"name": "Test result report", "status": tr_chk_status, "reason": tr_reason, "tr_payload": tr_report}
+
     if plan.get("docs_only"):
         score = 70
         checks.append({"name": "Validation plan", "status": "passed", "reason": "Patch altera apenas documentação."})
@@ -179,6 +223,7 @@ def review_gate_for_patch(workspace_id: str, patch_id: str) -> dict:
         checks.append(real_coverage_check)
         checks.append(diff_check)
         checks.append(cl_check)
+        checks.append(tr_check)
         return _build_gate_response(workspace_id, patch_id, "docs_only", score, True, checks, "Patch altera apenas documentação, apply manual permitido com confirmação.", coverage_intent, coverage_report)
 
     plan_groups = plan.get("plan", [])
@@ -240,6 +285,7 @@ def review_gate_for_patch(workspace_id: str, patch_id: str) -> dict:
     checks.append(real_coverage_check)
     checks.append(diff_check)
     checks.append(cl_check)
+    checks.append(tr_check)
 
     if intent_class == "code_with_tests":
         score += 5

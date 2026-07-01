@@ -254,6 +254,9 @@ def run_test_command(
     from .coverage_report import capture_test_run_coverage
     capture_test_run_coverage(preview["workspace_id"], test_run_id)
 
+    from .test_result_report import capture_test_result_report
+    capture_test_result_report(preview["workspace_id"], test_run_id)
+
     return {"ok": status == "succeeded", "status": status, "test_run_id": test_run_id, "result": result, "run_dir": str(run_dir)}
 
 
@@ -268,7 +271,7 @@ def _run_row_from_dir(workspace_id: str, run_dir: Path) -> dict:
     meta["artifact_dir"] = str(run_dir)
     meta["artifact_files"] = {
         name: str(run_dir / name)
-        for name in ("metadata.json", "command.json", "stdout.log", "stderr.log", "result.json", "summary.md")
+        for name in ("metadata.json", "command.json", "stdout.log", "stderr.log", "result.json", "summary.md", "test-results-summary.json", "test-results-summary.md")
         if (run_dir / name).exists()
     }
     return meta
@@ -358,13 +361,14 @@ def get_test_run(workspace_id: str, test_run_id: str) -> dict:
         "metadata": read_json_file("metadata.json"),
         "command": read_json_file("command.json"),
         "result": read_json_file("result.json"),
-        "coverage_summary": read_json_file("coverage-summary.json"),
+        "coverage_summary": read_json_file("coverage_summary.json"),
+        "test_results": read_json_file("test-results-summary.json"),
         "stdout": _mask(read_text_file("stdout.log")),
         "stderr": _mask(read_text_file("stderr.log")),
         "summary": read_text_file("summary.md"),
         "artifacts": {
             name: str(run_dir / name)
-            for name in ("metadata.json", "command.json", "stdout.log", "stderr.log", "result.json", "summary.md", "coverage-summary.json", "coverage-summary.md")
+            for name in ("metadata.json", "command.json", "stdout.log", "stderr.log", "result.json", "summary.md", "coverage_summary.json", "coverage-summary.md", "test-results-summary.json", "test-results-summary.md")
             if (run_dir / name).exists()
         },
     }
