@@ -65,3 +65,5 @@ Com a barreira consolidada, podemos com segurança evoluir o CLI de `aiw-integra
 
 ## Atualizações
 A política agora está ativamente integrada ao *Integration Worker CLI*, bloqueando gh pr edit na origem se as diretrizes rejeitarem. Veja [AIW GitHub Worker Policy Integration](AIW_GITHUB_WORKER_POLICY_INTEGRATION.md).
+
+O Foreground Worker Loop também consulta esta política ativamente via código antes de cada ciclo. Veja [AIW Foreground Worker Loop](AIW_FOREGROUND_WORKER_LOOP.md).

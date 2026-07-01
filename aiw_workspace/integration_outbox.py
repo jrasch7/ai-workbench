@@ -172,3 +172,55 @@ def resolve_outbox_item_file(workspace_id: str, item_id: str, filename: str):
     if fpath.is_file():
         return fpath
     return None
+
+def set_outbox_dispatch(workspace_id: str, item_id: str, target: str, pr_number: int, confirm: bool = False) -> dict:
+    if not confirm:
+        return {"ok": False, "error": "confirm_required"}
+        
+    ws = resolve_workspace(workspace_id)
+    if not ws:
+        return {"ok": False, "error": "workspace_not_found"}
+        
+    if target != "github_pr":
+        return {"ok": False, "error": "target_not_supported"}
+        
+    if not pr_number or not str(pr_number).isdigit() or int(pr_number) <= 0:
+        return {"ok": False, "error": "pr_number_invalid"}
+        
+    base_dir = AIW_ROOT / ".aiw" / "workspaces" / ws["id"] / "integration-outbox" / item_id
+    if not base_dir.is_dir() or not (base_dir / "item.json").exists():
+        return {"ok": False, "error": "item_not_found"}
+        
+    dispatch_id = f"dsp-{uuid.uuid4().hex[:8]}"
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    
+    dispatch_data = {
+        "dispatch_id": dispatch_id,
+        "created_at": now_iso,
+        "target": target,
+        "worker_name": "github_pr_edit",
+        "action": "pr_edit",
+        "mode": "manual_cli_only",
+        "pr_number": int(pr_number),
+        "enabled": True,
+        "confirm_dispatch": True
+    }
+    
+    (base_dir / "dispatch.json").write_text(json.dumps(dispatch_data, indent=2), encoding="utf-8")
+    
+    # Register attempt
+    attempts_dir = base_dir / "attempts"
+    attempts_dir.mkdir(parents=True, exist_ok=True)
+    attempt_id = f"att-{uuid.uuid4().hex[:8]}"
+    attempt_data = {
+        "attempt_id": attempt_id,
+        "created_at": now_iso,
+        "mode": "dispatch_configured",
+        "target": target,
+        "status": "dispatch_configured",
+        "reason": "Dispatch configured manually via CLI"
+    }
+    (attempts_dir / f"{attempt_id}.json").write_text(json.dumps(attempt_data, indent=2), encoding="utf-8")
+    
+    return {"ok": True, "dispatch": dispatch_data}
+

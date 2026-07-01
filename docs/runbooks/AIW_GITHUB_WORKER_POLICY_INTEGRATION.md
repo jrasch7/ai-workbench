@@ -54,3 +54,6 @@ A política e a CLI propositalmente bloqueiam:
 - Nenhum daemon ativo monitorando webhook;
 - Nenhum Jira.
 - Nenhum mecanismo de merge automático (merge manual exigido no portal/GitHub UI).
+
+## Atualizações: Foreground Loop
+A Policy agora é respeitada também pelo Foreground Worker Loop antes de acionar a CLI final. Veja [AIW Foreground Worker Loop](AIW_FOREGROUND_WORKER_LOOP.md).

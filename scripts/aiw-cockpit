@@ -3049,6 +3049,36 @@ def render_page() -> str:
     </div>
     ''')
 
+    from aiw_workspace.worker_loop import list_worker_loop_runs
+    wlr_res = list_worker_loop_runs(active_workspace)
+    wlr_runs = wlr_res.get("runs", [])
+    wlr_runs_html = ""
+    for r in wlr_runs[:3]:
+        r_mode = r.get("mode")
+        r_mode_cls = "status-preview" if r_mode == "dry_run" else "status-run"
+        r_loop = r.get("loop_mode")
+        wlr_runs_html += f'''
+        <div style="margin-top:6px;font-size:12px;border-top:1px solid rgba(255,255,255,0.05);padding-top:6px">
+          <strong>Run {r.get("run_id")}</strong> ({r.get("created_at")})<br>
+          <span class="tag {r_mode_cls}">{r_mode}</span> <span class="tag">{r_loop}</span><br>
+          <span style="color:var(--muted)">Seen: {r.get("items_seen")} | Eligible: {r.get("items_eligible")} | Blocked: {r.get("items_blocked")} | Executed: {r.get("items_executed")} | Succeeded: {r.get("items_succeeded")} | Failed: {r.get("items_failed")}</span>
+        </div>
+        '''
+        
+    queue_html_list.append(f'''
+    <div style="margin-bottom:12px;padding:12px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
+        <div style="font-weight:600;margin-bottom:8px">Foreground Worker Loop</div>
+        <div class="signal-note" style="margin-top:8px;color:var(--muted)">
+            O Worker Loop não roda pela UI. Ele não é daemon, não usa cron, não roda em background e só executa ações externas via CLI manual, dispatch explícito e External Worker Policy.
+        </div>
+        <div style="margin-top:8px">
+            <pre style="background:var(--bg);padding:6px;border-radius:4px;font-size:11px;margin-bottom:4px">./scripts/aiw-worker-loop --workspace {active_workspace} --once --dry-run</pre>
+            <pre style="background:var(--bg);padding:6px;border-radius:4px;font-size:11px">./scripts/aiw-worker-loop --workspace {active_workspace} --once --execute --confirm-worker-loop</pre>
+        </div>
+        {wlr_runs_html}
+    </div>
+    ''')
+
     if queue_res.get("ok"):
         for q in queue_res.get("items", []):
             q_id = q.get("queue_item_id")
@@ -5042,6 +5072,18 @@ class Handler(BaseHTTPRequestHandler):
             ws_id = path[len("/api/workspaces/"):-len("/integration-outbox")].strip("/")
             from aiw_workspace.integration_outbox import list_outbox_items
             return self._respond(list_outbox_items(ws_id), 200)
+
+        if path.startswith("/api/workspaces/") and path.endswith("/worker-loop/runs"):
+            ws_id = path[len("/api/workspaces/"):-len("/worker-loop/runs")].strip("/")
+            from aiw_workspace.worker_loop import list_worker_loop_runs
+            return self._respond(list_worker_loop_runs(ws_id), 200)
+
+        if path.startswith("/api/workspaces/") and "/worker-loop/runs/" in path:
+            parts = path.split("/")
+            ws_id = parts[3]
+            run_id = parts[6]
+            from aiw_workspace.worker_loop import read_worker_loop_run
+            return self._respond(read_worker_loop_run(ws_id, run_id), 200)
 
         if path.startswith("/api/workspaces/") and "/integration-inbox/" in path and "/file/" in path:
             parts = path.split("/")

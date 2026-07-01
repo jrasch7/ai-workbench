@@ -54,3 +54,5 @@ Implementar um CLI de *Flush* ou Background Worker seguro (ex.: `aiw-outbox-sync
 
 ## Integração de Política
 Os envios baseados na Outbox agora sofrem check estrito via política local (External Worker Policy) pelo integration worker CLI. Veja [AIW GitHub Worker Policy Integration](AIW_GITHUB_WORKER_POLICY_INTEGRATION.md).
+
+Agora com o conceito de dispatch.json, a Outbox pode ser varrida automaticamente mas sob interrupção manual do [AIW Foreground Worker Loop](AIW_FOREGROUND_WORKER_LOOP.md).

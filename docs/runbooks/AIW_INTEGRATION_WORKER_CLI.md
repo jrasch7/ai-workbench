@@ -51,3 +51,5 @@ Avaliar se devemos migrar esse script para um daemon (Integration Sync Worker) q
 
 ## Integração de Política (v1)
 A partir da v1 de Policy, o worker invoca a External Worker Policy antes de permitir qualquer envio real (gh). Veja [AIW GitHub Worker Policy Integration](AIW_GITHUB_WORKER_POLICY_INTEGRATION.md).
+
+A CLI de worker manual pode agora registrar dispatch params com --set-dispatch visando engatilhar o [AIW Foreground Worker Loop](AIW_FOREGROUND_WORKER_LOOP.md).

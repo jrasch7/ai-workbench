@@ -15,6 +15,7 @@ sys.argv = [sys.argv[0]] + sys.argv[2:]
 # Ensure aiw_workspace is accessible
 sys.path.insert(0, str(Path.cwd()))
 from aiw_workspace.integration_worker import run_worker
+from aiw_workspace.integration_outbox import set_outbox_dispatch
 
 def main():
     parser = argparse.ArgumentParser(description="AIW Integration Worker CLI")
@@ -23,10 +24,28 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Run in dry-run mode (default)")
     parser.add_argument("--execute", action="store_true", help="Run execution (override dry-run)")
     parser.add_argument("--confirm-external-send", action="store_true", help="Confirm external network send")
-    parser.add_argument("--pr-number", help="PR Number (required for execute)")
+    parser.add_argument("--pr-number", help="PR Number (required for execute or set-dispatch)")
+    parser.add_argument("--set-dispatch", action="store_true", help="Set dispatch metadata for foreground loop")
+    parser.add_argument("--confirm-dispatch", action="store_true", help="Confirm setting dispatch metadata")
     
     args = parser.parse_args()
     
+    if args.set_dispatch:
+        result = set_outbox_dispatch(
+            workspace_id=args.workspace,
+            item_id=args.item,
+            target="github_pr",
+            pr_number=args.pr_number,
+            confirm=args.confirm_dispatch
+        )
+        if result.get("ok"):
+            print("Dispatch configured successfully.")
+            print(json.dumps(result.get("dispatch", {}), indent=2))
+            sys.exit(0)
+        else:
+            print(f"Failed to configure dispatch: {result.get('error')}", file=sys.stderr)
+            sys.exit(1)
+            
     dry_run = True
     if args.execute:
         dry_run = False

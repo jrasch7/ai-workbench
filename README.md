@@ -107,6 +107,25 @@ Nenhum daemon externo roda por padrão.
 Nenhuma ação GitHub/Jira é executada pela UI.
 Toda integração externa exige CLI manual, confirmação explícita e policy permitindo.
 
+
+## Foreground Worker Loop
+
+O AIW possui um worker loop manual e foreground para processar Integration Outbox.
+
+Ele não é daemon, não roda em background e não executa pela UI.
+
+Fluxo:
+
+Integration Outbox item ready
+→ dispatch.json explícito
+→ Foreground Worker Loop
+→ External Worker Policy
+→ Integration Worker CLI
+→ gh pr edit somente se permitido
+
+Por padrão, roda em dry-run.
+Execução real exige --execute e --confirm-worker-loop.
+
 ## Inspirações
 
 O AIW se inspira em Devin, Manus, OpenHands, CodeAct/Cyber Bench e workspaces locais como Odysseus.
@@ -183,3 +202,4 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 - [AIW LLM Queue Execution Guard](docs/runbooks/AIW_LLM_QUEUE_EXECUTION_GUARD.md)
 - [AIW Agent Patch Review & Apply Flow](docs/runbooks/AIW_AGENT_PATCH_REVIEW_FLOW.md)
 - [AIW GitHub Worker Policy Integration](docs/runbooks/AIW_GITHUB_WORKER_POLICY_INTEGRATION.md)
+- [AIW Foreground Worker Loop](docs/runbooks/AIW_FOREGROUND_WORKER_LOOP.md)

@@ -1,0 +1,67 @@
+#!/bin/bash
+# AIW Foreground Worker Loop CLI
+
+export PYTHONPATH="$PWD:$PYTHONPATH"
+
+exec python3 - "$@" <<'PYTHON'
+import sys
+import argparse
+import json
+from pathlib import Path
+
+sys.argv = [sys.argv[0]] + sys.argv[2:]
+sys.path.insert(0, str(Path.cwd()))
+
+from aiw_workspace.worker_loop import run_worker_loop_once, run_worker_loop_watch
+
+def main():
+    parser = argparse.ArgumentParser(description="AIW Foreground Worker Loop CLI")
+    parser.add_argument("--workspace", required=True, help="Workspace ID")
+    
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--once", action="store_true", help="Run once (default if neither specified)")
+    group.add_argument("--watch", action="store_true", help="Run in foreground loop")
+    
+    parser.add_argument("--interval-seconds", type=int, default=30, help="Interval for watch mode")
+    parser.add_argument("--dry-run", action="store_true", help="Run in dry-run mode (default)")
+    parser.add_argument("--execute", action="store_true", help="Run execution (override dry-run)")
+    parser.add_argument("--confirm-worker-loop", action="store_true", help="Confirm execution in loop")
+    
+    args = parser.parse_args()
+    
+    execute = False
+    if args.execute:
+        execute = True
+        
+    mode_once = not args.watch
+    
+    if mode_once:
+        res = run_worker_loop_once(
+            workspace_id=args.workspace,
+            execute=execute,
+            confirm_worker_loop=args.confirm_worker_loop
+        )
+        if res.get("ok"):
+            print("Foreground worker loop (once) finished.")
+            print(json.dumps(res.get("run", {}), indent=2))
+            sys.exit(0)
+        else:
+            print(f"Foreground worker loop failed: {res.get('error')}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        res = run_worker_loop_watch(
+            workspace_id=args.workspace,
+            interval_seconds=args.interval_seconds,
+            execute=execute,
+            confirm_worker_loop=args.confirm_worker_loop
+        )
+        if res.get("ok"):
+            print("Foreground worker loop (watch) stopped.")
+            sys.exit(0)
+        else:
+            print(f"Foreground worker loop failed: {res.get('error')}", file=sys.stderr)
+            sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+PYTHON
