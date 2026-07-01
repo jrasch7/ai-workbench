@@ -44,6 +44,7 @@ from .patch_gate import (
 from .test_coverage_intent import analyze_test_coverage_intent
 from .coverage_report import analyze_patch_coverage
 from .coverage_baseline import get_current_coverage_baseline, promote_coverage_baseline, list_coverage_baselines, coverage_diff
+from .changed_lines_coverage import analyze_changed_lines_coverage
 
 __all__ = [
     "DEFAULT_WORKSPACE",
@@ -85,4 +86,5 @@ __all__ = [
     "promote_coverage_baseline",
     "list_coverage_baselines",
     "coverage_diff",
+    "analyze_changed_lines_coverage",
 ]

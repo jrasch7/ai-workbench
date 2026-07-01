@@ -55,3 +55,5 @@ O Patch Review Gate agora expõe esse comparativo nativamente no Check "Coverage
 ## Próximo passo recomendado
 
 Expandir o Diff para um mapeamento Source-Code, lincando arquivos analisados do coverage diretamente nas linhas que o `git diff` tocou dentro da _PR_.
+
+Integra com o [Changed Lines Coverage](AIW_CHANGED_LINES_COVERAGE.md).

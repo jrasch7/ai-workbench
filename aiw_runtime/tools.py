@@ -220,6 +220,26 @@ def project_patch_preview(path: str, old_text: str, new_text: str, expected_repl
         ))
         diff_text = "".join(diff_lines)
 
+        # Parse diff lines
+        added_lines = []
+        removed_lines = []
+        current_line = 0
+
+        for dline in diff_lines:
+            if dline.startswith("@@"):
+                # Parse header @@ -old_start,old_count +new_start,new_count @@
+                import re
+                match = re.search(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@", dline)
+                if match:
+                    current_line = int(match.group(2))
+            elif dline.startswith("+") and not dline.startswith("+++"):
+                added_lines.append(current_line)
+                current_line += 1
+            elif dline.startswith("-") and not dline.startswith("---"):
+                removed_lines.append(current_line) # Contextually, this isn't strictly mapping to new file line numbers, but we just track it.
+            elif not dline.startswith("\\") and not dline.startswith("---") and not dline.startswith("+++"):
+                current_line += 1
+
         patch_id = time.strftime("%Y%m%dT%H%M%SZ-") + uuid.uuid4().hex[:8]
         patches_dir = _patches_dir()
         patches_dir.mkdir(parents=True, exist_ok=True)
@@ -232,6 +252,13 @@ def project_patch_preview(path: str, old_text: str, new_text: str, expected_repl
             "new_text": new_text,
             "reason": reason,
             "diff": diff_text,
+            "changed_lines": [
+                {
+                    "file": str(resolved_path.relative_to(get_root())),
+                    "added_lines": added_lines,
+                    "removed_lines": removed_lines
+                }
+            ],
             "replacements": occurrences,
             "status": "preview",
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),

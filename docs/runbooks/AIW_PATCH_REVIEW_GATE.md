@@ -92,3 +92,5 @@ O gate avalia pontuações reais com base no [Coverage Report Adapter](AIW_COVER
 Também pode verificar dados do [Coverage Run Capture](AIW_COVERAGE_RUN_CAPTURE.md).
 
 Inclui check nativo do [Coverage Baseline and Diff](AIW_COVERAGE_BASELINE_DIFF.md).
+
+Inclui check nativo do [Changed Lines Coverage](AIW_CHANGED_LINES_COVERAGE.md).

@@ -21,19 +21,26 @@ def parse_cobertura_xml(path: Path) -> dict:
                     continue
                 covered = 0
                 missed = 0
+                covered_list = []
+                missed_list = []
                 for line in lines.findall("line"):
+                    l_num = int(line.attrib.get("number", "0"))
                     hits = int(line.attrib.get("hits", "0"))
                     if hits > 0:
                         covered += 1
+                        if l_num > 0: covered_list.append(l_num)
                     else:
                         missed += 1
+                        if l_num > 0: missed_list.append(l_num)
                 total_covered += covered
                 total_missed += missed
                 total_lines += covered + missed
                 files_data[filename.replace("\\", "/")] = {
                     "covered": covered,
                     "missed": missed,
-                    "line_rate": (covered / (covered + missed)) if (covered + missed) > 0 else 0.0
+                    "line_rate": (covered / (covered + missed)) if (covered + missed) > 0 else 0.0,
+                    "covered_lines": covered_list,
+                    "missed_lines": missed_list
                 }
 
         return {
@@ -56,25 +63,35 @@ def parse_lcov(path: Path) -> dict:
         current_covered = 0
         current_missed = 0
 
+        current_covered_lines = []
+        current_missed_lines = []
+
         for line in content.splitlines():
             line = line.strip()
             if line.startswith("SF:"):
                 current_file = line[3:].strip().replace("\\", "/")
                 current_covered = 0
                 current_missed = 0
+                current_covered_lines = []
+                current_missed_lines = []
             elif line.startswith("DA:"):
                 parts = line[3:].split(",")
                 if len(parts) >= 2:
+                    l_num = int(parts[0])
                     hits = int(parts[1])
                     if hits > 0:
                         current_covered += 1
+                        current_covered_lines.append(l_num)
                     else:
                         current_missed += 1
+                        current_missed_lines.append(l_num)
             elif line == "end_of_record" and current_file:
                 files_data[current_file] = {
                     "covered": current_covered,
                     "missed": current_missed,
-                    "line_rate": (current_covered / (current_covered + current_missed)) if (current_covered + current_missed) > 0 else 0.0
+                    "line_rate": (current_covered / (current_covered + current_missed)) if (current_covered + current_missed) > 0 else 0.0,
+                    "covered_lines": current_covered_lines,
+                    "missed_lines": current_missed_lines
                 }
                 total_covered += current_covered
                 total_missed += current_missed

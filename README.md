@@ -133,3 +133,5 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 - [Coverage Run Capture](docs/runbooks/AIW_COVERAGE_RUN_CAPTURE.md) captura coverage e usa thresholds.
 
 - [Coverage Baseline and Diff](docs/runbooks/AIW_COVERAGE_BASELINE_DIFF.md) define baselines locais manuais e compara diffs.
+
+- [Changed Lines Coverage](docs/runbooks/AIW_CHANGED_LINES_COVERAGE.md) restringe análise de cobertura exclusivamente às linhas afetadas pelo patch.

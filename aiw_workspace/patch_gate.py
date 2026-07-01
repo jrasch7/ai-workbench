@@ -8,6 +8,7 @@ from .validation_plan import (
 from .test_coverage_intent import analyze_test_coverage_intent
 from .coverage_report import analyze_patch_coverage
 from .coverage_baseline import coverage_diff
+from .changed_lines_coverage import analyze_changed_lines_coverage
 
 def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -137,12 +138,47 @@ def review_gate_for_patch(workspace_id: str, patch_id: str) -> dict:
 
     diff_check = {"name": "Coverage diff vs baseline", "status": diff_chk_status, "reason": diff_reason, "diff_payload": diff_report}
 
+    # Check 8: Changed lines coverage
+    cl_report = {}
+    cl_status = "unknown"
+    cl_chk_status = "info"
+    cl_reason = "Análise de linhas alteradas não executada."
+
+    cap_run_id = captured_report.get("test_run_id") if captured_report else None
+    cl_payload = analyze_changed_lines_coverage(workspace_id, patch_id, cap_run_id)
+    if cl_payload.get("ok", True) and "summary" in cl_payload:
+        cl_report = cl_payload
+        cl_status = cl_payload["summary"].get("status", "unknown")
+
+        if cl_status == "covered":
+            cl_chk_status = "passed"
+            cl_reason = f"Linhas alteradas estão cobertas ({cl_payload['summary'].get('changed_line_coverage', 0)*100:.1f}%)."
+            score += 8
+        elif cl_status == "partial":
+            cl_chk_status = "warning"
+            cl_reason = f"Cobertura parcial nas linhas alteradas ({cl_payload['summary'].get('changed_line_coverage', 0)*100:.1f}%)."
+            score -= 8
+        elif cl_status == "uncovered":
+            cl_chk_status = "warning"
+            cl_reason = "Linhas alteradas não possuem cobertura."
+            score -= 15
+        elif cl_status == "no_line_data":
+            cl_chk_status = "warning"
+            cl_reason = "Relatório sem mapeamento de linhas ou patch sem metadata de diff."
+            score -= 3
+        elif cl_status == "no_report":
+            cl_chk_status = "info"
+            cl_reason = "Sem relatório de coverage."
+
+    cl_check = {"name": "Changed lines coverage", "status": cl_chk_status, "reason": cl_reason, "cl_payload": cl_report}
+
     if plan.get("docs_only"):
         score = 70
         checks.append({"name": "Validation plan", "status": "passed", "reason": "Patch altera apenas documentação."})
         checks.append(coverage_check)
         checks.append(real_coverage_check)
         checks.append(diff_check)
+        checks.append(cl_check)
         return _build_gate_response(workspace_id, patch_id, "docs_only", score, True, checks, "Patch altera apenas documentação, apply manual permitido com confirmação.", coverage_intent, coverage_report)
 
     plan_groups = plan.get("plan", [])
@@ -203,6 +239,7 @@ def review_gate_for_patch(workspace_id: str, patch_id: str) -> dict:
     checks.append(coverage_check)
     checks.append(real_coverage_check)
     checks.append(diff_check)
+    checks.append(cl_check)
 
     if intent_class == "code_with_tests":
         score += 5
