@@ -135,6 +135,8 @@ def update_outbox_item_status(workspace_id: str, item_id: str, status: str) -> d
         
     allowed_statuses = {"draft", "ready", "copied", "dismissed"}
     if status not in allowed_statuses:
+        if status == "sent":
+            return {"ok": False, "error": "status 'sent' can only be set by the integration worker"}
         return {"ok": False, "error": "invalid_status"}
         
     base_dir = AIW_ROOT / ".aiw" / "workspaces" / ws["id"] / "integration-outbox" / item_id

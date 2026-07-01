@@ -2632,6 +2632,10 @@ def render_page() -> str:
             i_target = latest_item.get("target", "")
             i_kind = latest_item.get("kind", "")
             i_status = latest_item.get("status", "")
+            ext_sent = latest_item.get("external_sent", False)
+            ext_ref = latest_item.get("external_target_ref", "")
+            ext_meta = f'<span class="tag status-done">Sent: {ext_ref}</span>' if ext_sent else '<span class="tag">Not sent externally</span>'
+            
             outbox_html = f"""
             <div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
               <div style="font-weight:600;margin-bottom:6px">Integration Outbox</div>
@@ -2639,9 +2643,11 @@ def render_page() -> str:
                 <span class="tag">Status: {i_status}</span>
                 <span class="tag">Target: {i_target}</span>
                 <span class="tag">Kind: {i_kind}</span>
+                {ext_meta}
               </div>
               <div class="signal-note" style="margin-bottom:6px">ID: {i_id} · {i_date}</div>
-              <div class="signal-note" style="margin-bottom:6px;color:var(--muted)">Integration Outbox é local. O AIW não envia para GitHub/Jira, não executa gh e não faz push nesta versão.</div>
+              <div class="signal-note" style="margin-bottom:6px;color:var(--muted)">A UI não envia para GitHub. Para enviar, rode a CLI manualmente com --execute --confirm-external-send --pr-number.</div>
+              <pre style="margin-top:8px;background:var(--bg);border-radius:8px;font-size:11px">./scripts/aiw-integration-worker --workspace {ws_id} --item {i_id} --execute --confirm-external-send --pr-number &lt;PR_NUMBER&gt;</pre>
               <div class="patch-actions" style="margin-top:8px">
                 <form method="post" action="/api/workspaces/{ws_id}/integration-outbox/{i_id}/status" style="display:inline">
                   <input type="hidden" name="status" value="ready">
@@ -2660,6 +2666,7 @@ def render_page() -> str:
                 </form>
                 <a class="btn btn-ghost" href="/api/workspaces/{ws_id}/patches/{pid}/integration-outbox/{i_id}/file/payload.md" target="_blank">Ver payload.md</a>
                 <a class="btn btn-ghost" href="/api/workspaces/{ws_id}/patches/{pid}/integration-outbox/{i_id}/file/command-preview.sh" target="_blank">Ver command preview</a>
+                <a class="btn btn-ghost" href="/api/workspaces/{ws_id}/patches/{pid}/integration-outbox/{i_id}/attempts" target="_blank">Ver Attempts logs</a>
               </div>
             </div>
             """
@@ -4762,7 +4769,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(content.encode("utf-8"))
             return
 
-        if path.startswith("/api/workspaces/") and "/integration-outbox/" in path and not "/file/" in path and not path.endswith("/status"):
+        if path.startswith("/api/workspaces/") and "/integration-outbox/" in path and not "/file/" in path and not path.endswith("/status") and not path.endswith("/attempts"):
             parts = path.split("/")
             ws_id = parts[3]
             if "/patches/" in path:
@@ -4771,6 +4778,16 @@ class Handler(BaseHTTPRequestHandler):
                 item_id = parts[5]
             from aiw_workspace.integration_outbox import read_outbox_item
             return self._respond(read_outbox_item(ws_id, item_id), 200)
+
+        if path.startswith("/api/workspaces/") and "/integration-outbox/" in path and path.endswith("/attempts"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            if "/patches/" in path:
+                item_id = parts[7]
+            else:
+                item_id = parts[5]
+            from aiw_workspace.integration_worker import list_item_attempts
+            return self._respond(list_item_attempts(ws_id, item_id), 200)
 
         if path.startswith("/api/workspaces/") and "/patches/" in path and path.endswith("/integration-outbox"):
             parts = path.split("/")
