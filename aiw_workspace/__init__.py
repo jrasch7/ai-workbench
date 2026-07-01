@@ -36,6 +36,11 @@ from .validation_plan import (
     preview_validation_plan_command,
     run_validation_plan_commands,
 )
+from .patch_gate import (
+    review_gate_for_patch,
+    list_review_gates,
+    apply_reviewed_patch,
+)
 
 __all__ = [
     "DEFAULT_WORKSPACE",
@@ -68,4 +73,7 @@ __all__ = [
     "validation_reliability",
     "preview_validation_plan_command",
     "run_validation_plan_commands",
+    "review_gate_for_patch",
+    "list_review_gates",
+    "apply_reviewed_patch",
 ]
