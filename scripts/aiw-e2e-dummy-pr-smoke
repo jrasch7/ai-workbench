@@ -1,0 +1,150 @@
+#!/bin/bash
+# AIW End-to-End Dummy PR Smoke
+
+set -e
+
+WORKSPACE="aiw"
+echo "Starting AIW End-to-End Dummy PR Smoke for workspace: $WORKSPACE"
+
+# 1. MOCK INTAKE
+echo "1. Mocking GitHub Intake..."
+INBOX_ID="in-dummy$(date +%s)"
+INBOX_DIR=".aiw/workspaces/$WORKSPACE/integration-inbox/$INBOX_ID"
+mkdir -p "$INBOX_DIR"
+
+cat <<EOF > "$INBOX_DIR/item.json"
+{
+  "item_id": "$INBOX_ID",
+  "workspace_id": "$WORKSPACE",
+  "created_at": "$(date -Iseconds)",
+  "source": "github",
+  "kind": "issue",
+  "repo": "dummy/repo",
+  "number": 999,
+  "status": "ready",
+  "external_read": false,
+  "external_modified": false
+}
+EOF
+
+cat <<EOF > "$INBOX_DIR/patch-intent.json"
+{
+  "intent_id": "pin-dummy",
+  "workspace_id": "$WORKSPACE",
+  "source_item_id": "$INBOX_ID",
+  "source": "github",
+  "kind": "issue",
+  "repo": "dummy/repo",
+  "number": 999,
+  "title": "Dummy Issue",
+  "state": "OPEN",
+  "labels": [],
+  "summary": "Dummy issue for smoke test.",
+  "requested_change": "Implement dummy feature.",
+  "acceptance_signals": [],
+  "risk_flags": [],
+  "suggested_next_step": "manual_review",
+  "automation_allowed": false
+}
+EOF
+
+echo "Intake mock created: $INBOX_ID"
+
+# 2. AGENT QUEUE CREATION
+echo "2. Creating Agent Queue item from Inbox..."
+QUEUE_OUT=$(./scripts/aiw-agent-queue --workspace "$WORKSPACE" --from-inbox "$INBOX_ID")
+QUEUE_ID=$(echo "$QUEUE_OUT" | grep -o '"queue_item_id": "[^"]*"' | head -1 | cut -d'"' -f4)
+
+if [ -z "$QUEUE_ID" ]; then
+    echo "Failed to create queue item."
+    exit 1
+fi
+echo "Queue Item created: $QUEUE_ID"
+
+# 3. SET QUEUE DISPATCH
+echo "3. Setting queue dispatch to offline..."
+./scripts/aiw-agent-queue --workspace "$WORKSPACE" --item "$QUEUE_ID" --set-dispatch --dispatch-mode offline --confirm > /dev/null
+
+# 4. MARK READY
+echo "4. Marking queue item ready..."
+./scripts/aiw-agent-queue --workspace "$WORKSPACE" --item "$QUEUE_ID" --mark-ready --confirm > /dev/null
+
+# 5. AGENT DISPATCHER (DRY-RUN)
+echo "5. Running Agent Dispatcher in dry-run..."
+./scripts/aiw-agent-dispatcher --workspace "$WORKSPACE" --once --dry-run > /dev/null
+
+# 6. AGENT DISPATCHER (EXECUTE OFFLINE)
+echo "6. Running Agent Dispatcher (Execute)..."
+./scripts/aiw-agent-dispatcher --workspace "$WORKSPACE" --once --execute --confirm-agent-dispatcher > /dev/null
+
+# Since offline runner might not generate patches without real tasks, we mock a patch output for the review gate
+echo "7. Mocking Patch and Evidence..."
+PATCH_ID="patch-dummy$(date +%s)"
+PATCH_DIR=".aiw/workspaces/$WORKSPACE/patches/$PATCH_ID"
+mkdir -p "$PATCH_DIR"
+
+cat <<EOF > "$PATCH_DIR/plan.md"
+# Validation Plan
+1. Do nothing.
+EOF
+cat <<EOF > "$PATCH_DIR/review.md"
+# Review
+Approved.
+EOF
+
+# Manually create evidence export to feed outbox
+EXPORT_ID="exp-dummy$(date +%s)"
+EXPORT_DIR=".aiw/workspaces/$WORKSPACE/evidence-exports/$PATCH_ID/$EXPORT_ID"
+mkdir -p "$EXPORT_DIR"
+cat <<EOF > "$EXPORT_DIR/manifest.json"
+{
+  "export_id": "$EXPORT_ID",
+  "workspace_id": "$WORKSPACE",
+  "patch_id": "$PATCH_ID",
+  "bundle_id": "bun-dummy",
+  "created_at": "$(date -Iseconds)",
+  "files": [
+    "pr-summary.md",
+    "manifest.json"
+  ]
+}
+EOF
+cat <<EOF > "$EXPORT_DIR/pr-summary.md"
+Dummy PR Summary
+EOF
+
+# 8. INTEGRATION OUTBOX
+echo "8. Creating Integration Outbox item..."
+OUTBOX_OUT=$(python3 -c "
+import sys, json; sys.path.insert(0, '.');
+from aiw_workspace.integration_outbox import create_outbox_item;
+res = create_outbox_item('$WORKSPACE', '$PATCH_ID', 'github_pr', 'pr_summary', '$EXPORT_ID');
+if res.get('ok'):
+    print(res.get('item', {}).get('item_id', ''))
+else:
+    print('ERROR:' + res.get('error', ''), file=sys.stderr)
+")
+
+if [ -z "$OUTBOX_OUT" ]; then
+    echo "Failed to create outbox item."
+    exit 1
+fi
+echo "Outbox Item created: $OUTBOX_OUT"
+
+# 9. SET OUTBOX DISPATCH
+echo "9. Setting outbox dispatch..."
+./scripts/aiw-integration-worker --workspace "$WORKSPACE" --item "$OUTBOX_OUT" --set-dispatch --pr-number 999 --confirm-dispatch > /dev/null
+
+# 10. MARK OUTBOX READY
+echo "10. Marking outbox item ready..."
+python3 -c "
+import sys; sys.path.insert(0, '.');
+from aiw_workspace.integration_outbox import update_outbox_item_status;
+update_outbox_item_status('$WORKSPACE', '$OUTBOX_OUT', 'ready');
+" > /dev/null
+
+# 11. WORKER LOOP (DRY-RUN)
+echo "11. Running Worker Loop in dry-run..."
+./scripts/aiw-worker-loop --workspace "$WORKSPACE" --once --dry-run > /dev/null
+
+echo "Smoke Test Completed Successfully!"

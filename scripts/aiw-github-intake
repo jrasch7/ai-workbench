@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 # Fix sys.argv since we passed '-' as the script name
-sys.argv = [sys.argv[0]] + sys.argv[2:]
+# sys.argv fixed
 
 # Ensure aiw_workspace is accessible
 sys.path.insert(0, str(Path.cwd()))

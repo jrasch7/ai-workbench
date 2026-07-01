@@ -9,7 +9,7 @@ import argparse
 import json
 from pathlib import Path
 
-sys.argv = [sys.argv[0]] + sys.argv[2:]
+# sys.argv fixed
 sys.path.insert(0, str(Path.cwd()))
 
 from aiw_workspace.worker_loop import run_worker_loop_once, run_worker_loop_watch
