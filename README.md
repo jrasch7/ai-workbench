@@ -139,3 +139,4 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 - [AIW Patch Evidence Export](docs/runbooks/AIW_PATCH_EVIDENCE_EXPORT.md)
 - [AIW Integration Outbox](docs/runbooks/AIW_INTEGRATION_OUTBOX.md)
 - [AIW Integration Worker CLI](docs/runbooks/AIW_INTEGRATION_WORKER_CLI.md)
+- [AIW GitHub Intake CLI](docs/runbooks/AIW_GITHUB_INTAKE_CLI.md)

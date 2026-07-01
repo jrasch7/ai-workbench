@@ -2891,6 +2891,51 @@ def render_page() -> str:
     if not patches_panel:
         patches_panel = '<div class="empty-state">Nenhuma alteração proposta agora. Quando um agent gerar um project_patch_preview, ela aparece aqui.</div>'
 
+    from aiw_workspace.github_intake import list_inbox_items
+    inbox_res = list_inbox_items(active_workspace)
+    inbox_html_list = []
+    if inbox_res.get("ok"):
+        for it in inbox_res.get("items", []):
+            i_id = it.get("item_id")
+            i_status = it.get("status", "")
+            i_repo = it.get("repo", "")
+            i_number = it.get("number", "")
+            i_kind = it.get("kind", "")
+            i_source = it.get("source", "")
+            
+            inbox_html_list.append(f"""
+            <div class="patch-card">
+              <div class="patch-header">
+                <span style="font-weight:600">{i_source}: {i_repo}#{i_number}</span>
+                <span class="tag status-{i_status}">{i_status}</span>
+              </div>
+              <div class="card-meta">
+                <span class="tag">{i_kind}</span>
+                <span class="tag">ID: {i_id}</span>
+              </div>
+              <div class="patch-actions" style="margin-top:8px">
+                <form method="post" action="/api/workspaces/{active_workspace}/integration-inbox/{i_id}/status" style="display:inline">
+                  <input type="hidden" name="status" value="ready">
+                  <input type="hidden" name="confirm" value="true">
+                  <button class="btn btn-secondary" type="submit">Marcar ready</button>
+                </form>
+                <form method="post" action="/api/workspaces/{active_workspace}/integration-inbox/{i_id}/status" style="display:inline">
+                  <input type="hidden" name="status" value="dismissed">
+                  <input type="hidden" name="confirm" value="true">
+                  <button class="btn btn-ghost" type="submit">Dismiss</button>
+                </form>
+                <a class="btn btn-ghost" href="/api/workspaces/{active_workspace}/integration-inbox/{i_id}/file/patch-intent.md" target="_blank">Patch Intent</a>
+                <a class="btn btn-ghost" href="/api/workspaces/{active_workspace}/integration-inbox/{i_id}/file/source.md" target="_blank">Source MD</a>
+                <a class="btn btn-ghost" href="/api/workspaces/{active_workspace}/integration-inbox/{i_id}/attempts" target="_blank">Attempts</a>
+              </div>
+              <pre style="margin-top:8px;background:var(--bg);border-radius:8px;font-size:11px">./scripts/aiw-github-intake --workspace {active_workspace} --repo owner/repo --{i_kind.replace("pull_request", "pr")} {i_number} --fetch --confirm-external-read</pre>
+            </div>
+            """)
+            
+    inbox_panel = "".join(inbox_html_list)
+    if not inbox_panel:
+        inbox_panel = '<div class="empty-state">Nenhum item na Inbox. Use a CLI para fazer o fetch.</div>'
+
     def health_tag(ok: bool) -> str:
         return '<span class="tag status-done">OK</span>' if ok else '<span class="tag status-failed">Ausente</span>'
 
@@ -3588,7 +3633,17 @@ def render_page() -> str:
             {health_rows}
           </div>
         </div>
+        </div>
       </div>
+      
+      <div class="section-block">
+        <h3>Integration Inbox</h3>
+        <div class="signal-note" style="margin-bottom:12px;color:var(--muted)">Integration Inbox é read-only. O Cockpit não chama GitHub, não cria patch e não executa agentes automaticamente.</div>
+        <div class="patch-list">
+          {inbox_panel}
+        </div>
+      </div>
+
       <div class="section-block">
         <h3>Alterações propostas</h3>
         <div class="filter-bar" data-filter-scope="patches">
@@ -4801,6 +4856,46 @@ class Handler(BaseHTTPRequestHandler):
             from aiw_workspace.integration_outbox import list_outbox_items
             return self._respond(list_outbox_items(ws_id), 200)
 
+        if path.startswith("/api/workspaces/") and "/integration-inbox/" in path and "/file/" in path:
+            parts = path.split("/")
+            ws_id = parts[3]
+            item_id = parts[5]
+            filename = parts[7]
+            from aiw_workspace.github_intake import resolve_inbox_item_file
+            fpath = resolve_inbox_item_file(ws_id, item_id, filename)
+            if not fpath:
+                self.send_json({"ok": False, "error": "file_not_found"}, status=404)
+                return
+            content = fpath.read_text(encoding="utf-8")
+            self.send_response(200)
+            if filename.endswith(".json"):
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+            elif filename.endswith(".md"):
+                self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.send_header("Content-Length", str(len(content.encode("utf-8"))))
+            self.end_headers()
+            self.wfile.write(content.encode("utf-8"))
+            return
+
+        if path.startswith("/api/workspaces/") and "/integration-inbox/" in path and path.endswith("/attempts"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            item_id = parts[5]
+            from aiw_workspace.github_intake import list_inbox_item_attempts
+            return self._respond(list_inbox_item_attempts(ws_id, item_id), 200)
+
+        if path.startswith("/api/workspaces/") and "/integration-inbox/" in path and not "/file/" in path and not path.endswith("/status") and not path.endswith("/attempts"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            item_id = parts[5]
+            from aiw_workspace.github_intake import read_inbox_item
+            return self._respond(read_inbox_item(ws_id, item_id), 200)
+
+        if path.startswith("/api/workspaces/") and path.endswith("/integration-inbox"):
+            ws_id = path[len("/api/workspaces/"):-len("/integration-inbox")].strip("/")
+            from aiw_workspace.github_intake import list_inbox_items
+            return self._respond(list_inbox_items(ws_id), 200)
+
         if path.startswith("/api/workspaces/") and path.endswith("/execution-policy"):
             ws_id = path[len("/api/workspaces/"):-len("/execution-policy")].strip("/")
             policy = get_workspace_execution_policy(ws_id)
@@ -5341,6 +5436,20 @@ class Handler(BaseHTTPRequestHandler):
             status = request_data.get("status")
             from aiw_workspace.integration_outbox import update_outbox_item_status
             res = update_outbox_item_status(ws_id, item_id, status)
+            self.send_json(res, status=200 if res.get("ok") else 400)
+            return
+
+        if path.startswith("/api/workspaces/") and "/integration-inbox/" in path and path.endswith("/status"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            item_id = parts[5]
+            confirm = str(request_data.get("confirm", "")).lower() in ("1", "true", "yes", "on")
+            if not confirm:
+                self.send_json({"ok": False, "error": "confirmation_required"}, status=400)
+                return
+            status = request_data.get("status")
+            from aiw_workspace.github_intake import update_inbox_item_status
+            res = update_inbox_item_status(ws_id, item_id, status)
             self.send_json(res, status=200 if res.get("ok") else 400)
             return
 

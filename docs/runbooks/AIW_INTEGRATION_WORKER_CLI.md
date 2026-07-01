@@ -46,3 +46,4 @@ Toda execução (seja dry-run, seja execute, seja com erro) registra um artefato
 ## Próximo passo recomendado
 
 Avaliar se devemos migrar esse script para um daemon (Integration Sync Worker) que monitore localmente a pasta de Outbox buscando `ready` para processar a cada X minutos via cron.
+- [AIW GitHub Intake CLI](AIW_GITHUB_INTAKE_CLI.md)

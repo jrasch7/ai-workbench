@@ -65,3 +65,4 @@ reports/provider-smoke/*.md
 .aiw/workspaces/*/evidence-bundles/
 .aiw/workspaces/*/evidence-exports/
 .aiw/workspaces/*/integration-outbox/
+.aiw/workspaces/*/integration-inbox/

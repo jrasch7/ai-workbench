@@ -1,0 +1,59 @@
+#!/bin/bash
+# AIW GitHub Intake CLI
+
+export PYTHONPATH="$PWD:$PYTHONPATH"
+
+exec python3 - "$@" <<'PYTHON'
+import sys
+import argparse
+import json
+from pathlib import Path
+
+# Fix sys.argv since we passed '-' as the script name
+sys.argv = [sys.argv[0]] + sys.argv[2:]
+
+# Ensure aiw_workspace is accessible
+sys.path.insert(0, str(Path.cwd()))
+from aiw_workspace.github_intake import run_github_intake
+
+def main():
+    parser = argparse.ArgumentParser(description="AIW GitHub Intake CLI")
+    parser.add_argument("--workspace", required=True, help="Workspace ID")
+    parser.add_argument("--repo", required=True, help="GitHub repo (owner/repo)")
+    parser.add_argument("--issue", help="GitHub Issue number")
+    parser.add_argument("--pr", help="GitHub PR number")
+    parser.add_argument("--fetch", action="store_true", help="Fetch data from GitHub")
+    parser.add_argument("--confirm-external-read", action="store_true", help="Confirm external API read")
+    
+    args = parser.parse_args()
+    
+    if (args.issue and args.pr) or (not args.issue and not args.pr):
+        print("Integration worker failed: you must provide exactly one of --issue or --pr", file=sys.stderr)
+        sys.exit(1)
+        
+    kind = "issue" if args.issue else "pull_request"
+    number = int(args.issue) if args.issue else int(args.pr)
+    
+    result = run_github_intake(
+        workspace_id=args.workspace,
+        repo=args.repo,
+        kind=kind,
+        number=number,
+        fetch=args.fetch,
+        confirm_external_read=args.confirm_external_read
+    )
+    
+    if result.get("ok"):
+        print(f"Integration worker succeeded (fetch={args.fetch}).")
+        if "attempt" in result:
+            print(json.dumps(result["attempt"], indent=2))
+        sys.exit(0)
+    else:
+        print(f"Integration worker failed: {result.get('error')}", file=sys.stderr)
+        if "attempt" in result:
+            print(json.dumps(result["attempt"], indent=2), file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+PYTHON

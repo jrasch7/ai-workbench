@@ -49,6 +49,7 @@ from .test_result_report import analyze_test_results
 from .evidence_bundle import create_evidence_bundle, list_evidence_bundles, read_evidence_bundle, record_patch_decision
 from .evidence_export import create_evidence_export, list_evidence_exports, read_evidence_export, resolve_evidence_export_file
 from .integration_outbox import create_outbox_item, list_outbox_items, read_outbox_item, update_outbox_item_status, resolve_outbox_item_file
+from .github_intake import run_github_intake, list_inbox_items, read_inbox_item, update_inbox_item_status, resolve_inbox_item_file, list_inbox_item_attempts
 
 __all__ = [
     "DEFAULT_WORKSPACE",
@@ -105,4 +106,10 @@ __all__ = [
     "read_outbox_item",
     "update_outbox_item_status",
     "resolve_outbox_item_file",
+    "run_github_intake",
+    "list_inbox_items",
+    "read_inbox_item",
+    "update_inbox_item_status",
+    "resolve_inbox_item_file",
+    "list_inbox_item_attempts",
 ]
