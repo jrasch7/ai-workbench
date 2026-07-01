@@ -140,3 +140,4 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 - [AIW Integration Outbox](docs/runbooks/AIW_INTEGRATION_OUTBOX.md)
 - [AIW Integration Worker CLI](docs/runbooks/AIW_INTEGRATION_WORKER_CLI.md)
 - [AIW GitHub Intake CLI](docs/runbooks/AIW_GITHUB_INTAKE_CLI.md)
+- [AIW Agent Run Queue](docs/runbooks/AIW_AGENT_RUN_QUEUE.md)

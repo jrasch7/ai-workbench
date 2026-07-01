@@ -51,3 +51,4 @@ A UI lê todos os items armazenados na pasta ignorada `.aiw/workspaces/*/integra
 ## Próximo passo recomendado
 
 Plugar LLM de leitura de intenção (Intent Parser): Ler `source.json` usando a `aiw_runtime` com um modelo de baixo custo pra extrair acceptance criteria claros e reescrever o `patch-intent.md` magicamente.
+- [AIW Agent Run Queue](AIW_AGENT_RUN_QUEUE.md)

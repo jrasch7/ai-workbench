@@ -66,3 +66,4 @@ reports/provider-smoke/*.md
 .aiw/workspaces/*/evidence-exports/
 .aiw/workspaces/*/integration-outbox/
 .aiw/workspaces/*/integration-inbox/
+.aiw/workspaces/*/agent-queue/

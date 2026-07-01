@@ -50,3 +50,4 @@ Um item da Integration Outbox é renderizado dentro do Patch Card no AI Workbenc
 Implementar um CLI de *Flush* ou Background Worker seguro (ex.: `aiw-outbox-sync`) que fique lendo os items com status `ready` e execute as integrações declaradas usando autenticações via variáveis de ambiente da máquina local, ou conectar isso com um agente Hermes sob escopo explícito.
 - [AIW Integration Worker CLI](AIW_INTEGRATION_WORKER_CLI.md)
 - [AIW GitHub Intake CLI](AIW_GITHUB_INTAKE_CLI.md)
+- [AIW Agent Run Queue](AIW_AGENT_RUN_QUEUE.md)

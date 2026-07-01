@@ -2936,6 +2936,48 @@ def render_page() -> str:
     if not inbox_panel:
         inbox_panel = '<div class="empty-state">Nenhum item na Inbox. Use a CLI para fazer o fetch.</div>'
 
+    from aiw_workspace.agent_queue import list_queue_items
+    queue_res = list_queue_items(active_workspace)
+    queue_html_list = []
+    if queue_res.get("ok"):
+        for q in queue_res.get("items", []):
+            q_id = q.get("queue_item_id")
+            q_status = q.get("status", "")
+            q_inbox = q.get("source_item_id", "")
+            
+            queue_html_list.append(f"""
+            <div class="patch-card">
+              <div class="patch-header">
+                <span style="font-weight:600">Queue Item: {q_id}</span>
+                <span class="tag status-{q_status}">{q_status}</span>
+              </div>
+              <div class="card-meta">
+                <span class="tag">Source: {q_inbox}</span>
+                <span class="tag">Mode: {q.get("execution_mode")}</span>
+                <span class="tag">Auto-apply: {q.get("automation_allowed")}</span>
+              </div>
+              <div class="patch-actions" style="margin-top:8px">
+                <form method="post" action="/api/workspaces/{active_workspace}/agent-queue/{q_id}/status" style="display:inline">
+                  <input type="hidden" name="status" value="ready">
+                  <input type="hidden" name="confirm" value="true">
+                  <button class="btn btn-secondary" type="submit">Marcar ready</button>
+                </form>
+                <form method="post" action="/api/workspaces/{active_workspace}/agent-queue/{q_id}/status" style="display:inline">
+                  <input type="hidden" name="status" value="dismissed">
+                  <input type="hidden" name="confirm" value="true">
+                  <button class="btn btn-ghost" type="submit">Dismiss</button>
+                </form>
+                <a class="btn btn-ghost" href="/api/workspaces/{active_workspace}/agent-queue/{q_id}/file/task.md" target="_blank">Ver Task Prompt</a>
+                <a class="btn btn-ghost" href="/api/workspaces/{active_workspace}/agent-queue/{q_id}/attempts" target="_blank">Ver Attempts</a>
+              </div>
+              <pre style="margin-top:8px;background:var(--bg);border-radius:8px;font-size:11px">./scripts/aiw-agent-queue --workspace {active_workspace} --item {q_id} --run-offline --confirm</pre>
+            </div>
+            """)
+            
+    queue_panel = "".join(queue_html_list)
+    if not queue_panel:
+        queue_panel = '<div class="empty-state">Nenhum item na Agent Queue.</div>'
+
     def health_tag(ok: bool) -> str:
         return '<span class="tag status-done">OK</span>' if ok else '<span class="tag status-failed">Ausente</span>'
 
@@ -3633,6 +3675,21 @@ def render_page() -> str:
             {health_rows}
           </div>
         </div>
+        </div>
+      </div>
+      
+      <div class="section-block">
+        <h3>Agent Run Queue</h3>
+        <div class="signal-note" style="margin-bottom:12px;color:var(--muted)">Agent Run Queue é manual. O Cockpit não executa agente, não chama LLM, não aplica patch, não commita e não faz push.</div>
+        <div style="margin-bottom:12px">
+            <form method="post" action="/api/workspaces/{active_workspace}/agent-queue" style="display:flex; gap:8px">
+              <input type="text" class="input" name="from_inbox" placeholder="inbox item id (ex: in-1234abcd)" required style="width:250px">
+              <input type="hidden" name="confirm" value="true">
+              <button class="btn btn-run" type="submit">Criar queue item</button>
+            </form>
+        </div>
+        <div class="patch-list">
+          {queue_panel}
         </div>
       </div>
       
@@ -4896,6 +4953,46 @@ class Handler(BaseHTTPRequestHandler):
             from aiw_workspace.github_intake import list_inbox_items
             return self._respond(list_inbox_items(ws_id), 200)
 
+        if path.startswith("/api/workspaces/") and "/agent-queue/" in path and "/file/" in path:
+            parts = path.split("/")
+            ws_id = parts[3]
+            item_id = parts[5]
+            filename = parts[7]
+            from aiw_workspace.agent_queue import resolve_queue_item_file
+            fpath = resolve_queue_item_file(ws_id, item_id, filename)
+            if not fpath:
+                self.send_json({"ok": False, "error": "file_not_found"}, status=404)
+                return
+            content = fpath.read_text(encoding="utf-8")
+            self.send_response(200)
+            if filename.endswith(".json"):
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+            elif filename.endswith(".md"):
+                self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.send_header("Content-Length", str(len(content.encode("utf-8"))))
+            self.end_headers()
+            self.wfile.write(content.encode("utf-8"))
+            return
+
+        if path.startswith("/api/workspaces/") and "/agent-queue/" in path and path.endswith("/attempts"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            item_id = parts[5]
+            from aiw_workspace.agent_queue import list_queue_item_attempts
+            return self._respond(list_queue_item_attempts(ws_id, item_id), 200)
+
+        if path.startswith("/api/workspaces/") and "/agent-queue/" in path and not "/file/" in path and not path.endswith("/status") and not path.endswith("/attempts"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            item_id = parts[5]
+            from aiw_workspace.agent_queue import read_queue_item
+            return self._respond(read_queue_item(ws_id, item_id), 200)
+
+        if path.startswith("/api/workspaces/") and path.endswith("/agent-queue"):
+            ws_id = path[len("/api/workspaces/"):-len("/agent-queue")].strip("/")
+            from aiw_workspace.agent_queue import list_queue_items
+            return self._respond(list_queue_items(ws_id), 200)
+
         if path.startswith("/api/workspaces/") and path.endswith("/execution-policy"):
             ws_id = path[len("/api/workspaces/"):-len("/execution-policy")].strip("/")
             policy = get_workspace_execution_policy(ws_id)
@@ -5450,6 +5547,35 @@ class Handler(BaseHTTPRequestHandler):
             status = request_data.get("status")
             from aiw_workspace.github_intake import update_inbox_item_status
             res = update_inbox_item_status(ws_id, item_id, status)
+            self.send_json(res, status=200 if res.get("ok") else 400)
+            return
+
+        if path.startswith("/api/workspaces/") and "/agent-queue/" in path and path.endswith("/status"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            item_id = parts[5]
+            confirm = str(request_data.get("confirm", "")).lower() in ("1", "true", "yes", "on")
+            if not confirm:
+                self.send_json({"ok": False, "error": "confirmation_required"}, status=400)
+                return
+            status = request_data.get("status")
+            from aiw_workspace.agent_queue import update_queue_item_status
+            res = update_queue_item_status(ws_id, item_id, status, confirm=True)
+            self.send_json(res, status=200 if res.get("ok") else 400)
+            return
+
+        if path.startswith("/api/workspaces/") and path.endswith("/agent-queue"):
+            ws_id = path[len("/api/workspaces/"):-len("/agent-queue")].strip("/")
+            from_inbox = request_data.get("from_inbox")
+            confirm = str(request_data.get("confirm", "")).lower() in ("1", "true", "yes", "on")
+            if not confirm:
+                self.send_json({"ok": False, "error": "confirmation_required"}, status=400)
+                return
+            if not from_inbox:
+                self.send_json({"ok": False, "error": "from_inbox_required"}, status=400)
+                return
+            from aiw_workspace.agent_queue import create_queue_item_from_inbox
+            res = create_queue_item_from_inbox(ws_id, from_inbox)
             self.send_json(res, status=200 if res.get("ok") else 400)
             return
 
