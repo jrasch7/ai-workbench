@@ -3015,6 +3015,40 @@ def render_page() -> str:
     </div>
     """)
     
+
+    ext_policy = ws_profile.get("external_workers", {})
+    ext_enabled = ext_policy.get("enabled", False)
+    ext_bg = ext_policy.get("allow_background", False)
+    ext_ui = ext_policy.get("allow_ui_execution", False)
+    ext_tag = '<span class="tag status-passed">Workers Enabled</span>' if ext_enabled else '<span class="tag status-failed">Workers Disabled</span>'
+    bg_tag = '<span class="tag status-passed">BG Allowed</span>' if ext_bg else '<span class="tag status-failed">BG Blocked</span>'
+    ui_tag = '<span class="tag status-passed">UI Allowed</span>' if ext_ui else '<span class="tag status-failed">UI Blocked</span>'
+    
+    workers_html = ""
+    for w in ext_policy.get("workers", []):
+        w_en = '<span class="tag status-passed">On</span>' if w.get("enabled") else '<span class="tag status-failed">Off</span>'
+        w_allow = ", ".join(w.get("allowed_actions", [])) or "None"
+        w_block = ", ".join(w.get("blocked_actions", [])) or "None"
+        workers_html += f'''
+        <div style="margin-top:6px;font-size:12px;border-top:1px solid rgba(255,255,255,0.05);padding-top:6px">
+          <strong>{w.get("name")}</strong> ({w.get("target")}) - Mode: {w.get("mode")} {w_en}<br>
+          <span style="color:var(--muted)">Allowed: {w_allow} | Blocked: {w_block}</span>
+        </div>
+        '''
+        
+    queue_html_list.append(f'''
+    <div style="margin-bottom:12px;padding:12px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
+        <div style="font-weight:600;margin-bottom:8px">External Worker Policy</div>
+        <div class="card-meta">
+            {ext_tag}
+            {bg_tag}
+            {ui_tag}
+        </div>
+        <div class="signal-note" style="margin-top:8px;color:var(--muted)">Workers externos continuam bloqueados por padrão. O Cockpit não executa GitHub/Jira, não roda daemon, não agenda jobs e não envia dados externos.</div>
+        {workers_html}
+    </div>
+    ''')
+
     if queue_res.get("ok"):
         for q in queue_res.get("items", []):
             q_id = q.get("queue_item_id")

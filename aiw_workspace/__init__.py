@@ -59,6 +59,7 @@ from .evidence_export import create_evidence_export, list_evidence_exports, read
 from .integration_outbox import create_outbox_item, list_outbox_items, read_outbox_item, update_outbox_item_status, resolve_outbox_item_file
 from .github_intake import run_github_intake, list_inbox_items, read_inbox_item, update_inbox_item_status, resolve_inbox_item_file, list_inbox_item_attempts
 from .agent_queue import create_queue_item_from_inbox, list_queue_items, read_queue_item, update_queue_item_status, resolve_queue_item_file, list_queue_item_attempts, run_queue_item_offline
+from .external_worker_policy import load_external_worker_policy, validate_external_worker_policy, can_worker_execute
 
 __all__ = [
     "DEFAULT_WORKSPACE",
@@ -134,4 +135,7 @@ __all__ = [
     "get_patch_review_flow",
     "get_patch_lifecycle",
     "update_patch_lifecycle",
+    "load_external_worker_policy",
+    "validate_external_worker_policy",
+    "can_worker_execute",
 ]

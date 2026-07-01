@@ -193,6 +193,34 @@ def _merge_profile(profile: dict | None) -> dict:
                 "max_stderr_chars": 12000
             }
 
+        if isinstance(profile.get("external_workers"), dict):
+            ext_config = profile["external_workers"]
+            workers = []
+            for w in ext_config.get("workers", []):
+                if isinstance(w, dict):
+                    workers.append({
+                        "name": str(w.get("name", "")),
+                        "target": str(w.get("target", "")),
+                        "mode": str(w.get("mode", "disabled")),
+                        "enabled": bool(w.get("enabled", False)),
+                        "requires_confirm": bool(w.get("requires_confirm", True)),
+                        "allowed_actions": [str(x) for x in w.get("allowed_actions", []) if isinstance(x, str)],
+                        "blocked_actions": [str(x) for x in w.get("blocked_actions", []) if isinstance(x, str)],
+                    })
+            merged["external_workers"] = {
+                "enabled": bool(ext_config.get("enabled", False)),
+                "allow_background": bool(ext_config.get("allow_background", False)),
+                "allow_ui_execution": bool(ext_config.get("allow_ui_execution", False)),
+                "workers": workers
+            }
+        elif "external_workers" not in profile:
+            merged["external_workers"] = {
+                "enabled": False,
+                "allow_background": False,
+                "allow_ui_execution": False,
+                "workers": []
+            }
+
     return merged
 
 

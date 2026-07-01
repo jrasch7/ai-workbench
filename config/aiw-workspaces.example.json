@@ -69,6 +69,31 @@
           "max_stdout_chars": 12000,
           "max_stderr_chars": 12000
         },
+        "external_workers": {
+          "enabled": false,
+          "allow_background": false,
+          "allow_ui_execution": false,
+          "workers": [
+            {
+              "name": "github_pr_edit",
+              "target": "github",
+              "mode": "manual_cli_only",
+              "enabled": false,
+              "requires_confirm": true,
+              "allowed_actions": ["pr_edit"],
+              "blocked_actions": ["pr_create", "push", "issue_comment", "merge"]
+            },
+            {
+              "name": "jira_ticket_update",
+              "target": "jira",
+              "mode": "disabled",
+              "enabled": false,
+              "requires_confirm": true,
+              "allowed_actions": [],
+              "blocked_actions": ["create", "update", "comment"]
+            }
+          ]
+        },
         "validation_groups": [
           {
             "name": "Syntax",
