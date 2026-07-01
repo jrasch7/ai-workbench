@@ -142,3 +142,4 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 - [AIW GitHub Intake CLI](docs/runbooks/AIW_GITHUB_INTAKE_CLI.md)
 - [AIW Agent Run Queue](docs/runbooks/AIW_AGENT_RUN_QUEUE.md)
 - [AIW LLM Queue Execution Guard](docs/runbooks/AIW_LLM_QUEUE_EXECUTION_GUARD.md)
+- [AIW Agent Patch Review & Apply Flow](docs/runbooks/AIW_AGENT_PATCH_REVIEW_FLOW.md)

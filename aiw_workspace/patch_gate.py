@@ -414,6 +414,13 @@ def apply_reviewed_patch(workspace_id: str, patch_id: str, confirm: bool, acknow
     
     if result.get("ok") and bundle_id:
         record_patch_decision(workspace_id, patch_id, bundle_id, "applied", reason="Applied via review gate")
+        from aiw_workspace.patch_review_flow import update_patch_lifecycle
+        import datetime
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+        update_patch_lifecycle(workspace_id, patch_id, {
+            "status": "applied",
+            "applied_at": now_iso
+        })
 
     return {
         "ok": result.get("ok", False),
@@ -423,4 +430,39 @@ def apply_reviewed_patch(workspace_id: str, patch_id: str, confirm: bool, acknow
         "result": result,
         "bundle_id": bundle_id,
         "note": "apply_manual_gate_reviewed"
+    }
+
+def rollback_reviewed_patch(workspace_id: str, patch_id: str, confirm: bool, reason: str = "") -> dict:
+    if not confirm:
+        return {"ok": False, "error": "confirm_required"}
+        
+    from aiw_runtime.tools import project_patch_rollback
+    from aiw_workspace.patch_review_flow import get_patch_lifecycle, update_patch_lifecycle
+    from aiw_workspace.evidence_bundle import record_patch_decision, list_evidence_bundles
+    
+    life = get_patch_lifecycle(workspace_id, patch_id)
+    if not life or life.get("status") != "applied":
+        return {"ok": False, "error": "patch_not_applied"}
+        
+    result = project_patch_rollback(patch_id=patch_id)
+    if result.get("ok"):
+        import datetime
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+        update_patch_lifecycle(workspace_id, patch_id, {
+            "status": "rolled_back",
+            "rolled_back_at": now_iso
+        })
+        
+        ev_bundles = list_evidence_bundles(workspace_id, patch_id=patch_id)
+        if ev_bundles.get("ok") and ev_bundles.get("bundles"):
+            bundle_id = ev_bundles["bundles"][0].get("bundle_id")
+            if bundle_id:
+                record_patch_decision(workspace_id, patch_id, bundle_id, "rolled_back", reason=reason or "Manual rollback")
+                
+    return {
+        "ok": result.get("ok", False),
+        "patch_id": patch_id,
+        "workspace_id": workspace_id,
+        "status": "rolled_back" if result.get("ok") else "failed",
+        "result": result
     }

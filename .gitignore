@@ -67,3 +67,4 @@ reports/provider-smoke/*.md
 .aiw/workspaces/*/integration-outbox/
 .aiw/workspaces/*/integration-inbox/
 .aiw/workspaces/*/agent-queue/
+.aiw/workspaces/*/patch-review-flow/

@@ -96,3 +96,4 @@ Inclui check nativo do [Coverage Baseline and Diff](AIW_COVERAGE_BASELINE_DIFF.m
 Inclui check nativo do [Changed Lines Coverage](AIW_CHANGED_LINES_COVERAGE.md).
 - [AIW Patch Evidence Bundle](AIW_PATCH_EVIDENCE_BUNDLE.md)
 - [AIW Patch Evidence Export](AIW_PATCH_EVIDENCE_EXPORT.md)
+- [AIW Agent Patch Review & Apply Flow](AIW_AGENT_PATCH_REVIEW_FLOW.md)

@@ -2681,6 +2681,59 @@ def render_page() -> str:
           </form>
         </div>
         """
+
+        from aiw_workspace.patch_review_flow import get_patch_review_flow
+        review_flow_res = get_patch_review_flow(ws_id, pid)
+        rf_html = ""
+        if review_flow_res.get("ok"):
+            rf_status = review_flow_res.get("status", "discovered")
+            rf_queue = review_flow_res.get("queue_item", {}).get("queue_item_id") or "None"
+            rf_valid = review_flow_res.get("validation", {}).get("status") or "None"
+            rf_gate = review_flow_res.get("review_gate", {}).get("status") or "None"
+            rf_ev = review_flow_res.get("evidence", {}).get("decision") or "None"
+            rf_next = review_flow_res.get("next_action", "unknown")
+            can_apply = review_flow_res.get("apply", {}).get("can_apply_reviewed", False)
+            has_applied = review_flow_res.get("apply", {}).get("applied", False)
+            
+            rf_html = f'''
+            <div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
+              <div style="font-weight:600;margin-bottom:6px">Patch Review Flow</div>
+              <div class="card-meta" style="margin-bottom:6px">
+                <span class="tag">Lifecycle: {rf_status}</span>
+                <span class="tag">Queue: {rf_queue}</span>
+                <span class="tag">Validation: {rf_valid}</span>
+                <span class="tag">Gate: {rf_gate}</span>
+                <span class="tag">Evidence: {rf_ev}</span>
+                <span class="tag status-running">Next: {rf_next}</span>
+              </div>
+              <div class="signal-note" style="margin-bottom:6px;color:var(--muted)">Patch Review Flow é manual. O Cockpit não executa agente, não chama LLM, não commita e não faz push.</div>
+              <div class="patch-actions" style="margin-top:8px">
+                <form method="post" action="/api/workspaces/{ws_id}/patches/{pid}/link-queue" style="display:inline">
+                  <input type="text" name="queue_item_id" placeholder="Queue Item ID" class="input" style="width:120px;height:24px;font-size:11px" required>
+                  <input type="hidden" name="confirm" value="true">
+                  <button class="btn btn-secondary" type="submit">Link queue item</button>
+                </form>
+            '''
+            if can_apply:
+                rf_html += f'''
+                <form method="post" action="/api/workspaces/{ws_id}/patches/{pid}/apply-reviewed" style="display:inline">
+                  <input type="hidden" name="confirm" value="true">
+                  <button class="btn btn-run" type="submit">Apply reviewed</button>
+                </form>
+                '''
+            elif has_applied:
+                rf_html += f'''
+                <form method="post" action="/api/workspaces/{ws_id}/patches/{pid}/rollback-reviewed" style="display:inline">
+                  <input type="hidden" name="confirm" value="true">
+                  <button class="btn btn-danger" type="submit">Rollback reviewed</button>
+                </form>
+                '''
+            
+            rf_html += '''
+              </div>
+              <div class="signal-note" style="margin-top:6px;color:var(--muted)">Apply reviewed usa o patch flow seguro existente e exige confirmação explícita.</div>
+            </div>
+            '''
         apply_btn = ""
         if patch["status"] == "preview":
             if gate.get("ok") and (gate.get("can_apply") or gate_status == "docs_only"):
@@ -2880,6 +2933,7 @@ def render_page() -> str:
             <summary style="cursor:pointer;color:var(--muted);font-size:12px">Histórico do plano de validação</summary>
             <div class="signal-list" style="margin-top:8px">{snapshot_history_rows}</div>
           </details>
+          {rf_html}
           {bundle_html}
           {export_html}
           {outbox_html}
@@ -4822,6 +4876,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(payload, status=200 if payload.get("ok") else 404)
             return
 
+        
+        if path == f"/api/workspaces/{active_workspace_id(None)}/patch-review-flow":
+            parts = path.split("/")
+            ws_id = parts[3]
+            from aiw_workspace.patch_review_flow import discover_workspace_patches
+            return self._respond(discover_workspace_patches(ws_id), 200)
+
+        if path.startswith("/api/workspaces/") and "/patches/" in path and path.endswith("/review-flow"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            patch_id = parts[5]
+            from aiw_workspace.patch_review_flow import get_patch_review_flow
+            return self._respond(get_patch_review_flow(ws_id, patch_id), 200)
         if path.startswith("/api/workspaces/") and path.endswith("/health"):
             self.send_json(health_payload, status=200 if health_payload.get("ok") else 404)
             return
@@ -5479,6 +5546,31 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(res, status=400)
             return
 
+        
+        if path.startswith("/api/workspaces/") and "/patches/" in path and path.endswith("/link-queue"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            patch_id = parts[5]
+            confirm = str(request_data.get("confirm", "")).lower() in ("1", "true", "yes", "on") or request_data.get("confirm") is True
+            q_id = request_data.get("queue_item_id")
+            if not confirm:
+                self.send_json({"ok": False, "error": "confirm_required"}, status=400)
+                return
+            from aiw_workspace.patch_review_flow import link_patch_to_queue_item
+            res = link_patch_to_queue_item(ws_id, patch_id, q_id)
+            self.send_json(res, status=200 if res.get("ok") else 400)
+            return
+
+        if path.startswith("/api/workspaces/") and "/patches/" in path and path.endswith("/rollback-reviewed"):
+            parts = path.split("/")
+            ws_id = parts[3]
+            patch_id = parts[5]
+            confirm = str(request_data.get("confirm", "")).lower() in ("1", "true", "yes", "on") or request_data.get("confirm") is True
+            reason = request_data.get("reason", "")
+            from aiw_workspace.patch_gate import rollback_reviewed_patch
+            res = rollback_reviewed_patch(ws_id, patch_id, confirm=confirm, reason=reason)
+            self.send_json(res, status=200 if res.get("ok") else 400)
+            return
         parsed_apply_reviewed = parse_workspace_patch_path(path, "/apply-reviewed")
         if parsed_apply_reviewed:
             ws_id, patch_id = parsed_apply_reviewed

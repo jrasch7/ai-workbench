@@ -55,3 +55,4 @@ A interface não tem botões HTML de execução (nem rotas da API). A execução
 ## Próximo passo recomendado
 
 O último elo para fechar a esteira do AIW de vez: introduzir a função **Handoff & Patch Apply Reviewer**, permitindo que o Cockpit acione a rotina de aplicar na árvore de trabalho (`project_patch_apply`) um patch gerado de maneira supervisionada, após a aprovação de todos os Gates!
+- [AIW Agent Patch Review & Apply Flow](AIW_AGENT_PATCH_REVIEW_FLOW.md)

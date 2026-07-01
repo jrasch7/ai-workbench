@@ -40,6 +40,14 @@ from .patch_gate import (
     review_gate_for_patch,
     list_review_gates,
     apply_reviewed_patch,
+    rollback_reviewed_patch,
+)
+from .patch_review_flow import (
+    discover_workspace_patches,
+    link_patch_to_queue_item,
+    get_patch_review_flow,
+    get_patch_lifecycle,
+    update_patch_lifecycle,
 )
 from .test_coverage_intent import analyze_test_coverage_intent
 from .coverage_report import analyze_patch_coverage
@@ -120,4 +128,10 @@ __all__ = [
     "resolve_queue_item_file",
     "list_queue_item_attempts",
     "run_queue_item_offline",
+    "rollback_reviewed_patch",
+    "discover_workspace_patches",
+    "link_patch_to_queue_item",
+    "get_patch_review_flow",
+    "get_patch_lifecycle",
+    "update_patch_lifecycle",
 ]
