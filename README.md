@@ -205,3 +205,6 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 - [AIW Foreground Worker Loop](docs/runbooks/AIW_FOREGROUND_WORKER_LOOP.md)
 - [AIW Agent Queue Foreground Dispatcher](docs/runbooks/AIW_AGENT_QUEUE_FOREGROUND_DISPATCHER.md)
 - [AIW End-to-End Dummy PR Smoke](docs/runbooks/AIW_END_TO_END_DUMMY_PR_SMOKE.md)
+- [AIW Agent Capability Layer](docs/architecture/AIW_AGENT_CAPABILITY_LAYER.md)
+- [AIW Agent Capability Roadmap](docs/roadmap/AIW_AGENT_CAPABILITY_ROADMAP.md)
+- [AIW Agent Capability Foundation Runbook](docs/runbooks/AIW_AGENT_CAPABILITY_FOUNDATION.md)
