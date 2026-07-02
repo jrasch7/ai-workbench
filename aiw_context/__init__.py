@@ -12,7 +12,9 @@ from .indexer import (
     workspace_context_dir,
     workspace_runs_dirs,
     workspace_patches_dirs,
+    build_context_index,
 )
+from .search import search_context
 
 __all__ = [
     "rebuild_indexes",
@@ -24,4 +26,6 @@ __all__ = [
     "workspace_context_dir",
     "workspace_runs_dirs",
     "workspace_patches_dirs",
+    "build_context_index",
+    "search_context",
 ]

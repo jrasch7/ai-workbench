@@ -401,3 +401,107 @@ def best_effort_rebuild(root_path: Path, run_dir: Path, workspace_id: str | None
 
     if run_dir and run_dir.exists():
         (run_dir / "context_rebuild.log").write_text(log)
+
+
+IGNORE_NAMES = {
+    ".env", ".git", "node_modules", "dist", "build", "coverage", "reports", "logs", "__pycache__"
+}
+IGNORE_PREFIXES = {".env."}
+IGNORE_EXTS = {
+    ".pyc", ".pyo", ".sqlite", ".db", ".zip", ".tar", ".gz", 
+    ".png", ".jpg", ".jpeg", ".webp", ".pdf"
+}
+
+def is_ignored_path(path_str: str) -> bool:
+    name = Path(path_str).name
+    if name in IGNORE_NAMES: return True
+    if any(name.startswith(p) for p in IGNORE_PREFIXES): return True
+    if Path(path_str).suffix in IGNORE_EXTS: return True
+    if ".aiw" in path_str.split(os.sep) or ".aiw" in path_str.split("/"): return True
+    if "reports" in path_str.split(os.sep) or "reports" in path_str.split("/"): return True
+    if "coverage" in path_str.split(os.sep) or "coverage" in path_str.split("/"): return True
+    if name == "AGENTS.md": return True
+    if path_str == "config/litellm.yaml" or path_str == f"config{os.sep}litellm.yaml": return True
+    return False
+
+def build_context_index(workspace_id: str | None = None) -> dict:
+    from .chunker import chunk_text
+    from .manifest import build_manifest
+    
+    ws_id = normalize_workspace_id(workspace_id)
+    root = Path(os.environ.get("AIW_ROOT", ".")).resolve()
+    
+    ctx_dir = workspace_context_dir(root, ws_id)
+    ctx_dir.mkdir(parents=True, exist_ok=True)
+    
+    chunks_path = ctx_dir / "chunks.jsonl"
+    files_path = ctx_dir / "files.json"
+    manifest_path = ctx_dir / "manifest.json"
+    
+    files_indexed = 0
+    chunks_indexed = 0
+    ignored_count = 0
+    
+    chunks_out = open(chunks_path, "w", encoding="utf-8")
+    files_list = []
+    
+    for p in root.rglob("*"):
+        if not p.is_file(): continue
+        
+        rel_str = str(p.relative_to(root)).replace("\\", "/")
+        
+        if is_ignored_path(rel_str):
+            ignored_count += 1
+            continue
+            
+        if is_sensitive_path(rel_str):
+            ignored_count += 1
+            continue
+            
+        text = read_text_safe(p)
+        if not text:
+            ignored_count += 1
+            continue
+            
+        chunks = chunk_text(text, rel_str)
+        if not chunks:
+            ignored_count += 1
+            continue
+            
+        for c in chunks:
+            chunks_out.write(json.dumps(c, ensure_ascii=False) + "\n")
+            chunks_indexed += 1
+            
+        files_indexed += 1
+        files_list.append({
+            "path": rel_str,
+            "chunks": len(chunks)
+        })
+        
+    chunks_out.close()
+    
+    files_path.write_text(json.dumps(files_list, indent=2, ensure_ascii=False))
+    
+    manifest = build_manifest(
+        workspace_id=ws_id, 
+        root_path=root, 
+        files_indexed=files_indexed, 
+        chunks_indexed=chunks_indexed, 
+        ignored_count=ignored_count,
+        index_path=str(files_path),
+        chunks_path=str(chunks_path)
+    )
+    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
+    
+    return manifest
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--workspace", default="aiw")
+    args = parser.parse_args()
+    
+    print(f"Building RAG local context index for {args.workspace}...")
+    manifest = build_context_index(args.workspace)
+    print(json.dumps(manifest, indent=2, ensure_ascii=False))
+

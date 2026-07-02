@@ -5,8 +5,9 @@ O objetivo deste roadmap é orientar as próximas sprints para construir, passo 
 ## AIW-CAP-01 — Capability Registry v1
 Criar um registro básico estático para definir os esquemas (JSON-schema) e contratos operacionais (policy, limits, IO) de cada ferramenta ou ação que o agente pode utilizar no repositório.
 
-## AIW-CAP-02 — Context/RAG Local Index v1
+## AIW-CAP-02 — Context/RAG Local Index v1 (✅ Concluído)
 Implementar a fundação real de indexação de arquivos utilizando busca semântica, garantindo capacidade local via indexadores eficientes e vetores para suportar consultas complexas em código e doc.
+*Nota: A fundação léxica e estrutural de chunking, manifest e busca local foi entregue nesta sprint. Embeddings vetoriais ficam como evolução futura.*
 
 ## AIW-CAP-03 — Context Pack Builder v1
 Criar uma estrutura responsável por montar e consolidar o contexto de execução (snippets, logs, documentação) e injetá-lo na requisição de maneira eficiente para o modelo, respeitando janelas de tokens.
