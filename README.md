@@ -208,3 +208,4 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 - [AIW Agent Capability Layer](docs/architecture/AIW_AGENT_CAPABILITY_LAYER.md)
 - [AIW Agent Capability Roadmap](docs/roadmap/AIW_AGENT_CAPABILITY_ROADMAP.md)
 - [AIW Agent Capability Foundation Runbook](docs/runbooks/AIW_AGENT_CAPABILITY_FOUNDATION.md)
+- [AIW Tool Registry](docs/runbooks/AIW_TOOL_REGISTRY.md)

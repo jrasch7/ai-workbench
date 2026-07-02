@@ -17,7 +17,7 @@ A camada de capacidades (Capability Layer) tem como objetivo abstrair, isolar e 
 
 * **Context / RAG Local:** Motor real de vetores e embeddings para busca semântica em repositórios grandes.
 * **Context Pack Builder:** Geração dinâmica de contexto para os prompts baseados no RAG, empacotando o problema ativamente.
-* **Tool Registry:** Gerenciador formal de ferramentas plugáveis para registrar dinamicamente capacidades do LLM, em vez de depender de instâncias hardcoded.
+* **Tool Registry:** (Implementado na v1 via `capability_registry.py`) Gerenciador formal de ferramentas plugáveis que registra dinamicamente capacidades do LLM, agora com schemas estáticos e políticas de risco estabelecidas. Consulte o [Runbook Tool Registry](../runbooks/AIW_TOOL_REGISTRY.md).
 * **CodeAct:** Ambiente interativo de execução onde o agente cria, edita e avalia em formato conversacional iterativo (estilo Devin).
 * **Sandbox:** Containerização (ex. devcontainers) para garantir que ferramentas operem em ambiente efêmero seguro, protegendo a máquina host.
 * **Browser/Web Tools:** Integração de ferramentas web para consulta externa (ex: documentação, issues).

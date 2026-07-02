@@ -11,8 +11,9 @@ Implementar a fundação real de indexação de arquivos utilizando busca semân
 ## AIW-CAP-03 — Context Pack Builder v1
 Criar uma estrutura responsável por montar e consolidar o contexto de execução (snippets, logs, documentação) e injetá-lo na requisição de maneira eficiente para o modelo, respeitando janelas de tokens.
 
-## AIW-CAP-04 — Tool Registry v1
+## AIW-CAP-04 — Tool Registry v1 (✅ Concluído)
 Estender o Capability Registry implementando instâncias dinâmicas e roteamento de execução segura em tempo de execução para filesystem, shell, git e outras funcionalidades utilitárias.
+*Nota: A fundação (schemas estáticos, validação e manifests) foi entregue nesta sprint. A orquestração ativa de roteamento será concluída junto com o Agent Loop.*
 
 ## AIW-CAP-05 — CodeAct Sandbox v1
 Desenvolver um orquestrador primitivo para lidar iterativamente com a execução de shell, arquivos de log, e persistência das modificações efetuadas (action + observação) criando a ponte entre comandos e feedbacks.
