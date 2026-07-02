@@ -18,7 +18,7 @@ A camada de capacidades (Capability Layer) tem como objetivo abstrair, isolar e 
 * **Context / RAG Local:** (Implementado na v1 via `indexer.py` e `search.py`) Motor de indexação, chunking e busca léxica local. Consulte o [Runbook Context RAG Local](../runbooks/AIW_CONTEXT_RAG_LOCAL_INDEX.md).
 * **Context Pack Builder:** (Implementado na v1 via `context_pack.py`) Geração dinâmica de contexto baseada no RAG, empacotando o problema ativamente dentro de orçamentos de chunks/caracteres. Consulte o [Runbook Context Pack Builder](../runbooks/AIW_CONTEXT_PACK_BUILDER.md).
 * **Tool Registry:** (Implementado na v1 via `capability_registry.py`) Gerenciador formal de ferramentas plugáveis que registra dinamicamente capacidades do LLM, agora com schemas estáticos e políticas de risco estabelecidas. Consulte o [Runbook Tool Registry](../runbooks/AIW_TOOL_REGISTRY.md).
-* **CodeAct:** Ambiente interativo de execução onde o agente cria, edita e avalia em formato conversacional iterativo (estilo Devin).
+* **CodeAct:** (Implementado na v1 via `codeact_sandbox.py`) Executor controlado de ações Python com timeout, bloqueios e confirmação obrigatória. Consulte o [Runbook CodeAct Sandbox](../runbooks/AIW_CODEACT_SANDBOX.md).
 * **Sandbox:** Containerização (ex. devcontainers) para garantir que ferramentas operem em ambiente efêmero seguro, protegendo a máquina host.
 * **Browser/Web Tools:** Integração de ferramentas web para consulta externa (ex: documentação, issues).
 * **MCP / Tools Futuros:** Suporte aos protocolos abertos de integração do mercado.

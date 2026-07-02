@@ -211,3 +211,4 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 - [AIW Tool Registry](docs/runbooks/AIW_TOOL_REGISTRY.md)
 - [AIW Context RAG Local Index](docs/runbooks/AIW_CONTEXT_RAG_LOCAL_INDEX.md)
 - [AIW Context Pack Builder](docs/runbooks/AIW_CONTEXT_PACK_BUILDER.md)
+- [AIW CodeAct Sandbox](docs/runbooks/AIW_CODEACT_SANDBOX.md)

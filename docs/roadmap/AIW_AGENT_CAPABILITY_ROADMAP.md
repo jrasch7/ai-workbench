@@ -17,8 +17,9 @@ Criar uma estrutura responsável por montar e consolidar o contexto de execuçã
 Estender o Capability Registry implementando instâncias dinâmicas e roteamento de execução segura em tempo de execução para filesystem, shell, git e outras funcionalidades utilitárias.
 *Nota: A fundação (schemas estáticos, validação e manifests) foi entregue nesta sprint. A orquestração ativa de roteamento será concluída junto com o Agent Loop.*
 
-## AIW-CAP-05 — CodeAct Sandbox v1
+## AIW-CAP-05 — CodeAct Sandbox v1 (✅ Concluído)
 Desenvolver um orquestrador primitivo para lidar iterativamente com a execução de shell, arquivos de log, e persistência das modificações efetuadas (action + observação) criando a ponte entre comandos e feedbacks.
+*Nota: Executor host-sandbox best-effort implementado com validação de padrões, confirmação obrigatória, timeout, captura truncada e artifacts por run.*
 
 ## AIW-CAP-06 — Agent Iterative Loop v1
 Implementar o ciclo real de repetição (ReAct / Devin-like) para permitir ao agente planejar, ler, criar patchs e validar de maneira contínua, usando o Tool Registry e o Sandbox do CodeAct até que conclua seu objetivo.

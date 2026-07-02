@@ -25,6 +25,22 @@ def _capabilities_db() -> list[dict]:
             "source": "aiw_runtime.tools"
         },
         {
+            "name": "codeact_sandbox",
+            "kind": "action",
+            "status": "experimental",
+            "risk": "high",
+            "requires_confirmation": True,
+            "allows_external_io": False,
+            "writes_files": True,
+            "runs_code": True,
+            "network_access": False,
+            "modifies_git": False,
+            "reads_secrets": False,
+            "blocked_by_default": True,
+            "allowed_modes": ["manual"],
+            "source": "aiw_workspace.codeact_sandbox"
+        },
+        {
             "name": "file_write",
             "kind": "tool",
             "status": "available",
