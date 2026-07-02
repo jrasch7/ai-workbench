@@ -210,3 +210,4 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 - [AIW Agent Capability Foundation Runbook](docs/runbooks/AIW_AGENT_CAPABILITY_FOUNDATION.md)
 - [AIW Tool Registry](docs/runbooks/AIW_TOOL_REGISTRY.md)
 - [AIW Context RAG Local Index](docs/runbooks/AIW_CONTEXT_RAG_LOCAL_INDEX.md)
+- [AIW Context Pack Builder](docs/runbooks/AIW_CONTEXT_PACK_BUILDER.md)

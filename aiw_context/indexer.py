@@ -404,7 +404,8 @@ def best_effort_rebuild(root_path: Path, run_dir: Path, workspace_id: str | None
 
 
 IGNORE_NAMES = {
-    ".env", ".git", "node_modules", "dist", "build", "coverage", "reports", "logs", "__pycache__"
+    ".env", ".git", "node_modules", "dist", "build", "coverage", "reports", "logs", "__pycache__",
+    "workspaces", "context", "agents", "vendor", ".cache", ".venv", "venv", "site-packages", "conversations"
 }
 IGNORE_PREFIXES = {".env."}
 IGNORE_EXTS = {
@@ -413,15 +414,24 @@ IGNORE_EXTS = {
 }
 
 def is_ignored_path(path_str: str) -> bool:
-    name = Path(path_str).name
-    if name in IGNORE_NAMES: return True
+    path_obj = Path(path_str)
+    name = path_obj.name
+    
+    # Check if any directory part is in IGNORE_NAMES
+    if any(part in IGNORE_NAMES for part in path_obj.parts): 
+        return True
+        
     if any(name.startswith(p) for p in IGNORE_PREFIXES): return True
-    if Path(path_str).suffix in IGNORE_EXTS: return True
-    if ".aiw" in path_str.split(os.sep) or ".aiw" in path_str.split("/"): return True
-    if "reports" in path_str.split(os.sep) or "reports" in path_str.split("/"): return True
-    if "coverage" in path_str.split(os.sep) or "coverage" in path_str.split("/"): return True
+    if path_obj.suffix in IGNORE_EXTS: return True
+    
+    # Specific known bad parts
+    if ".aiw" in path_obj.parts: return True
+    if "reports" in path_obj.parts: return True
+    if "coverage" in path_obj.parts: return True
+    
     if name == "AGENTS.md": return True
     if path_str == "config/litellm.yaml" or path_str == f"config{os.sep}litellm.yaml": return True
+    
     return False
 
 def build_context_index(workspace_id: str | None = None) -> dict:

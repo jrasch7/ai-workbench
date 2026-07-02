@@ -9,8 +9,9 @@ Criar um registro básico estático para definir os esquemas (JSON-schema) e con
 Implementar a fundação real de indexação de arquivos utilizando busca semântica, garantindo capacidade local via indexadores eficientes e vetores para suportar consultas complexas em código e doc.
 *Nota: A fundação léxica e estrutural de chunking, manifest e busca local foi entregue nesta sprint. Embeddings vetoriais ficam como evolução futura.*
 
-## AIW-CAP-03 — Context Pack Builder v1
+## AIW-CAP-03 — Context Pack Builder v1 (✅ Concluído)
 Criar uma estrutura responsável por montar e consolidar o contexto de execução (snippets, logs, documentação) e injetá-lo na requisição de maneira eficiente para o modelo, respeitando janelas de tokens.
+*Nota: A primeira versão offline e orçada foi implementada para extrair dados da busca local e gerar packs json/md auditáveis.*
 
 ## AIW-CAP-04 — Tool Registry v1 (✅ Concluído)
 Estender o Capability Registry implementando instâncias dinâmicas e roteamento de execução segura em tempo de execução para filesystem, shell, git e outras funcionalidades utilitárias.
