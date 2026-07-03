@@ -46,11 +46,12 @@ Atualmente, o Registry expõe:
 - `worker_loop` (workflow)
 - `agent_queue` (workflow)
 - `agent_dispatcher` (workflow)
+- `codeact_sandbox` (action)
 
 ## Quais são passivas e quais exigem confirmação?
 
 As ferramentas passivas (`file_read`, `project_patch_preview`, `review_gate`, `evidence_bundle`, `evidence_export`, `agent_queue`) operam com `requires_confirmation: False`.
-As demais ferramentas e workflows ativos (escrita, mutação, execução, integração externa) exigem confirmação explícita no sistema (`requires_confirmation: True`).
+As demais ferramentas, workflows ativos e actions de execução local (incluindo `codeact_sandbox`) exigem confirmação explícita no sistema (`requires_confirmation: True`). O `codeact_sandbox` valida no schema v1, grava artifacts em `.aiw/workspaces/<workspace_id>/codeact/runs/<run_id>/`, é bloqueado por padrão e representa apenas um host-sandbox best-effort, não isolamento forte.
 
 ## Por que o registry não executa tools ainda?
 

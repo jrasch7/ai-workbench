@@ -38,6 +38,7 @@ A busca retornará as definições exatas. Se a ferramenta não aparecer no cód
 * Evite conceder privilégios irrestritos ou permitir path traversal (bloquear `../` nativamente).
 * Exija a flag `--confirm` ou dependa do Cockpit / Inbox UI para dar sinal verde para capacidades mutáveis (*requires_confirmation = true*).
 * A execução perigosa não deve virar execução externa sem aprovação de uma policy.
+* Actions como `codeact_sandbox` devem declarar `artifacts_path` e `input_schema`, exigir confirmação, bloquear IO externo por padrão e documentar que o host-sandbox é best-effort, não isolamento forte.
 
 ## Como uma capability gera artifacts
 

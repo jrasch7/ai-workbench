@@ -3,16 +3,20 @@ import uuid
 import datetime
 import subprocess
 import os
+import re
 from pathlib import Path
 from .profiles import resolve_workspace, AIW_ROOT
 
 BAD_PATTERNS = [
-    "import socket", "import requests", "urllib", "http.client", 
-    "subprocess", "os.system", "popen", "pty", "shutil.rmtree", 
-    "Path.home", "expanduser", 'open(".env"', "open('.env'", 
-    "litellm.yaml", "AGENTS.md", "git push", "git clone", "gh pr", 
-    "curl", "wget", "nc ", "ncat", "ssh", "scp"
+    ".env", "config/litellm.yaml", "litellm.yaml", "agents.md",
+    "import socket", "import requests", "urllib", "http.client",
+    "subprocess", "os.system", "popen", "pty", "shutil.rmtree",
+    "path.home", "expanduser", "open(", "socket.", "requests.",
+    "git push", "git clone", "gh pr", "curl", "wget", "nc ", "ncat",
+    "ssh", "scp"
 ]
+
+SAFE_RUN_ID_RE = re.compile(r"^ca-[0-9a-f]{8}$")
 
 def _codeact_dir(workspace_id: str) -> Path:
     ws = resolve_workspace(workspace_id)
@@ -25,11 +29,26 @@ def validate_codeact_action(action: dict) -> dict:
         return {"status": "blocked", "reason": "unsupported_kind"}
         
     code = action.get("code", "")
+    normalized_code = " ".join(code.lower().split())
     for pattern in BAD_PATTERNS:
-        if pattern in code:
+        if pattern in normalized_code:
             return {"status": "blocked", "reason": "blocked_pattern", "pattern": pattern}
             
     return {"status": "ok"}
+
+def _safe_run_json_path(workspace_id: str, run_id: str) -> Path | None:
+    if not run_id or "/" in run_id or "\\" in run_id or ".." in run_id:
+        return None
+    if Path(run_id).is_absolute() or not SAFE_RUN_ID_RE.fullmatch(run_id):
+        return None
+
+    base = _codeact_dir(workspace_id).resolve()
+    rf = (base / run_id / "run.json").resolve()
+    try:
+        rf.relative_to(base)
+    except ValueError:
+        return None
+    return rf
 
 def create_codeact_run(workspace_id: str, action: dict) -> dict:
     run_id = f"ca-{uuid.uuid4().hex[:8]}"
@@ -132,8 +151,9 @@ def list_codeact_runs(workspace_id: str, limit: int = 20) -> dict:
     return {"runs": runs}
 
 def read_codeact_run(workspace_id: str, run_id: str) -> dict:
-    base = _codeact_dir(workspace_id)
-    rf = base / run_id / "run.json"
+    rf = _safe_run_json_path(workspace_id, run_id)
+    if rf is None:
+        return {"status": "blocked", "reason": "invalid_run_id"}
     if not rf.exists():
         return {}
     return json.loads(rf.read_text())

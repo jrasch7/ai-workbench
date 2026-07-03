@@ -14,17 +14,18 @@ Na v1, CodeAct **não** executa código vindo de LLM. Ele cria a infraestrutura 
 - Registro de artifacts por run (action.json, run.json, stdout.txt, stderr.txt, summary.md).
 - Bloqueio de padrões perigosos antes da execução.
 - Confirmação obrigatória (`confirm=True`).
-- Listagem e leitura de runs anteriores.
+- Listagem e leitura de runs anteriores, com validação de `run_id` antes de resolver caminhos.
 
 ## O que o v1 bloqueia
 
-Padrões perigosos detectados estaticamente no código antes da execução:
+Padrões perigosos detectados estaticamente no código antes da execução. A checagem é normalizada e case-insensitive para reduzir bypass trivial:
 
 ```text
+.env, config/litellm.yaml, AGENTS.md,
 import socket, import requests, urllib, http.client,
 subprocess, os.system, popen, pty, shutil.rmtree,
-Path.home, expanduser, open(".env"), open('.env'),
-litellm.yaml, AGENTS.md, git push, git clone, gh pr,
+Path.home, expanduser, open(,
+git push, git clone, gh pr,
 curl, wget, nc, ncat, ssh, scp
 ```
 
@@ -37,6 +38,8 @@ browser, network, git
 
 Qualquer `kind` diferente de `python_eval` é rejeitado.
 
+`read_codeact_run(workspace_id, run_id)` aceita apenas IDs no formato gerado pelo módulo (`ca-` + 8 caracteres hexadecimais), rejeita caminhos absolutos, `..`, `/` e `\`, e confirma que o caminho resolvido permanece dentro de `.aiw/workspaces/<workspace_id>/codeact/runs/`.
+
 ## Por que isso ainda não é sandbox forte
 
 O executor v1 roda no host local, sem devcontainer, chroot ou VM. O isolamento é feito por:
@@ -46,7 +49,7 @@ O executor v1 roda no host local, sem devcontainer, chroot ou VM. O isolamento �
 - Ambiente mínimo (apenas `PATH` e `PYTHONPATH`).
 - `cwd` apontando para o diretório do run dentro de `.aiw/`.
 
-**Isso NÃO é fronteira de segurança final.** É um host-sandbox best-effort. Devcontainer/chroot ficam para sprint futura.
+**Isso NÃO é fronteira de segurança final.** É um host-sandbox best-effort, não deve rodar código não confiável e não substitui container, VM, chroot ou devcontainer. Devcontainer/chroot ficam para sprint futura.
 
 ## Onde ficam artifacts
 
@@ -102,8 +105,20 @@ O CodeAct Sandbox está registrado no Capability Registry como:
   "kind": "action",
   "status": "experimental",
   "risk": "high",
+  "description": "Runs confirmed Python snippets in a local best-effort host sandbox with evidence artifacts.",
   "requires_confirmation": true,
+  "writes_files": true,
   "runs_code": true,
+  "network_access": false,
+  "artifacts_path": ".aiw/workspaces/<workspace_id>/codeact/runs/<run_id>",
+  "input_schema": {
+    "kind": "python_eval",
+    "title": "string",
+    "code": "string",
+    "timeout_seconds": "integer",
+    "max_stdout_chars": "integer",
+    "max_stderr_chars": "integer"
+  },
   "blocked_by_default": true,
   "allowed_modes": ["manual"]
 }

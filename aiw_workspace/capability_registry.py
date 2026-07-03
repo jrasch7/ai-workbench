@@ -29,6 +29,7 @@ def _capabilities_db() -> list[dict]:
             "kind": "action",
             "status": "experimental",
             "risk": "high",
+            "description": "Runs confirmed Python snippets in a local best-effort host sandbox with evidence artifacts.",
             "requires_confirmation": True,
             "allows_external_io": False,
             "writes_files": True,
@@ -36,6 +37,15 @@ def _capabilities_db() -> list[dict]:
             "network_access": False,
             "modifies_git": False,
             "reads_secrets": False,
+            "artifacts_path": ".aiw/workspaces/<workspace_id>/codeact/runs/<run_id>",
+            "input_schema": {
+                "kind": "python_eval",
+                "title": "string",
+                "code": "string",
+                "timeout_seconds": "integer",
+                "max_stdout_chars": "integer",
+                "max_stderr_chars": "integer"
+            },
             "blocked_by_default": True,
             "allowed_modes": ["manual"],
             "source": "aiw_workspace.codeact_sandbox"
