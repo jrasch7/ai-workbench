@@ -131,7 +131,11 @@ def _save_iteration(run: dict, iteration: dict) -> None:
     iter_path.write_text(json.dumps(iteration, indent=2, ensure_ascii=False), encoding="utf-8")
     run["iterations"].append({
         "iteration": iteration["iteration"],
+        "step_kind": iteration.get("step_kind"),
+        "step_title": iteration.get("step_title"),
         "status": iteration["status"],
+        "uses_codeact": iteration.get("uses_codeact"),
+        "codeact_run_id": iteration.get("codeact_run_id"),
         "artifact": str(iter_path),
     })
     _save_run(run)
