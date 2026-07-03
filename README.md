@@ -19,6 +19,7 @@ A bancada evoluiu drasticamente e hoje contempla:
 * **Context Pack v1:** Camada estruturada auditável contendo a saúde da documentação.
 * **Search Index Cache:** Cache lexical para buscas instantâneas no Cockpit.
 * **Context Injection:** O runner é capaz de injetar context packs vitais antes da call para o modelo (`--use-context-pack`).
+* **Agent Iterative Loop Offline v1:** Loop manual/foreground que valida Registry, contexto e CodeAct sem LLM real.
 * **Operational View:** Visão clara de missões, status de aprovação de handoffs e rejeições de patches.
 
 ## Arquitetura atual
@@ -82,6 +83,9 @@ AIW_AGENT_OFFLINE=1 AIW_USE_CONTEXT_PACK=1 ./scripts/aiw-runner-agent --offline
 
 # Reconstruir o índice de contexto de força bruta
 python3 -m aiw_context.indexer
+
+# Rodar o Agent Iterative Loop offline em dry-run
+./scripts/aiw-agent-loop --workspace aiw --task "Validate offline iterative loop" --once --dry-run
 ```
 
 
@@ -168,6 +172,7 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 * [Source Root Test Mapping](docs/runbooks/AIW_SOURCE_ROOT_TEST_MAPPING.md)
 * [Validation Plan](docs/runbooks/AIW_VALIDATION_PLAN.md)
 * [Validation Plan Snapshots](docs/runbooks/AIW_VALIDATION_PLAN_SNAPSHOTS.md)
+* [Agent Iterative Loop Offline v1](docs/runbooks/AIW_AGENT_ITERATIVE_LOOP.md)
 
 ## Próximos Passos (Roadmap Resumido)
 

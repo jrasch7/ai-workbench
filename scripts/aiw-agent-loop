@@ -1,0 +1,73 @@
+#!/bin/bash
+# AIW Agent Iterative Loop Offline CLI
+
+export PYTHONPATH="$PWD:$PYTHONPATH"
+
+exec python3 - "$@" <<'PYTHON'
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd()))
+
+from aiw_workspace.agent_iterative_loop import (
+    list_agent_loop_runs,
+    read_agent_loop_run,
+    run_agent_iterative_loop_once,
+)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="AIW Agent Iterative Loop Offline CLI")
+    parser.add_argument("--workspace", required=True, help="Workspace ID")
+    parser.add_argument("--task", help="Task text for the loop")
+    parser.add_argument("--once", action="store_true", help="Run one foreground cycle")
+    parser.add_argument("--max-iterations", type=int, default=1, help="Max iterations, capped at 3")
+    parser.add_argument("--confirm-agent-loop", action="store_true", help="Confirm offline execution")
+
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", help="Create dry-run artifacts without CodeAct execution")
+    mode.add_argument("--execute", action="store_true", help="Execute offline with fixed safe CodeAct action")
+
+    inspect = parser.add_mutually_exclusive_group()
+    inspect.add_argument("--list", action="store_true", help="List recent loop runs")
+    inspect.add_argument("--read-run", help="Read one loop run by run_id")
+
+    args = parser.parse_args()
+
+    if args.list:
+        res = list_agent_loop_runs(args.workspace)
+        print(json.dumps(res, indent=2, ensure_ascii=False))
+        sys.exit(0 if res.get("ok") else 1)
+
+    if args.read_run:
+        res = read_agent_loop_run(args.workspace, args.read_run)
+        print(json.dumps(res, indent=2, ensure_ascii=False))
+        sys.exit(0 if res.get("ok") else 1)
+
+    if not args.once:
+        print("v1 supports only --once; no watch/background mode is implemented.", file=sys.stderr)
+        sys.exit(1)
+
+    if not args.task:
+        print("Must provide --task for --once.", file=sys.stderr)
+        sys.exit(1)
+
+    dry_run = args.dry_run or not args.execute
+    res = run_agent_iterative_loop_once(
+        workspace_id=args.workspace,
+        task=args.task,
+        dry_run=dry_run,
+        execute=args.execute,
+        confirm_agent_loop=args.confirm_agent_loop,
+        max_iterations=args.max_iterations,
+        task_source="cli",
+    )
+    print(json.dumps(res, indent=2, ensure_ascii=False))
+    sys.exit(0 if res.get("ok") else 1)
+
+
+if __name__ == "__main__":
+    main()
+PYTHON

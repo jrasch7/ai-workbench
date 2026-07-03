@@ -62,6 +62,7 @@ from .agent_queue import create_queue_item_from_inbox, list_queue_items, read_qu
 from .external_worker_policy import load_external_worker_policy, validate_external_worker_policy, can_worker_execute
 from .worker_loop import list_worker_loop_runs, read_worker_loop_run
 from .agent_dispatcher import list_agent_dispatcher_runs, read_agent_dispatcher_run
+from .agent_iterative_loop import run_agent_iterative_loop_once, list_agent_loop_runs, read_agent_loop_run
 
 __all__ = [
     "DEFAULT_WORKSPACE",
@@ -147,4 +148,7 @@ __all__ = [
     "set_queue_dispatch",
     "list_agent_dispatcher_runs",
     "read_agent_dispatcher_run",
+    "run_agent_iterative_loop_once",
+    "list_agent_loop_runs",
+    "read_agent_loop_run",
 ]
