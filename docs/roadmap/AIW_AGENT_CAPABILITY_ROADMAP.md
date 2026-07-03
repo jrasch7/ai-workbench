@@ -23,7 +23,7 @@ Desenvolver um orquestrador primitivo para lidar iterativamente com a execução
 
 ## AIW-CAP-06 — Agent Iterative Loop v1 (✅ Concluído)
 Implementar o ciclo real de repetição (ReAct / Devin-like) para permitir ao agente planejar, ler, criar patchs e validar de maneira contínua, usando o Tool Registry e o Sandbox do CodeAct até que conclua seu objetivo.
-*Nota: A v1 offline/manual foi entregue com CLI foreground, dry-run, execute confirmado, artifacts rastreaveis, consulta ao Capability Registry, contexto minimo ou Context Pack existente, e CodeAct com acao fixa segura. Planejamento por LLM e autonomia ficam para iteracoes futuras.*
+*Nota: A v1 offline/manual foi entregue com CLI foreground, dry-run, execute confirmado, artifacts rastreaveis, consulta ao Capability Registry, contexto minimo ou Context Pack existente, mock planner deterministico, Cockpit read-only, e CodeAct com acao fixa segura. Planejamento por LLM e autonomia ficam para iteracoes futuras.*
 
 ## AIW-CAP-07 — Browser/Web Tool Lab v1
 Integrar as capacidades iniciais de acesso externo controlado à internet, como captura do status de tickets remotos, ler repositórios não nativos ou realizar scraping seguro de documentações em tempo real.

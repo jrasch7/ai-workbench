@@ -19,11 +19,11 @@ from aiw_workspace.agent_iterative_loop import (
 
 
 def main():
-    parser = argparse.ArgumentParser(description="AIW Agent Iterative Loop Offline CLI")
+    parser = argparse.ArgumentParser(description="AIW Agent Iterative Loop Offline CLI with deterministic mock planner")
     parser.add_argument("--workspace", required=True, help="Workspace ID")
     parser.add_argument("--task", help="Task text for the loop")
     parser.add_argument("--once", action="store_true", help="Run one foreground cycle")
-    parser.add_argument("--max-iterations", type=int, default=1, help="Max iterations, capped at 3")
+    parser.add_argument("--max-iterations", type=int, default=1, help="Mock planner steps to record, capped at 3")
     parser.add_argument("--confirm-agent-loop", action="store_true", help="Confirm offline execution")
 
     mode = parser.add_mutually_exclusive_group()

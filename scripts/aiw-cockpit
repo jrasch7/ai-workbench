@@ -2120,6 +2120,8 @@ def render_page() -> str:
     active_workspace = workspace_data.get("active", "aiw")
     git_data = git_status_payload(active_workspace)
     git_diff = git_diff_payload(active_workspace)
+    from aiw_workspace.agent_iterative_loop import list_agent_loop_runs
+    agent_loop_payload = list_agent_loop_runs(active_workspace, limit=8)
 
     # Queue pills
     queue_pills = ""
@@ -3633,6 +3635,42 @@ def render_page() -> str:
         </div>
         """
 
+    agent_loop_runs = agent_loop_payload.get("runs", []) if agent_loop_payload.get("ok") else []
+    if agent_loop_runs:
+        agent_loop_rows = ""
+        for r in agent_loop_runs[:6]:
+            run_id = html.escape(str(r.get("run_id", "-")))
+            status = html.escape(str(r.get("status", "unknown")))
+            mode = html.escape(str(r.get("mode", "-")))
+            created = html.escape(str(r.get("created_at", "-")))
+            max_iters = html.escape(str(r.get("max_iterations", "-")))
+            task = html.escape(str(r.get("task", ""))[:120])
+            agent_loop_rows += f"""
+            <div class="mini-run">
+              <div class="mini-run-title">{run_id}</div>
+              <div class="mini-run-meta">
+                <span class="tag status-{status}">{status}</span>
+                <span class="tag">{mode}</span>
+                <span class="tag">max {max_iters}</span>
+                <a class="tag" href="/api/workspaces/{html.escape(active_workspace)}/agent-iterative-loop/runs/{run_id}" target="_blank">JSON</a>
+              </div>
+              <div class="card-doc" style="margin-top:7px;margin-bottom:0">{created} · {task}</div>
+            </div>
+            """
+    else:
+        agent_loop_rows = '<div class="empty-state">Nenhum Agent Iterative Loop encontrado.</div>'
+
+    agent_loop_section = f"""
+    <div class="section-block">
+      <h3>Agent Iterative Loop</h3>
+      <div class="signal-note" style="margin-bottom:10px">Read-only. Execuções continuam manuais via CLI.</div>
+      {agent_loop_rows}
+      <div class="api-links" style="margin-top:10px">
+        <a class="api-link" href="/api/workspaces/{html.escape(active_workspace)}/agent-iterative-loop/runs">agent-loop runs</a>
+      </div>
+    </div>
+    """
+
     # Overview section content
     active_total = running_count + review_count
     mission_panel = f"""
@@ -3698,6 +3736,7 @@ def render_page() -> str:
       </div>
 
       {atencao_section}
+      {agent_loop_section}
       {recent_section}
       <div class="api-links">
         <a class="api-link" href="/api/status">/api/status</a>
@@ -5126,6 +5165,22 @@ class Handler(BaseHTTPRequestHandler):
             run_id = parts[6]
             from aiw_workspace.agent_dispatcher import read_agent_dispatcher_run
             return self._respond(read_agent_dispatcher_run(ws_id, run_id), 200)
+
+        if path.startswith("/api/workspaces/") and path.endswith("/agent-iterative-loop/runs"):
+            ws_id = path[len("/api/workspaces/"):-len("/agent-iterative-loop/runs")].strip("/")
+            from aiw_workspace.agent_iterative_loop import list_agent_loop_runs
+            payload = list_agent_loop_runs(ws_id)
+            self.send_json(payload, status=200 if payload.get("ok") else 404)
+            return
+
+        if path.startswith("/api/workspaces/") and "/agent-iterative-loop/runs/" in path:
+            parts = path.split("/")
+            ws_id = parts[3]
+            run_id = parts[6]
+            from aiw_workspace.agent_iterative_loop import read_agent_loop_run
+            payload = read_agent_loop_run(ws_id, run_id)
+            self.send_json(payload, status=200 if payload.get("ok") else 404)
+            return
 
         if path.startswith("/api/workspaces/") and "/integration-inbox/" in path and "/file/" in path:
             parts = path.split("/")

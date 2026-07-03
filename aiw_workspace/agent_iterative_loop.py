@@ -62,9 +62,11 @@ def _create_run(workspace_id: str, task: str, mode: str, max_iterations: int, ta
         "updated_at": _now_iso(),
         "mode": mode,
         "status": "created",
+        "planner": "mock",
         "max_iterations": max_iterations,
         "task": task,
         "task_source": task_source,
+        "plan_path": "plan.json",
         "capabilities_checked": [],
         "context_pack_id": None,
         "context_mode": None,
@@ -75,6 +77,43 @@ def _create_run(workspace_id: str, task: str, mode: str, max_iterations: int, ta
     }
     _save_run(run)
     return run
+
+
+def build_mock_plan(task: str, max_iterations: int) -> dict:
+    """Builds a deterministic offline plan. It never turns task text into code."""
+    capped = max(1, min(MAX_ITERATIONS_V1, int(max_iterations or 1)))
+    templates = [
+        {
+            "step": 1,
+            "kind": "inspect_context",
+            "title": "Inspect available context",
+            "uses_codeact": False,
+        },
+        {
+            "step": 2,
+            "kind": "codeact_python_eval",
+            "title": "Run safe offline CodeAct check",
+            "uses_codeact": True,
+        },
+        {
+            "step": 3,
+            "kind": "summarize",
+            "title": "Summarize offline result",
+            "uses_codeact": False,
+        },
+    ]
+    return {
+        "planner": "mock",
+        "task": task,
+        "max_iterations": capped,
+        "steps": templates[:capped],
+    }
+
+
+def _save_plan(run: dict, plan: dict) -> None:
+    run_dir = _loop_run_dir(run["workspace_id"], run["run_id"])
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "plan.json").write_text(json.dumps(plan, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def _save_run(run: dict) -> None:
@@ -105,8 +144,10 @@ def _render_summary(run: dict) -> str:
         f"- Workspace: {run.get('workspace_id')}",
         f"- Status: {run.get('status')}",
         f"- Mode: {run.get('mode')}",
+        f"- Planner: {run.get('planner')}",
         f"- Task source: {run.get('task_source')}",
         f"- Max iterations: {run.get('max_iterations')}",
+        f"- Plan: {run.get('plan_path')}",
         f"- Context mode: {run.get('context_mode')}",
         f"- Context pack: {run.get('context_pack_id')}",
         f"- Blocked reason: {run.get('blocked_reason')}",
@@ -206,6 +247,9 @@ def run_agent_iterative_loop_once(
 
     mode = "dry-run" if dry_run or not execute else "offline"
     run = _create_run(ws_id, task, mode, max_iterations, task_source)
+    plan = build_mock_plan(task, max_iterations)
+    _save_plan(run, plan)
+    _save_run(run)
 
     cap_check = _check_codeact_capability()
     run["capabilities_checked"].append(cap_check)
@@ -227,10 +271,15 @@ def run_agent_iterative_loop_once(
     run["context_note"] = context.get("note")
     _save_run(run)
 
-    for iteration_num in range(1, max_iterations + 1):
+    failed = False
+    for step in plan["steps"]:
+        iteration_num = step["step"]
         iteration = {
             "iteration": iteration_num,
+            "step_kind": step["kind"],
+            "step_title": step["title"],
             "status": "dry_run" if mode == "dry-run" else "running",
+            "uses_codeact": bool(step["uses_codeact"]),
             "capability": "codeact_sandbox",
             "context_pack_id": run.get("context_pack_id"),
             "codeact_run_id": None,
@@ -240,14 +289,23 @@ def run_agent_iterative_loop_once(
         }
 
         if mode == "dry-run":
-            iteration["stdout_preview"] = "Would execute fixed offline CodeAct action."
+            if step["uses_codeact"]:
+                iteration["stdout_preview"] = "Would execute fixed safe offline CodeAct action."
+            else:
+                iteration["stdout_preview"] = f"Would complete mock planner step: {step['kind']}."
             _save_iteration(run, iteration)
-            break
+            continue
+
+        if not step["uses_codeact"]:
+            iteration["status"] = "completed"
+            iteration["stdout_preview"] = f"Completed mock planner step: {step['kind']}."
+            _save_iteration(run, iteration)
+            continue
 
         action = {
             "kind": "python_eval",
-            "title": "AIW Agent Iterative Loop Offline v1",
-            "code": "print('AIW_AGENT_ITERATIVE_LOOP_OK')",
+            "title": "AIW Agent Iterative Loop Mock Planner Step",
+            "code": "print('AIW_AGENT_ITERATIVE_LOOP_STEP_OK')",
             "timeout_seconds": 5,
             "max_stdout_chars": 2000,
             "max_stderr_chars": 2000,
@@ -259,14 +317,21 @@ def run_agent_iterative_loop_once(
         if codeact.get("status") == "succeeded":
             iteration["status"] = "completed"
             _save_iteration(run, iteration)
-            break
+            continue
         iteration["status"] = "failed"
         iteration["error"] = codeact.get("error") or codeact.get("reason") or codeact.get("status")
         _save_iteration(run, iteration)
+        failed = True
         break
 
-    last_status = run["iterations"][-1]["status"] if run.get("iterations") else "partial"
-    run["status"] = "dry_run" if mode == "dry-run" else ("completed" if last_status == "completed" else "failed")
+    if mode == "dry-run":
+        run["status"] = "dry_run"
+    elif failed:
+        run["status"] = "failed"
+    elif len(run.get("iterations", [])) == len(plan["steps"]):
+        run["status"] = "completed"
+    else:
+        run["status"] = "partial"
     _save_run(run)
     return {"ok": run["status"] in {"dry_run", "completed"}, "run": run}
 
