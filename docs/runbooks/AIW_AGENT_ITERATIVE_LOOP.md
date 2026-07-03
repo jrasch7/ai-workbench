@@ -85,6 +85,8 @@ A v1 limita `--max-iterations` a no maximo 3.
 
 Opcionalmente, `--capability <name>` permite validar a policy contra outra capability registrada. O Agent Iterative Loop v1 so executa `codeact_sandbox`; outras capabilities ficam bloqueadas para execucao do loop mesmo se a policy local as reconhecer.
 
+`--operation` existe para a policy e usa default seguro `python_eval_fixed`. Ele nao aceita codigo livre e qualquer operation desconhecida bloqueia a run.
+
 ## Artifacts
 
 Cada run grava:
@@ -106,6 +108,8 @@ iterations/iter-003.json
 
 `run.json` inclui `run_id`, `workspace_id`, `mode`, `status`, `task`, `planner`, `max_iterations`, `plan_path`, `task_source`, `capabilities_checked`, `capability_decisions`, `context_pack_id`, `iterations` e `blocked_reason`.
 
+Novos artifacts usam paths de display relativos ao repo, por exemplo `.aiw/workspaces/aiw/agent-iterative-loop/runs/<run_id>/run.json`, evitando expor `/home/...` na UI/API. Artifacts antigos com paths absolutos continuam legiveis e sao higienizados quando exibidos pelo Cockpit/API.
+
 `plan.json` inclui `planner`, `task`, `max_iterations` e `steps`.
 
 Cada iteracao registra `iteration`, `step_kind`, `step_title`, `uses_codeact`, `capability`, `context_pack_id`, `codeact_run_id`, `stdout_preview`, `stderr_preview` e `error`.
@@ -116,21 +120,23 @@ Antes de qualquer execucao, o loop consulta `codeact_sandbox` no Capability Regi
 
 ## Capability Policy v1
 
-A policy v1 e local, pequena e hardcoded em `aiw_workspace/capability_policy.py`. Ela nao le arquivos sensiveis e nao implementa RBAC, multiusuario ou configuracao dinamica.
+A policy v1 e local, pequena e hardcoded em `aiw_workspace/capability_policy.py`. Ela usa `policy_profile=local_offline_v1`, nao le arquivos sensiveis e nao implementa RBAC, multiusuario ou configuracao dinamica.
 
 Campos avaliados:
 
 ```text
-workspace_id, capability_name, mode, requires_confirmation, confirmed,
-risk, runs_code, writes_files, external_io, blocked_by_default
+workspace_id, capability_name, mode, operation, requires_confirmation,
+confirmed, risk, runs_code, writes_files, external_io, blocked_by_default
 ```
 
 Comportamento:
 
-- `dry-run`: permite apenas simulacao, registra `allowed=true`, `dry_run=true` e nao executa a capability real.
-- `offline execute`: exige capability existente e valida no Registry, bloqueia IO externo, exige confirmacao quando `requires_confirmation=true` e permite `codeact_sandbox` somente com codigo fixo, local e rastreado.
+- `dry-run`: permite apenas simulacao, registra `allowed=true`, `dry_run=true`, `simulation_only=true`, `capability_not_executed=true` e nao executa a capability real.
+- `offline execute`: exige capability existente e valida no Registry, bloqueia IO externo, exige confirmacao quando `requires_confirmation=true` e permite `codeact_sandbox` somente com `operation=python_eval_fixed`, codigo fixo, local e rastreado.
 - Sem `--confirm-agent-loop`: bloqueia antes do CodeAct com `blocked_reason=confirmation_required`.
 - Capability inexistente: bloqueia com `blocked_reason=capability_missing`.
+- Modo `llm`: bloqueia com `llm_mode_blocked`.
+- Operation desconhecida: bloqueia com `unknown_operation`.
 
 Exemplo de artifact em `run.json`:
 
@@ -141,6 +147,8 @@ Exemplo de artifact em `run.json`:
       "capability": "codeact_sandbox",
       "allowed": true,
       "mode": "offline",
+      "operation": "python_eval_fixed",
+      "policy_profile": "local_offline_v1",
       "risk": "high",
       "requires_confirmation": true,
       "confirmed": true,
@@ -177,6 +185,8 @@ CodeAct continua sendo host-sandbox best-effort, nao isolamento forte. Nao deve 
 O Cockpit lista runs recentes do Agent Iterative Loop em modo read-only no overview. Nao ha botao de execucao.
 
 O detalhe read-only mostra a ultima run com task, planner, contexto, blocked reason, decisions de capability, passos do plano, iteracoes, `codeact_run_id`, previews de stdout/stderr, erros e caminhos de artifact. O endpoint JSON de uma run tambem inclui `plan`, `iterations` e `artifacts`.
+
+O historico mostra `run_id`, status, modo, `created_at`, task, planner, `context_mode`, max iterations, contagem de iteracoes, resumo da policy e blocked reason. Nao ha POST ou botao de execucao para o Agent Iterative Loop.
 
 Endpoints:
 

@@ -1,10 +1,15 @@
 from .capability_registry import get_capability, validate_capability_definition
 
 
+POLICY_PROFILE = "local_offline_v1"
+KNOWN_OPERATIONS = {"python_eval_fixed"}
+
+
 def evaluate_capability_policy(
     workspace_id: str,
     capability_name: str,
     mode: str,
+    operation: str = "python_eval_fixed",
     confirmed: bool = False,
     fixed_code: bool = False,
     local_execution: bool = True,
@@ -16,6 +21,8 @@ def evaluate_capability_policy(
         "capability": capability_name,
         "allowed": False,
         "mode": mode,
+        "operation": operation,
+        "policy_profile": POLICY_PROFILE,
         "risk": None,
         "requires_confirmation": True,
         "confirmed": bool(confirmed),
@@ -24,6 +31,8 @@ def evaluate_capability_policy(
         "external_io": False,
         "blocked_by_default": True,
         "dry_run": mode == "dry-run",
+        "simulation_only": False,
+        "capability_not_executed": True,
         "reason": None,
     }
 
@@ -44,9 +53,19 @@ def evaluate_capability_policy(
         decision["reason"] = "capability_invalid"
         return decision
 
+    if operation not in KNOWN_OPERATIONS:
+        decision["reason"] = "unknown_operation"
+        return decision
+
     if mode == "dry-run":
         decision["allowed"] = True
+        decision["simulation_only"] = True
+        decision["capability_not_executed"] = True
         decision["reason"] = "dry_run_simulation"
+        return decision
+
+    if mode == "llm":
+        decision["reason"] = "llm_mode_blocked"
         return decision
 
     if mode != "offline":
@@ -61,8 +80,17 @@ def evaluate_capability_policy(
         decision["reason"] = "confirmation_required"
         return decision
 
-    if capability_name == "codeact_sandbox" and fixed_code and local_execution and tracked:
+    if decision["runs_code"] and not confirmed:
+        decision["reason"] = "runs_code_requires_confirmation"
+        return decision
+
+    if decision["blocked_by_default"] and not confirmed:
+        decision["reason"] = "blocked_by_default_requires_confirmation"
+        return decision
+
+    if capability_name == "codeact_sandbox" and operation == "python_eval_fixed" and fixed_code and local_execution and tracked:
         decision["allowed"] = True
+        decision["capability_not_executed"] = False
         decision["reason"] = "offline_confirmed_fixed_codeact_eval"
         return decision
 

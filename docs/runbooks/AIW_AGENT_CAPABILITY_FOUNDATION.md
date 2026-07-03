@@ -42,7 +42,7 @@ A busca retornará as definições exatas. Se a ferramenta não aparecer no cód
 
 ## Capability Policy v1
 
-O Agent Iterative Loop usa `aiw_workspace/capability_policy.py` como primeira camada local de decisão antes de acionar uma capability. A policy v1 é pequena, hardcoded e sem configuração sensível.
+O Agent Iterative Loop usa `aiw_workspace/capability_policy.py` como primeira camada local de decisão antes de acionar uma capability. A policy v1 é pequena, hardcoded, usa `policy_profile=local_offline_v1` e não depende de configuração sensível.
 
 A avaliação sempre consulta `capability_registry.py` e registra no artifact:
 
@@ -50,6 +50,8 @@ A avaliação sempre consulta `capability_registry.py` e registra no artifact:
 workspace_id
 capability
 mode
+operation
+policy_profile
 risk
 requires_confirmation
 confirmed
@@ -57,19 +59,25 @@ runs_code
 writes_files
 external_io
 blocked_by_default
+simulation_only
+capability_not_executed
 allowed
 reason
 ```
 
 Regras atuais:
 
-* `dry-run` é permitido como simulação e não executa capability real.
+* `dry-run` é permitido como simulação, registra `simulation_only=true` e não executa capability real.
 * Capability ausente ou inválida bloqueia a run.
+* Operation desconhecida bloqueia a run.
+* Modo `llm` bloqueia a run.
 * IO externo bloqueia execução offline.
 * Capability que exige confirmação bloqueia quando `confirmed=false`.
-* `codeact_sandbox` é `high-risk`, `runs_code=true`, `writes_files=true` e `blocked_by_default=true`; no Agent Iterative Loop ele só passa em `offline` com confirmação explícita, código fixo, execução local e artifacts rastreáveis.
+* `codeact_sandbox` é `high-risk`, `runs_code=true`, `writes_files=true` e `blocked_by_default=true`; no Agent Iterative Loop ele só passa em `offline` com confirmação explícita, `operation=python_eval_fixed`, código fixo, execução local e artifacts rastreáveis.
 
 As decisões aparecem em `run.json` como `capability_decisions` e no `summary.md`. Em caso de bloqueio, `status=blocked` e `blocked_reason` recebe o motivo da policy, por exemplo `confirmation_required` ou `capability_missing`.
+
+Paths expostos em UI/API devem usar forma relativa ao repo, como `.aiw/workspaces/<id>/...`, para reduzir vazamento de paths absolutos locais. Artifacts antigos continuam legíveis e devem ser higienizados na apresentação.
 
 ## Como uma capability gera artifacts
 

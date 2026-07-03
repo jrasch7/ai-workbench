@@ -3649,9 +3649,16 @@ def render_page() -> str:
             mode = html.escape(str(r.get("mode", "-")))
             created = html.escape(str(r.get("created_at", "-")))
             planner = html.escape(str(r.get("planner", "-")))
+            context_mode = html.escape(str(r.get("context_mode", "-")))
+            blocked_reason = html.escape(str(r.get("blocked_reason") or "-"))
             max_iters = html.escape(str(r.get("max_iterations", "-")))
             iter_count = html.escape(str(len(r.get("iterations", []))))
             task = html.escape(str(r.get("task", ""))[:120])
+            decisions = r.get("capability_decisions", [])
+            decision = decisions[0] if decisions else {}
+            decision_summary = html.escape(
+                f"{decision.get('capability', '-')}: {decision.get('reason', 'no_decision')}"
+            )
             agent_loop_rows += f"""
             <div class="mini-run">
               <div class="mini-run-title">{run_id}</div>
@@ -3659,11 +3666,12 @@ def render_page() -> str:
                 <span class="tag status-{status}">{status}</span>
                 <span class="tag">{mode}</span>
                 <span class="tag">{planner}</span>
+                <span class="tag">context {context_mode}</span>
                 <span class="tag">max {max_iters}</span>
                 <span class="tag">{iter_count} iter</span>
                 <a class="tag" href="/api/workspaces/{html.escape(active_workspace)}/agent-iterative-loop/runs/{run_id}" target="_blank">JSON</a>
               </div>
-              <div class="card-doc" style="margin-top:7px;margin-bottom:0">{created} · {task}</div>
+              <div class="card-doc" style="margin-top:7px;margin-bottom:0">{created} · {task}<br>policy: {decision_summary}<br>blocked: {blocked_reason}</div>
             </div>
             """
     else:
@@ -3683,8 +3691,11 @@ def render_page() -> str:
               <span class="signal-name">{html.escape(str(d.get("capability", "-")))}</span>
               <span class="tag">{html.escape(allowed)}</span>
               <span class="tag">{html.escape(str(d.get("reason", "-")))}</span>
+              <span class="tag">{html.escape(str(d.get("policy_profile", "-")))}</span>
+              <span class="tag">{html.escape(str(d.get("operation", "-")))}</span>
               <span class="tag">risk {html.escape(str(d.get("risk", "-")))}</span>
               <span class="tag">confirmed {html.escape(str(d.get("confirmed", False)))}</span>
+              <span class="tag">simulation {html.escape(str(d.get("simulation_only", False)))}</span>
             </div>
             """
         if not decision_rows:
@@ -3727,7 +3738,9 @@ def render_page() -> str:
             <div class="signal-row"><span class="signal-name">Run</span><span class="tag">{html.escape(str(detail_run.get("run_id", "-")))}</span><span class="tag">{html.escape(str(detail_run.get("status", "-")))}</span><span class="tag">{html.escape(str(detail_run.get("mode", "-")))}</span></div>
             <div class="signal-row"><span class="signal-name">Planner</span><span class="tag">{html.escape(str(detail_run.get("planner", "-")))}</span><span class="tag">context {html.escape(str(detail_run.get("context_mode", "-")))}</span><span class="tag">pack {html.escape(str(detail_run.get("context_pack_id", "-")))}</span></div>
             <div class="signal-row"><span class="signal-name">Blocked reason</span><span class="tag">{html.escape(str(detail_run.get("blocked_reason", "-")))}</span></div>
-            <div class="signal-row"><span class="signal-name">Artifacts</span><span class="tag">{html.escape(str(detail_artifacts.get("run_json", "-")))}</span></div>
+            <div class="signal-row"><span class="signal-name">Run JSON</span><span class="tag">{html.escape(str(detail_artifacts.get("run_json", "-")))}</span></div>
+            <div class="signal-row"><span class="signal-name">Plan</span><span class="tag">{html.escape(str(detail_artifacts.get("plan_json", "-")))}</span></div>
+            <div class="signal-row"><span class="signal-name">Summary</span><span class="tag">{html.escape(str(detail_artifacts.get("summary_md", "-")))}</span></div>
           </div>
           <div class="card-doc" style="margin-top:8px;margin-bottom:10px">{html.escape(str(detail_run.get("task", "")))}</div>
           <h3>Capability decisions</h3>

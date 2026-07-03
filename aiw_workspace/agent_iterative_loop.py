@@ -7,6 +7,7 @@ from pathlib import Path
 from .capability_policy import evaluate_capability_policy
 from .capability_registry import get_capability, validate_capability_definition
 from .codeact_sandbox import run_codeact_action
+from .path_hygiene import safe_display_path, sanitize_artifact_paths_for_display
 from .profiles import AIW_ROOT, resolve_workspace
 
 
@@ -75,7 +76,7 @@ def _create_run(workspace_id: str, task: str, mode: str, max_iterations: int, ta
         "context_note": None,
         "iterations": [],
         "blocked_reason": None,
-        "run_dir": str(run_dir),
+        "run_dir": safe_display_path(run_dir),
     }
     _save_run(run)
     return run
@@ -138,7 +139,7 @@ def _save_iteration(run: dict, iteration: dict) -> None:
         "status": iteration["status"],
         "uses_codeact": iteration.get("uses_codeact"),
         "codeact_run_id": iteration.get("codeact_run_id"),
-        "artifact": str(iter_path),
+        "artifact": safe_display_path(iter_path),
     })
     _save_run(run)
 
@@ -170,7 +171,7 @@ def _render_summary(run: dict) -> str:
     for item in run.get("iterations", []):
         step = item.get("step_kind") or "unknown"
         codeact = item.get("codeact_run_id") or "no CodeAct"
-        lines.append(f"- Iteration {item.get('iteration')}: {item.get('status')} / {step} / {codeact} ({item.get('artifact')})")
+        lines.append(f"- Iteration {item.get('iteration')}: {item.get('status')} / {step} / {codeact} ({safe_display_path(item.get('artifact'))})")
     lines.extend(["", "## Capability Decisions", ""])
     if not run.get("capability_decisions"):
         lines.append("- No capability decisions recorded yet.")
@@ -178,7 +179,8 @@ def _render_summary(run: dict) -> str:
         allowed = "allowed" if item.get("allowed") else "blocked"
         lines.append(
             f"- {item.get('capability')}: {allowed}; reason={item.get('reason')}; "
-            f"risk={item.get('risk')}; confirmed={item.get('confirmed')}"
+            f"risk={item.get('risk')}; operation={item.get('operation')}; "
+            f"profile={item.get('policy_profile')}; confirmed={item.get('confirmed')}"
         )
     lines.extend([
         "",
@@ -255,6 +257,7 @@ def run_agent_iterative_loop_once(
     max_iterations: int = 1,
     task_source: str = "cli",
     capability_name: str = "codeact_sandbox",
+    operation: str = "python_eval_fixed",
 ) -> dict:
     if dry_run and execute:
         return {"ok": False, "error": "choose_dry_run_or_execute"}
@@ -278,6 +281,7 @@ def run_agent_iterative_loop_once(
         workspace_id=ws_id,
         capability_name=capability_name,
         mode=mode,
+        operation=operation,
         confirmed=confirm_agent_loop,
         fixed_code=True,
         local_execution=True,
@@ -383,7 +387,7 @@ def list_agent_loop_runs(workspace_id: str, limit: int = 20) -> dict:
         run_json = d / "run.json"
         if run_json.is_file():
             try:
-                runs.append(json.loads(run_json.read_text(encoding="utf-8")))
+                runs.append(sanitize_artifact_paths_for_display(json.loads(run_json.read_text(encoding="utf-8"))))
             except Exception:
                 pass
         if len(runs) >= limit:
@@ -412,11 +416,17 @@ def read_agent_loop_run(workspace_id: str, run_id: str) -> dict:
             for f in sorted(iter_dir.glob("iter-*.json")):
                 iterations.append(json.loads(f.read_text(encoding="utf-8")))
         artifacts = {
-            "run_json": str(run_json),
-            "plan_json": str(plan_path) if plan_path.is_file() else None,
-            "summary_md": str(run_json.parent / "summary.md"),
-            "iterations_dir": str(iter_dir),
+            "run_json": safe_display_path(run_json),
+            "plan_json": safe_display_path(plan_path) if plan_path.is_file() else None,
+            "summary_md": safe_display_path(run_json.parent / "summary.md"),
+            "iterations_dir": safe_display_path(iter_dir),
         }
-        return {"ok": True, "run": run, "plan": plan, "iterations": iterations, "artifacts": artifacts}
+        return {
+            "ok": True,
+            "run": sanitize_artifact_paths_for_display(run),
+            "plan": plan,
+            "iterations": sanitize_artifact_paths_for_display(iterations),
+            "artifacts": artifacts,
+        }
     except Exception as e:
         return {"ok": False, "error": str(e)}
