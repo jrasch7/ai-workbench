@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--task", help="Task text for the loop")
     parser.add_argument("--once", action="store_true", help="Run one foreground cycle")
     parser.add_argument("--max-iterations", type=int, default=1, help="Mock planner steps to record, capped at 3")
+    parser.add_argument("--capability", default="codeact_sandbox", help="Capability to authorize through policy")
     parser.add_argument("--confirm-agent-loop", action="store_true", help="Confirm offline execution")
 
     mode = parser.add_mutually_exclusive_group()
@@ -63,6 +64,7 @@ def main():
         confirm_agent_loop=args.confirm_agent_loop,
         max_iterations=args.max_iterations,
         task_source="cli",
+        capability_name=args.capability,
     )
     print(json.dumps(res, indent=2, ensure_ascii=False))
     sys.exit(0 if res.get("ok") else 1)

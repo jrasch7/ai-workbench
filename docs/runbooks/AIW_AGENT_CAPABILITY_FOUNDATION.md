@@ -40,6 +40,37 @@ A busca retornará as definições exatas. Se a ferramenta não aparecer no cód
 * A execução perigosa não deve virar execução externa sem aprovação de uma policy.
 * Actions como `codeact_sandbox` devem declarar `artifacts_path` e `input_schema`, exigir confirmação, bloquear IO externo por padrão e documentar que o host-sandbox é best-effort, não isolamento forte.
 
+## Capability Policy v1
+
+O Agent Iterative Loop usa `aiw_workspace/capability_policy.py` como primeira camada local de decisão antes de acionar uma capability. A policy v1 é pequena, hardcoded e sem configuração sensível.
+
+A avaliação sempre consulta `capability_registry.py` e registra no artifact:
+
+```text
+workspace_id
+capability
+mode
+risk
+requires_confirmation
+confirmed
+runs_code
+writes_files
+external_io
+blocked_by_default
+allowed
+reason
+```
+
+Regras atuais:
+
+* `dry-run` é permitido como simulação e não executa capability real.
+* Capability ausente ou inválida bloqueia a run.
+* IO externo bloqueia execução offline.
+* Capability que exige confirmação bloqueia quando `confirmed=false`.
+* `codeact_sandbox` é `high-risk`, `runs_code=true`, `writes_files=true` e `blocked_by_default=true`; no Agent Iterative Loop ele só passa em `offline` com confirmação explícita, código fixo, execução local e artifacts rastreáveis.
+
+As decisões aparecem em `run.json` como `capability_decisions` e no `summary.md`. Em caso de bloqueio, `status=blocked` e `blocked_reason` recebe o motivo da policy, por exemplo `confirmation_required` ou `capability_missing`.
+
 ## Como uma capability gera artifacts
 
 As ferramentas não enviam resultados para fora do workspace local sem intervenção do Worker Loop. Os resultados, prints e status de execução devem ser salvos nas estruturas delimitadas de artifact:
@@ -56,3 +87,4 @@ O Cockpit usará o `capability_registry.py` para listar as ferramentas dinamicam
 
 * Utilize mocks que injetam JSONs estáticos (`item.json`, `patch-intent.json`) previstos no RAG ou Inbox, injetando comportamentos forjados na fila.
 * Rode `agent_dispatcher` em `--dry-run` para validar a orquestração e uso aparente do sandbox e registry pela pipeline, atestando estabilidade arquitetural sem faturar chamadas caras de LLM.
+* Rode `scripts/aiw-agent-loop` em `--dry-run` e `--execute --confirm-agent-loop` para validar a Capability Policy v1 sem modelo real, sem GitHub/Jira e sem background.

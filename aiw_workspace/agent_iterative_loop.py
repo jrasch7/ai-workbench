@@ -4,6 +4,7 @@ import re
 import uuid
 from pathlib import Path
 
+from .capability_policy import evaluate_capability_policy
 from .capability_registry import get_capability, validate_capability_definition
 from .codeact_sandbox import run_codeact_action
 from .profiles import AIW_ROOT, resolve_workspace
@@ -68,6 +69,7 @@ def _create_run(workspace_id: str, task: str, mode: str, max_iterations: int, ta
         "task_source": task_source,
         "plan_path": "plan.json",
         "capabilities_checked": [],
+        "capability_decisions": [],
         "context_pack_id": None,
         "context_mode": None,
         "context_note": None,
@@ -166,7 +168,18 @@ def _render_summary(run: dict) -> str:
     if not run.get("iterations"):
         lines.append("- No iterations recorded yet.")
     for item in run.get("iterations", []):
-        lines.append(f"- Iteration {item.get('iteration')}: {item.get('status')} ({item.get('artifact')})")
+        step = item.get("step_kind") or "unknown"
+        codeact = item.get("codeact_run_id") or "no CodeAct"
+        lines.append(f"- Iteration {item.get('iteration')}: {item.get('status')} / {step} / {codeact} ({item.get('artifact')})")
+    lines.extend(["", "## Capability Decisions", ""])
+    if not run.get("capability_decisions"):
+        lines.append("- No capability decisions recorded yet.")
+    for item in run.get("capability_decisions", []):
+        allowed = "allowed" if item.get("allowed") else "blocked"
+        lines.append(
+            f"- {item.get('capability')}: {allowed}; reason={item.get('reason')}; "
+            f"risk={item.get('risk')}; confirmed={item.get('confirmed')}"
+        )
     lines.extend([
         "",
         "## Safety",
@@ -180,15 +193,18 @@ def _render_summary(run: dict) -> str:
     return "\n".join(lines)
 
 
-def _check_codeact_capability() -> dict:
-    cap = get_capability("codeact_sandbox")
+def _check_capability(capability_name: str) -> dict:
+    cap = get_capability(capability_name)
     if not cap:
-        return {"name": "codeact_sandbox", "status": "missing", "valid": False}
+        return {"name": capability_name, "status": "missing", "valid": False}
     return {
-        "name": "codeact_sandbox",
+        "name": capability_name,
         "status": cap.get("status"),
         "risk": cap.get("risk"),
         "requires_confirmation": cap.get("requires_confirmation"),
+        "runs_code": cap.get("runs_code"),
+        "writes_files": cap.get("writes_files"),
+        "external_io": bool(cap.get("allows_external_io") or cap.get("network_access")),
         "blocked_by_default": cap.get("blocked_by_default"),
         "valid": validate_capability_definition(cap),
     }
@@ -238,6 +254,7 @@ def run_agent_iterative_loop_once(
     confirm_agent_loop: bool = False,
     max_iterations: int = 1,
     task_source: str = "cli",
+    capability_name: str = "codeact_sandbox",
 ) -> dict:
     if dry_run and execute:
         return {"ok": False, "error": "choose_dry_run_or_execute"}
@@ -255,17 +272,27 @@ def run_agent_iterative_loop_once(
     _save_plan(run, plan)
     _save_run(run)
 
-    cap_check = _check_codeact_capability()
+    cap_check = _check_capability(capability_name)
     run["capabilities_checked"].append(cap_check)
-    if not cap_check.get("valid"):
+    policy_decision = evaluate_capability_policy(
+        workspace_id=ws_id,
+        capability_name=capability_name,
+        mode=mode,
+        confirmed=confirm_agent_loop,
+        fixed_code=True,
+        local_execution=True,
+        tracked=True,
+    )
+    run["capability_decisions"].append(policy_decision)
+    if not policy_decision.get("allowed"):
         run["status"] = "blocked"
-        run["blocked_reason"] = "codeact_sandbox_capability_invalid"
+        run["blocked_reason"] = policy_decision.get("reason") or "capability_blocked"
         _save_run(run)
         return {"ok": False, "error": run["blocked_reason"], "run": run}
 
-    if execute and not confirm_agent_loop:
+    if mode == "offline" and capability_name != "codeact_sandbox":
         run["status"] = "blocked"
-        run["blocked_reason"] = "execute_requires_confirm_agent_loop"
+        run["blocked_reason"] = "unsupported_agent_loop_capability"
         _save_run(run)
         return {"ok": False, "error": run["blocked_reason"], "run": run}
 
@@ -284,7 +311,7 @@ def run_agent_iterative_loop_once(
             "step_title": step["title"],
             "status": "dry_run" if mode == "dry-run" else "running",
             "uses_codeact": bool(step["uses_codeact"]),
-            "capability": "codeact_sandbox",
+            "capability": capability_name,
             "context_pack_id": run.get("context_pack_id"),
             "codeact_run_id": None,
             "stdout_preview": "",
@@ -377,11 +404,19 @@ def read_agent_loop_run(workspace_id: str, run_id: str) -> dict:
 
     try:
         run = json.loads(run_json.read_text(encoding="utf-8"))
+        plan_path = run_json.parent / "plan.json"
+        plan = json.loads(plan_path.read_text(encoding="utf-8")) if plan_path.is_file() else None
         iterations = []
         iter_dir = run_json.parent / "iterations"
         if iter_dir.is_dir():
             for f in sorted(iter_dir.glob("iter-*.json")):
                 iterations.append(json.loads(f.read_text(encoding="utf-8")))
-        return {"ok": True, "run": run, "iterations": iterations}
+        artifacts = {
+            "run_json": str(run_json),
+            "plan_json": str(plan_path) if plan_path.is_file() else None,
+            "summary_md": str(run_json.parent / "summary.md"),
+            "iterations_dir": str(iter_dir),
+        }
+        return {"ok": True, "run": run, "plan": plan, "iterations": iterations, "artifacts": artifacts}
     except Exception as e:
         return {"ok": False, "error": str(e)}

@@ -2120,8 +2120,13 @@ def render_page() -> str:
     active_workspace = workspace_data.get("active", "aiw")
     git_data = git_status_payload(active_workspace)
     git_diff = git_diff_payload(active_workspace)
-    from aiw_workspace.agent_iterative_loop import list_agent_loop_runs
+    from aiw_workspace.agent_iterative_loop import list_agent_loop_runs, read_agent_loop_run
     agent_loop_payload = list_agent_loop_runs(active_workspace, limit=8)
+    latest_agent_loop_detail = None
+    if agent_loop_payload.get("ok") and agent_loop_payload.get("runs"):
+        latest_run_id = agent_loop_payload["runs"][0].get("run_id")
+        if latest_run_id:
+            latest_agent_loop_detail = read_agent_loop_run(active_workspace, latest_run_id)
 
     # Queue pills
     queue_pills = ""
@@ -3643,7 +3648,9 @@ def render_page() -> str:
             status = html.escape(str(r.get("status", "unknown")))
             mode = html.escape(str(r.get("mode", "-")))
             created = html.escape(str(r.get("created_at", "-")))
+            planner = html.escape(str(r.get("planner", "-")))
             max_iters = html.escape(str(r.get("max_iterations", "-")))
+            iter_count = html.escape(str(len(r.get("iterations", []))))
             task = html.escape(str(r.get("task", ""))[:120])
             agent_loop_rows += f"""
             <div class="mini-run">
@@ -3651,7 +3658,9 @@ def render_page() -> str:
               <div class="mini-run-meta">
                 <span class="tag status-{status}">{status}</span>
                 <span class="tag">{mode}</span>
+                <span class="tag">{planner}</span>
                 <span class="tag">max {max_iters}</span>
+                <span class="tag">{iter_count} iter</span>
                 <a class="tag" href="/api/workspaces/{html.escape(active_workspace)}/agent-iterative-loop/runs/{run_id}" target="_blank">JSON</a>
               </div>
               <div class="card-doc" style="margin-top:7px;margin-bottom:0">{created} · {task}</div>
@@ -3660,11 +3669,82 @@ def render_page() -> str:
     else:
         agent_loop_rows = '<div class="empty-state">Nenhum Agent Iterative Loop encontrado.</div>'
 
+    agent_loop_detail_html = ""
+    if latest_agent_loop_detail and latest_agent_loop_detail.get("ok"):
+        detail_run = latest_agent_loop_detail.get("run", {})
+        detail_plan = latest_agent_loop_detail.get("plan") or {}
+        detail_iterations = latest_agent_loop_detail.get("iterations", [])
+        detail_artifacts = latest_agent_loop_detail.get("artifacts", {})
+        decision_rows = ""
+        for d in detail_run.get("capability_decisions", []):
+            allowed = "allowed" if d.get("allowed") else "blocked"
+            decision_rows += f"""
+            <div class="signal-row">
+              <span class="signal-name">{html.escape(str(d.get("capability", "-")))}</span>
+              <span class="tag">{html.escape(allowed)}</span>
+              <span class="tag">{html.escape(str(d.get("reason", "-")))}</span>
+              <span class="tag">risk {html.escape(str(d.get("risk", "-")))}</span>
+              <span class="tag">confirmed {html.escape(str(d.get("confirmed", False)))}</span>
+            </div>
+            """
+        if not decision_rows:
+            decision_rows = '<div class="empty-state">Nenhuma decisão de capability registrada.</div>'
+
+        plan_rows = ""
+        for step in detail_plan.get("steps", []):
+            plan_rows += f"""
+            <div class="signal-row">
+              <span class="signal-name">#{html.escape(str(step.get("step", "-")))} {html.escape(str(step.get("title", "-")))}</span>
+              <span class="tag">{html.escape(str(step.get("kind", "-")))}</span>
+              <span class="tag">CodeAct {html.escape(str(step.get("uses_codeact", False)))}</span>
+            </div>
+            """
+        if not plan_rows:
+            plan_rows = '<div class="empty-state">Plano não encontrado.</div>'
+
+        iteration_rows = ""
+        for it in detail_iterations:
+            stdout = html.escape(str(it.get("stdout_preview", ""))[:220])
+            stderr = html.escape(str(it.get("stderr_preview", ""))[:220])
+            error = html.escape(str(it.get("error") or ""))
+            iteration_rows += f"""
+            <div class="mini-run">
+              <div class="mini-run-title">Iteração {html.escape(str(it.get("iteration", "-")))} · {html.escape(str(it.get("step_kind", "-")))}</div>
+              <div class="mini-run-meta">
+                <span class="tag status-{html.escape(str(it.get("status", "unknown")))}">{html.escape(str(it.get("status", "unknown")))}</span>
+                <span class="tag">CodeAct {html.escape(str(it.get("codeact_run_id") or "-"))}</span>
+              </div>
+              <div class="card-doc" style="margin-top:7px;margin-bottom:0">stdout: {stdout or "-"}<br>stderr: {stderr or "-"}<br>error: {error or "-"}</div>
+            </div>
+            """
+        if not iteration_rows:
+            iteration_rows = '<div class="empty-state">Nenhuma iteração registrada.</div>'
+
+        agent_loop_detail_html = f"""
+        <div class="system-panel" style="margin-top:12px">
+          <h3>Última run detalhada</h3>
+          <div class="signal-list">
+            <div class="signal-row"><span class="signal-name">Run</span><span class="tag">{html.escape(str(detail_run.get("run_id", "-")))}</span><span class="tag">{html.escape(str(detail_run.get("status", "-")))}</span><span class="tag">{html.escape(str(detail_run.get("mode", "-")))}</span></div>
+            <div class="signal-row"><span class="signal-name">Planner</span><span class="tag">{html.escape(str(detail_run.get("planner", "-")))}</span><span class="tag">context {html.escape(str(detail_run.get("context_mode", "-")))}</span><span class="tag">pack {html.escape(str(detail_run.get("context_pack_id", "-")))}</span></div>
+            <div class="signal-row"><span class="signal-name">Blocked reason</span><span class="tag">{html.escape(str(detail_run.get("blocked_reason", "-")))}</span></div>
+            <div class="signal-row"><span class="signal-name">Artifacts</span><span class="tag">{html.escape(str(detail_artifacts.get("run_json", "-")))}</span></div>
+          </div>
+          <div class="card-doc" style="margin-top:8px;margin-bottom:10px">{html.escape(str(detail_run.get("task", "")))}</div>
+          <h3>Capability decisions</h3>
+          <div class="signal-list">{decision_rows}</div>
+          <h3>Plan steps</h3>
+          <div class="signal-list">{plan_rows}</div>
+          <h3>Iterations</h3>
+          {iteration_rows}
+        </div>
+        """
+
     agent_loop_section = f"""
     <div class="section-block">
       <h3>Agent Iterative Loop</h3>
       <div class="signal-note" style="margin-bottom:10px">Read-only. Execuções continuam manuais via CLI.</div>
       {agent_loop_rows}
+      {agent_loop_detail_html}
       <div class="api-links" style="margin-top:10px">
         <a class="api-link" href="/api/workspaces/{html.escape(active_workspace)}/agent-iterative-loop/runs">agent-loop runs</a>
       </div>

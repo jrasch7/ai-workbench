@@ -19,7 +19,7 @@ A bancada evoluiu drasticamente e hoje contempla:
 * **Context Pack v1:** Camada estruturada auditável contendo a saúde da documentação.
 * **Search Index Cache:** Cache lexical para buscas instantâneas no Cockpit.
 * **Context Injection:** O runner é capaz de injetar context packs vitais antes da call para o modelo (`--use-context-pack`).
-* **Agent Iterative Loop Offline v1:** Loop manual/foreground com mock planner, artifacts por passo e CodeAct seguro sem LLM real.
+* **Agent Iterative Loop Offline v1:** Loop manual/foreground com mock planner, Capability Policy v1, detalhe read-only no Cockpit e CodeAct seguro sem LLM real.
 * **Operational View:** Visão clara de missões, status de aprovação de handoffs e rejeições de patches.
 
 ## Arquitetura atual
