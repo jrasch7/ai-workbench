@@ -5,6 +5,7 @@
 O regression smoke do Agent Loop valida, de forma local e offline, que o Agent Iterative Loop v1 continua respeitando os contratos de safety entregues nas sprints AIW-CAP-06.x.
 
 Ele cobre CLI, dry-run, execute confirmado, policy, path hygiene, traversal e, opcionalmente, os endpoints read-only do Cockpit.
+Tambem valida o Isolation Boundary v1, garantindo que LLM planner, codigo dinamico, shell, rede externa e external write continuem bloqueados no perfil atual.
 
 ## Comando
 
@@ -74,8 +75,11 @@ localhost_http_used=false|true
 cockpit_smoke_used=false|true
 unsafe_broad_search_used=false
 validation_search_scope=explicit_paths_only
+isolation_profile=host_best_effort
+requires_stronger_isolation_before_llm=true
 generated_agent_loop_runs
 isolation_boundary
+isolation_decisions
 ```
 
 Cada check em `checks/*.json` registra `name`, `status`, `command`, `expected`, `observed` e `error`. Saidas de subprocess ficam truncadas em previews; o harness usa a saida completa apenas em memoria para parsear JSON.
@@ -93,6 +97,10 @@ O smoke padrao valida:
 - Capability ausente bloqueia com `capability_missing`.
 - Operation desconhecida bloqueia com `unknown_operation`.
 - Policy direta cobre dry-run simulado, offline sem confirmacao, offline confirmado, modo `llm` bloqueado e operation desconhecida.
+- Isolation Boundary permite apenas fixed CodeAct offline confirmado.
+- Dynamic CodeAct bloqueia com `stronger_isolation_required`.
+- LLM planner bloqueia com `stronger_isolation_required`.
+- Shell, rede externa e external write bloqueiam.
 - `run.json` novo e leitura endpoint-like nao expõem `/home/joao/` e usam paths relativos.
 - Leitura de run rejeita traversal como `../x`, `/tmp/x` e traversal codificado.
 
@@ -114,6 +122,8 @@ O smoke e local/offline:
 
 O CodeAct continua sendo host-sandbox best-effort. Ele e exercitado apenas pelo caminho seguro existente do Agent Loop, com codigo fixo e confirmacao explicita.
 
+O profile de isolamento atual e `host_best_effort`. O smoke registra `requires_stronger_isolation_before_llm=true`; LLM real e codigo dinamico exigem devcontainer ou VM antes de serem liberados.
+
 ## Busca Escopada
 
 Para validar texto do projeto, use paths explicitos e nao varra o repositorio inteiro. Validacao textual nunca deve usar busca ampla quando houver risco de varrer secrets.
@@ -121,7 +131,16 @@ Para validar texto do projeto, use paths explicitos e nao varra o repositorio in
 Permitido:
 
 ```bash
-grep -R "external_network_used\|localhost_http_used\|unsafe_broad_search_used\|explicit_paths_only" -n \
+grep -R -n \
+  -e isolation_profile \
+  -e stronger_isolation_required \
+  -e llm_planner \
+  -e dynamic_codeact_python_eval \
+  -e external_network_used \
+  -e localhost_http_used \
+  aiw_workspace/isolation_boundary.py \
+  aiw_workspace/capability_policy.py \
+  aiw_workspace/agent_iterative_loop.py \
   aiw_workspace/agent_loop_regression.py \
   docs/runbooks/AIW_AGENT_LOOP_REGRESSION_SMOKE.md \
   README.md \

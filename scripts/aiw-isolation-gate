@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# AIW Isolation Boundary evaluator. It prints a policy decision and executes nothing.
+
+export PYTHONPATH="$PWD:$PYTHONPATH"
+
+exec python3 - "$@" <<'PYTHON'
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd()))
+
+from aiw_workspace.isolation_boundary import evaluate_isolation_boundary
+from aiw_workspace.profiles import resolve_workspace
+
+
+def main():
+    parser = argparse.ArgumentParser(description="AIW Isolation Boundary Gate evaluator")
+    parser.add_argument("--workspace", required=True, help="Workspace ID")
+    parser.add_argument("--operation", required=True, help="Operation to evaluate")
+    parser.add_argument("--mode", default="offline", choices=["dry-run", "offline", "llm"], help="Requested execution mode")
+    parser.add_argument("--confirmed", action="store_true", help="Whether the user confirmed this operation")
+    parser.add_argument("--fixed-code", action="store_true", default=True, help="Mark the operation as fixed-code")
+    parser.add_argument("--dynamic-code", action="store_true", help="Mark the operation as dynamic-code")
+    args = parser.parse_args()
+
+    ws = resolve_workspace(args.workspace)
+    if not ws:
+        print(json.dumps({"ok": False, "error": "workspace_not_found"}, indent=2, ensure_ascii=False))
+        return 1
+
+    fixed_code = bool(args.fixed_code and not args.dynamic_code)
+    decision = evaluate_isolation_boundary(
+        operation=args.operation,
+        mode=args.mode,
+        confirmed=args.confirmed,
+        fixed_code=fixed_code,
+        local_execution=True,
+        tracked=True,
+    )
+    result = {"ok": bool(decision.get("allowed")), "workspace_id": ws["id"], "decision": decision}
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0 if decision.get("allowed") else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+PYTHON

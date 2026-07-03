@@ -63,6 +63,7 @@ from .external_worker_policy import load_external_worker_policy, validate_extern
 from .worker_loop import list_worker_loop_runs, read_worker_loop_run
 from .agent_dispatcher import list_agent_dispatcher_runs, read_agent_dispatcher_run
 from .agent_iterative_loop import run_agent_iterative_loop_once, list_agent_loop_runs, read_agent_loop_run
+from .isolation_boundary import evaluate_isolation_boundary, assert_isolation_allowed
 
 __all__ = [
     "DEFAULT_WORKSPACE",
@@ -151,4 +152,6 @@ __all__ = [
     "run_agent_iterative_loop_once",
     "list_agent_loop_runs",
     "read_agent_loop_run",
+    "evaluate_isolation_boundary",
+    "assert_isolation_allowed",
 ]

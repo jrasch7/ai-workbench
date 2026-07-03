@@ -1,8 +1,14 @@
 from .capability_registry import get_capability, validate_capability_definition
+from .isolation_boundary import (
+    FIXED_CODEACT_OPERATIONS,
+    ISOLATION_PROFILE,
+    KNOWN_ISOLATION_OPERATIONS,
+    evaluate_isolation_boundary,
+)
 
 
 POLICY_PROFILE = "local_offline_v1"
-KNOWN_OPERATIONS = {"python_eval_fixed"}
+KNOWN_OPERATIONS = set(KNOWN_ISOLATION_OPERATIONS)
 
 
 def evaluate_capability_policy(
@@ -34,6 +40,19 @@ def evaluate_capability_policy(
         "simulation_only": False,
         "capability_not_executed": True,
         "reason": None,
+        "isolation_profile": ISOLATION_PROFILE,
+        "isolation_allowed": False,
+        "isolation_reason": None,
+        "isolation_decision": None,
+        "requires_devcontainer": False,
+        "requires_vm": False,
+        "requires_stronger_isolation_before_llm": True,
+        "llm_real_allowed": False,
+        "dynamic_code_allowed": False,
+        "shell_allowed": False,
+        "network_allowed": False,
+        "external_write_allowed": False,
+        "localhost_http_allowed": True,
     }
 
     if not cap:
@@ -57,6 +76,37 @@ def evaluate_capability_policy(
         decision["reason"] = "unknown_operation"
         return decision
 
+    isolation_operation = operation
+    if mode == "llm" and operation in FIXED_CODEACT_OPERATIONS:
+        isolation_operation = "llm_planner"
+    isolation_decision = evaluate_isolation_boundary(
+        operation=isolation_operation,
+        mode=mode,
+        confirmed=confirmed,
+        fixed_code=fixed_code,
+        local_execution=local_execution,
+        tracked=tracked,
+    )
+    decision.update({
+        "isolation_profile": isolation_decision.get("isolation_profile"),
+        "isolation_allowed": bool(isolation_decision.get("allowed")),
+        "isolation_reason": isolation_decision.get("reason"),
+        "isolation_decision": isolation_decision,
+        "requires_devcontainer": bool(isolation_decision.get("requires_devcontainer")),
+        "requires_vm": bool(isolation_decision.get("requires_vm")),
+        "requires_stronger_isolation_before_llm": not bool(isolation_decision.get("llm_real_allowed")),
+        "llm_real_allowed": bool(isolation_decision.get("llm_real_allowed")),
+        "dynamic_code_allowed": bool(isolation_decision.get("dynamic_code_allowed")),
+        "shell_allowed": bool(isolation_decision.get("shell_allowed")),
+        "network_allowed": bool(isolation_decision.get("network_allowed")),
+        "external_write_allowed": bool(isolation_decision.get("external_write_allowed")),
+        "localhost_http_allowed": bool(isolation_decision.get("localhost_http_allowed")),
+    })
+
+    if mode == "dry-run" and not isolation_decision.get("allowed"):
+        decision["reason"] = isolation_decision.get("reason") or "isolation_blocked"
+        return decision
+
     if mode == "dry-run":
         decision["allowed"] = True
         decision["simulation_only"] = True
@@ -65,11 +115,15 @@ def evaluate_capability_policy(
         return decision
 
     if mode == "llm":
-        decision["reason"] = "llm_mode_blocked"
+        decision["reason"] = isolation_decision.get("reason") or "stronger_isolation_required"
         return decision
 
     if mode != "offline":
         decision["reason"] = "unsupported_mode"
+        return decision
+
+    if operation not in FIXED_CODEACT_OPERATIONS:
+        decision["reason"] = isolation_decision.get("reason") or "isolation_blocked"
         return decision
 
     if decision["external_io"]:
@@ -88,7 +142,11 @@ def evaluate_capability_policy(
         decision["reason"] = "blocked_by_default_requires_confirmation"
         return decision
 
-    if capability_name == "codeact_sandbox" and operation == "python_eval_fixed" and fixed_code and local_execution and tracked:
+    if not isolation_decision.get("allowed"):
+        decision["reason"] = isolation_decision.get("reason") or "isolation_blocked"
+        return decision
+
+    if capability_name == "codeact_sandbox" and operation in FIXED_CODEACT_OPERATIONS and fixed_code and local_execution and tracked:
         decision["allowed"] = True
         decision["capability_not_executed"] = False
         decision["reason"] = "offline_confirmed_fixed_codeact_eval"

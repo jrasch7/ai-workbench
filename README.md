@@ -21,6 +21,7 @@ A bancada evoluiu drasticamente e hoje contempla:
 * **Context Injection:** O runner é capaz de injetar context packs vitais antes da call para o modelo (`--use-context-pack`).
 * **Agent Iterative Loop Offline v1:** Loop manual/foreground com mock planner, Capability Policy `local_offline_v1`, path hygiene, histórico/detalhe read-only no Cockpit e CodeAct seguro sem LLM real.
 * **Agent Loop Regression Smoke:** Harness offline para validar CLI, policy, traversal, path hygiene, CodeAct confirmado e Cockpit read-only opcional com artifacts auditáveis.
+* **Isolation Boundary Gate:** Policy conservadora `host_best_effort` que permite apenas CodeAct fixo offline confirmado e bloqueia LLM planner, codigo dinamico, shell, rede externa e external write ate existir devcontainer/VM.
 * **Operational View:** Visão clara de missões, status de aprovação de handoffs e rejeições de patches.
 
 ## Arquitetura atual
@@ -90,9 +91,13 @@ python3 -m aiw_context.indexer
 
 # Rodar a regressao offline do Agent Loop
 ./scripts/aiw-agent-loop-regression-smoke --workspace aiw
+
+# Avaliar o Isolation Boundary sem executar nada
+./scripts/aiw-isolation-gate --workspace aiw --operation fixed_codeact_python_eval --mode offline --confirmed
 ```
 
 O regression smoke registra `external_network_used=false` e diferencia GETs locais do Cockpit com `localhost_http_used=true` apenas quando `--with-cockpit` e usado. Validacoes textuais devem usar paths explicitos, nunca busca ampla em `.`.
+O Isolation Boundary registra `isolation_profile=host_best_effort`; LLM real, codigo dinamico e shell continuam bloqueados por policy ate existir isolamento forte.
 
 
 ## Estado operacional atual
@@ -180,6 +185,7 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 * [Validation Plan Snapshots](docs/runbooks/AIW_VALIDATION_PLAN_SNAPSHOTS.md)
 * [Agent Iterative Loop Offline v1](docs/runbooks/AIW_AGENT_ITERATIVE_LOOP.md)
 * [Agent Loop Regression Smoke](docs/runbooks/AIW_AGENT_LOOP_REGRESSION_SMOKE.md)
+* [AIW Isolation Boundary](docs/runbooks/AIW_ISOLATION_BOUNDARY.md)
 
 ## Próximos Passos (Roadmap Resumido)
 

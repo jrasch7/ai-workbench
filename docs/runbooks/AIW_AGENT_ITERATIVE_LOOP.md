@@ -11,6 +11,7 @@ task manual
 -> mock planner deterministico
 -> Capability Registry
 -> Capability Policy v1
+-> Isolation Boundary v1
 -> contexto local existente ou contexto minimo
 -> CodeAct Sandbox com acao fixa e segura
 -> artifacts locais
@@ -89,6 +90,8 @@ O smoke grava evidencias em `.aiw/workspaces/<workspace_id>/agent-loop-regressio
 
 O artifact diferencia rede externa de localhost: `external_network_used=false` sempre, e `localhost_http_used=true` apenas quando `--with-cockpit` faz GETs locais em `127.0.0.1`. Ele tambem registra `unsafe_broad_search_used=false` e `validation_search_scope=explicit_paths_only` para reforcar a regra de validacao textual escopada.
 
+O smoke tambem valida o Isolation Boundary: fixed CodeAct offline confirmado segue permitido, enquanto dynamic CodeAct, LLM planner, shell, rede externa e external write seguem bloqueados no profile `host_best_effort`.
+
 Consulte [AIW Agent Loop Regression Smoke](AIW_AGENT_LOOP_REGRESSION_SMOKE.md) para a lista completa de checks.
 
 ## Dry-run vs Execute Offline
@@ -126,7 +129,7 @@ iterations/iter-002.json
 iterations/iter-003.json
 ```
 
-`run.json` inclui `run_id`, `workspace_id`, `mode`, `status`, `task`, `planner`, `max_iterations`, `plan_path`, `task_source`, `capabilities_checked`, `capability_decisions`, `context_pack_id`, `iterations` e `blocked_reason`.
+`run.json` inclui `run_id`, `workspace_id`, `mode`, `status`, `task`, `planner`, `max_iterations`, `plan_path`, `task_source`, `capabilities_checked`, `capability_decisions`, `isolation_profile`, `isolation_decision`, `isolation_decisions`, `requires_stronger_isolation_before_llm`, `context_pack_id`, `iterations` e `blocked_reason`.
 
 Novos artifacts usam paths de display relativos ao repo, por exemplo `.aiw/workspaces/aiw/agent-iterative-loop/runs/<run_id>/run.json`, evitando expor `/home/...` na UI/API. Artifacts antigos com paths absolutos continuam legiveis e sao higienizados quando exibidos pelo Cockpit/API.
 
@@ -157,6 +160,8 @@ Comportamento:
 - Capability inexistente: bloqueia com `blocked_reason=capability_missing`.
 - Modo `llm`: bloqueia com `llm_mode_blocked`.
 - Operation desconhecida: bloqueia com `unknown_operation`.
+
+A policy registra a decisao do Isolation Boundary junto da decisao de capability. Modo `llm` e operacoes dinamicas agora bloqueiam com `stronger_isolation_required`, mantendo `llm_real_allowed=false`.
 
 Exemplo de artifact em `run.json`:
 
@@ -200,6 +205,8 @@ O execute offline usa `run_codeact_action(..., confirm=True)` com `kind=python_e
 
 CodeAct continua sendo host-sandbox best-effort, nao isolamento forte. Nao deve rodar codigo nao confiavel e nao substitui container, VM ou devcontainer.
 
+Antes de habilitar LLM real ou codigo dinamico, o AIW precisa trocar o perfil de isolamento para devcontainer ou VM e atualizar a policy de forma explicita.
+
 ## Cockpit Read-only
 
 O Cockpit lista runs recentes do Agent Iterative Loop em modo read-only no overview. Nao ha botao de execucao.
@@ -220,6 +227,8 @@ GET /api/workspaces/<workspace_id>/agent-iterative-loop/runs/<run_id>
 - Manual e foreground apenas.
 - Sem `--watch`.
 - Sem LLM real.
+- LLM planner bloqueado por `stronger_isolation_required`.
+- Dynamic CodeAct bloqueado por `stronger_isolation_required`.
 - Sem GitHub/Jira write.
 - Sem patch apply.
 - Sem commit/push automatico.

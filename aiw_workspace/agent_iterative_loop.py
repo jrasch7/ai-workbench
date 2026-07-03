@@ -71,6 +71,10 @@ def _create_run(workspace_id: str, task: str, mode: str, max_iterations: int, ta
         "plan_path": "plan.json",
         "capabilities_checked": [],
         "capability_decisions": [],
+        "isolation_profile": None,
+        "isolation_decision": None,
+        "isolation_decisions": [],
+        "requires_stronger_isolation_before_llm": True,
         "context_pack_id": None,
         "context_mode": None,
         "context_note": None,
@@ -158,6 +162,8 @@ def _render_summary(run: dict) -> str:
         f"- Context mode: {run.get('context_mode')}",
         f"- Context pack: {run.get('context_pack_id')}",
         f"- Blocked reason: {run.get('blocked_reason')}",
+        f"- Isolation profile: {run.get('isolation_profile')}",
+        f"- Requires stronger isolation before LLM: {str(run.get('requires_stronger_isolation_before_llm')).lower()}",
         "",
         "## Task",
         "",
@@ -181,6 +187,15 @@ def _render_summary(run: dict) -> str:
             f"- {item.get('capability')}: {allowed}; reason={item.get('reason')}; "
             f"risk={item.get('risk')}; operation={item.get('operation')}; "
             f"profile={item.get('policy_profile')}; confirmed={item.get('confirmed')}"
+        )
+    lines.extend(["", "## Isolation Decisions", ""])
+    if not run.get("isolation_decisions"):
+        lines.append("- No isolation decisions recorded yet.")
+    for item in run.get("isolation_decisions", []):
+        allowed = "allowed" if item.get("allowed") else "blocked"
+        lines.append(
+            f"- {item.get('operation')}: {allowed}; reason={item.get('reason')}; "
+            f"profile={item.get('isolation_profile')}; requires_devcontainer={item.get('requires_devcontainer')}"
         )
     lines.extend([
         "",
@@ -288,6 +303,14 @@ def run_agent_iterative_loop_once(
         tracked=True,
     )
     run["capability_decisions"].append(policy_decision)
+    isolation_decision = policy_decision.get("isolation_decision")
+    run["isolation_profile"] = policy_decision.get("isolation_profile")
+    run["isolation_decision"] = isolation_decision
+    if isolation_decision:
+        run["isolation_decisions"].append(isolation_decision)
+    run["requires_stronger_isolation_before_llm"] = bool(
+        policy_decision.get("requires_stronger_isolation_before_llm", True)
+    )
     if not policy_decision.get("allowed"):
         run["status"] = "blocked"
         run["blocked_reason"] = policy_decision.get("reason") or "capability_blocked"

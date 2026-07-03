@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .agent_iterative_loop import read_agent_loop_run
 from .capability_policy import POLICY_PROFILE, evaluate_capability_policy
+from .isolation_boundary import ISOLATION_PROFILE, evaluate_isolation_boundary
 from .path_hygiene import safe_display_path
 from .profiles import AIW_ROOT, resolve_workspace
 
@@ -20,7 +21,8 @@ STDIO_PREVIEW_CHARS = 1800
 DEFAULT_COCKPIT_PORT = 18766
 
 ISOLATION_BOUNDARY = {
-    "profile": "offline_regression_smoke_v1",
+        "profile": "offline_regression_smoke_v1",
+        "isolation_profile": ISOLATION_PROFILE,
     "llm_real_used": False,
     "external_write_used": False,
     "daemon_used": False,
@@ -367,14 +369,14 @@ def _run_policy_checks(workspace_id: str, checks: list[dict], run_dir: Path) -> 
             dict(mode="offline", confirmed=True, fixed_code=True),
             True,
             "offline_confirmed_fixed_codeact_eval",
-            {"capability_not_executed": False},
+            {"capability_not_executed": False, "isolation_allowed": True},
         ),
         (
             "policy_llm_mode_blocks",
             dict(mode="llm", confirmed=True, fixed_code=True),
             False,
-            "llm_mode_blocked",
-            {},
+            "stronger_isolation_required",
+            {"requires_devcontainer": True, "llm_real_allowed": False},
         ),
         (
             "policy_unknown_operation_blocks",
@@ -409,6 +411,77 @@ def _run_policy_checks(workspace_id: str, checks: list[dict], run_dir: Path) -> 
             f"Policy returns allowed={expected_allowed}, reason={expected_reason}.",
             decision,
         )
+
+
+def _run_isolation_checks(checks: list[dict], run_dir: Path) -> list[dict]:
+    scenarios = [
+        (
+            "isolation_fixed_code_allowed",
+            dict(operation="fixed_codeact_python_eval", mode="offline", confirmed=True, fixed_code=True),
+            True,
+            "host_best_effort_fixed_code_confirmed",
+            {"requires_devcontainer": False, "dynamic_code_allowed": False},
+        ),
+        (
+            "isolation_dynamic_code_blocks",
+            dict(operation="dynamic_codeact_python_eval", mode="offline", confirmed=True, fixed_code=False),
+            False,
+            "stronger_isolation_required",
+            {"requires_devcontainer": True, "dynamic_code_allowed": False},
+        ),
+        (
+            "isolation_llm_planner_blocks",
+            dict(operation="llm_planner", mode="llm", confirmed=True, fixed_code=False),
+            False,
+            "stronger_isolation_required",
+            {"requires_devcontainer": True, "llm_real_allowed": False},
+        ),
+        (
+            "isolation_shell_blocks",
+            dict(operation="shell_command", mode="offline", confirmed=True, fixed_code=False),
+            False,
+            "shell_blocked_by_isolation_boundary",
+            {"shell_allowed": False},
+        ),
+        (
+            "isolation_external_network_blocks",
+            dict(operation="network_access", mode="offline", confirmed=True, fixed_code=False),
+            False,
+            "external_network_blocked",
+            {"network_allowed": False, "localhost_http_allowed": True},
+        ),
+        (
+            "isolation_external_write_blocks",
+            dict(operation="external_write", mode="offline", confirmed=True, fixed_code=False),
+            False,
+            "external_write_blocked",
+            {"external_write_allowed": False},
+        ),
+    ]
+    decisions = []
+    for name, kwargs, expected_allowed, expected_reason, extra in scenarios:
+        decision = evaluate_isolation_boundary(
+            local_execution=True,
+            tracked=True,
+            **kwargs,
+        )
+        decisions.append(decision)
+        passed = (
+            decision.get("allowed") is expected_allowed
+            and decision.get("reason") == expected_reason
+            and decision.get("isolation_profile") == ISOLATION_PROFILE
+        )
+        for key, expected_value in extra.items():
+            passed = passed and decision.get(key) is expected_value
+        _check(
+            checks,
+            run_dir,
+            name,
+            passed,
+            f"Isolation gate returns allowed={expected_allowed}, reason={expected_reason}.",
+            decision,
+        )
+    return decisions
 
 
 def _run_path_hygiene_checks(workspace_id: str, generated_run_ids: list[str], checks: list[dict], run_dir: Path) -> None:
@@ -572,6 +645,8 @@ def _render_summary(run: dict, checks: list[dict]) -> str:
         f"- External network used: {str(run.get('external_network_used')).lower()}",
         f"- Localhost HTTP used: {str(run.get('localhost_http_used')).lower()}",
         f"- Cockpit smoke used: {str(run.get('cockpit_smoke_used')).lower()}",
+        f"- Isolation profile: {run.get('isolation_profile')}",
+        f"- Requires stronger isolation before LLM: {str(run.get('requires_stronger_isolation_before_llm')).lower()}",
         "- subprocess shell: false",
         f"- Unsafe broad search used: {str(run.get('unsafe_broad_search_used')).lower()}",
         f"- Validation search scope: {run.get('validation_search_scope')}",
@@ -597,6 +672,7 @@ def run_regression_smoke(workspace_id: str, with_cockpit: bool = False, cockpit_
     checks: list[dict] = []
     generated_run_ids = _run_agent_loop_cases(ws_id, checks, run_dir)
     _run_policy_checks(ws_id, checks, run_dir)
+    isolation_decisions = _run_isolation_checks(checks, run_dir)
     _run_path_hygiene_checks(ws_id, generated_run_ids, checks, run_dir)
     if with_cockpit:
         _run_cockpit_check(ws_id, checks, run_dir, cockpit_port)
@@ -618,6 +694,9 @@ def run_regression_smoke(workspace_id: str, with_cockpit: bool = False, cockpit_
         "external_network_used": False,
         "localhost_http_used": bool(with_cockpit),
         "cockpit_smoke_used": bool(with_cockpit),
+        "isolation_profile": ISOLATION_PROFILE,
+        "isolation_decisions": isolation_decisions,
+        "requires_stronger_isolation_before_llm": True,
         "unsafe_broad_search_used": False,
         "validation_search_scope": "explicit_paths_only",
         "generated_agent_loop_runs": generated_run_ids,
@@ -626,6 +705,8 @@ def run_regression_smoke(workspace_id: str, with_cockpit: bool = False, cockpit_
             **ISOLATION_BOUNDARY,
             "localhost_http_used": bool(with_cockpit),
             "cockpit_smoke_used": bool(with_cockpit),
+            "requires_devcontainer_before_llm": True,
+            "requires_vm_before_llm": False,
             "unsafe_broad_search_used": False,
             "validation_search_scope": "explicit_paths_only",
         },

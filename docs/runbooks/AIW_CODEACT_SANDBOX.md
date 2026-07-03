@@ -98,6 +98,8 @@ Os artifacts ficam em `.aiw/workspaces/<workspace_id>/agent-loop-regression/runs
 
 Quando o smoke e executado com `--with-cockpit`, o artifact registra `localhost_http_used=true` para os GETs locais em `127.0.0.1`, mantendo `external_network_used=false`. Validacoes textuais relacionadas a este smoke devem usar paths explicitos e registrar `validation_search_scope=explicit_paths_only`.
 
+O smoke tambem valida o Isolation Boundary v1: `fixed_codeact_python_eval` offline confirmado e permitido no profile `host_best_effort`, mas `dynamic_codeact_python_eval` e `llm_planner` bloqueiam com `stronger_isolation_required`.
+
 ## Como inspecionar uma run
 
 ```bash
@@ -158,3 +160,5 @@ O objetivo desta sprint é provar que a infraestrutura de execução controlada 
 A prioridade é ter o fluxo funcional primeiro. Containerização adiciona complexidade operacional (Docker, volumes, networking) que será tratada quando a base estiver madura.
 
 Enquanto isso, o regression smoke registra explicitamente a fronteira `host-sandbox best-effort`, sem tratar CodeAct como isolamento forte.
+
+AIW-CAP-07 adiciona um gate explicito antes de LLM real ou codigo dinamico. Esse gate ainda nao cria devcontainer; ele apenas registra que devcontainer ou VM sao necessarios antes de liberar operacoes mais perigosas.
