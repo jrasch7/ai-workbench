@@ -164,3 +164,13 @@ Cada run nova registra `isolation_profile`, `isolation_decision`, `isolation_dec
 - Sem codigo dinamico vindo de task ou modelo.
 
 Antes de LLM real ou codigo dinamico, o AIW precisa de devcontainer ou VM e uma nova policy liberando explicitamente esse perfil.
+
+## Busca Segura
+
+Para confirmar texto relacionado ao Isolation Boundary, prefira:
+
+```bash
+./scripts/aiw-safe-search "isolation_profile" --paths aiw_workspace docs/runbooks README.md
+```
+
+O safe search exige `--paths`, bloqueia `.env`, `config/litellm.yaml`, `AGENTS.md`, `.aiw/` e paths absolutos antes de leitura, e evita erros de quoting comuns em `grep -R`.

@@ -131,20 +131,8 @@ Para validar texto do projeto, use paths explicitos e nao varra o repositorio in
 Permitido:
 
 ```bash
-grep -R -n \
-  -e isolation_profile \
-  -e stronger_isolation_required \
-  -e llm_planner \
-  -e dynamic_codeact_python_eval \
-  -e external_network_used \
-  -e localhost_http_used \
-  aiw_workspace/isolation_boundary.py \
-  aiw_workspace/capability_policy.py \
-  aiw_workspace/agent_iterative_loop.py \
-  aiw_workspace/agent_loop_regression.py \
-  docs/runbooks/AIW_AGENT_LOOP_REGRESSION_SMOKE.md \
-  README.md \
-  2>/dev/null || true
+./scripts/aiw-safe-search "isolation_profile" --paths aiw_workspace docs/runbooks README.md
+./scripts/aiw-safe-search "stronger_isolation_required" --paths aiw_workspace docs/runbooks README.md
 ```
 
 Tambem permitido:
@@ -180,6 +168,8 @@ find . -type f
 ```
 
 Nao use busca ampla sobre `.` nem leia arquivos sensiveis como `.env`, `config/litellm.yaml` ou `AGENTS.md`. Se uma busca acidental ampla ocorrer, o relatorio deve registrar o desvio, o risco e a correcao adotada.
+
+Consulte [AIW Safe Search Guard](AIW_SAFE_SEARCH.md). Em sprints operacionais, prefira `./scripts/aiw-safe-search` a `grep -R` para reduzir erro de quoting e bloquear paths sensiveis antes de leitura.
 
 O regression smoke registra este padrao no artifact:
 

@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""AIW safe text search with explicit path boundaries."""
+
+import argparse
+import sys
+from pathlib import Path
+
+
+MAX_FILE_BYTES = 1024 * 1024
+MAX_LINE_CHARS = 300
+
+SENSITIVE_PATHS = {
+    ".env",
+    "config/litellm.yaml",
+    "AGENTS.md",
+}
+
+BLOCKED_PARTS = {
+    ".git",
+    ".aiw",
+    "reports",
+    "coverage",
+    "logs",
+    "node_modules",
+    ".venv",
+    "venv",
+    "__pycache__",
+}
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _display(path: Path, root: Path) -> str:
+    return path.relative_to(root).as_posix()
+
+
+def _invalid(message: str) -> int:
+    print(f"aiw-safe-search: blocked: {message}", file=sys.stderr)
+    return 2
+
+
+def _validate_requested_path(raw: str, root: Path) -> tuple[Path | None, str | None]:
+    if raw in {"", "."}:
+        return None, "path '.' is not allowed; pass explicit files or directories"
+
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        return None, f"absolute path is not allowed: {raw}"
+
+    raw_posix = candidate.as_posix().rstrip("/")
+    if raw_posix in SENSITIVE_PATHS:
+        return None, f"sensitive path is not allowed: {raw_posix}"
+
+    parts = [part for part in candidate.parts if part not in {"", "."}]
+    if any(part == ".." for part in parts):
+        return None, f"path traversal is not allowed: {raw}"
+    if any(part in BLOCKED_PARTS for part in parts):
+        return None, f"blocked artifact or dependency path is not allowed: {raw}"
+
+    resolved = (root / candidate).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        return None, f"path resolves outside repository: {raw}"
+
+    rel = resolved.relative_to(root).as_posix()
+    if rel in SENSITIVE_PATHS:
+        return None, f"sensitive path is not allowed: {rel}"
+    if any(part in BLOCKED_PARTS for part in resolved.relative_to(root).parts):
+        return None, f"blocked artifact or dependency path is not allowed: {rel}"
+
+    return resolved, None
+
+
+def _iter_files(path: Path, root: Path):
+    if path.is_file():
+        yield path
+        return
+    if not path.is_dir():
+        return
+
+    for item in sorted(path.rglob("*")):
+        try:
+            rel_parts = item.relative_to(root).parts
+        except ValueError:
+            continue
+        if any(part in BLOCKED_PARTS for part in rel_parts):
+            continue
+        rel = item.relative_to(root).as_posix()
+        if rel in SENSITIVE_PATHS:
+            continue
+        if item.is_file():
+            yield item
+
+
+def _read_text(path: Path) -> str | None:
+    try:
+        if path.stat().st_size > MAX_FILE_BYTES:
+            return None
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if b"\0" in data[:4096]:
+        return None
+    return data.decode("utf-8", errors="replace")
+
+
+def _truncate(line: str) -> str:
+    if len(line) <= MAX_LINE_CHARS:
+        return line
+    return line[:MAX_LINE_CHARS] + " [truncated]"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="AIW safe text search. Requires explicit --paths and refuses sensitive/artifact paths."
+    )
+    parser.add_argument("terms", nargs="+", help="Search term(s). A line matches when it contains any term.")
+    parser.add_argument("--paths", nargs="+", required=True, help="Explicit relative files or directories to search.")
+    args = parser.parse_args(argv)
+
+    root = _repo_root()
+    requested: list[Path] = []
+    for raw_path in args.paths:
+        path, error = _validate_requested_path(raw_path, root)
+        if error:
+            return _invalid(error)
+        if path:
+            requested.append(path)
+
+    if not requested:
+        return _invalid("no searchable paths provided")
+
+    found = False
+    seen: set[Path] = set()
+    for requested_path in requested:
+        for file_path in _iter_files(requested_path, root):
+            if file_path in seen:
+                continue
+            seen.add(file_path)
+            text = _read_text(file_path)
+            if text is None:
+                continue
+            for line_no, line in enumerate(text.splitlines(), 1):
+                if any(term in line for term in args.terms):
+                    found = True
+                    print(f"{_display(file_path, root)}:{line_no}:{_truncate(line)}")
+
+    return 0 if found else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

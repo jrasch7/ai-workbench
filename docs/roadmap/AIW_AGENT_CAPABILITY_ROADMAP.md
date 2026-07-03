@@ -29,6 +29,10 @@ Implementar o ciclo real de repetição (ReAct / Devin-like) para permitir ao ag
 Adicionar smoke offline para travar os contratos do Agent Iterative Loop: CLI, dry-run, execute confirmado, bloqueios de policy, path hygiene, traversal e Cockpit read-only opcional.
 *Nota: O comando `./scripts/aiw-agent-loop-regression-smoke --workspace aiw` grava evidencias em `.aiw/workspaces/<id>/agent-loop-regression/runs/<run_id>/` e registra a fronteira de isolamento sem LLM real, sem GitHub/Jira write, sem daemon persistente e sem `shell=True`.*
 
+### AIW-OPS-01 — Safe Search Guard v1 (✅ Concluído)
+Adicionar `./scripts/aiw-safe-search` como busca textual operacional com `--paths` obrigatorio, bloqueio de secrets/artifacts e output relativo ao repo.
+*Nota: O guard substitui buscas manuais perigosas como `grep -R ... .` quando houver risco de varrer `.env`, config sensivel, `.aiw/` ou diretórios amplos.*
+
 ## AIW-CAP-07 — Isolation Boundary + Devcontainer Gate v1 (✅ Concluído)
 Adicionar um gate explicito para decidir se operacoes podem continuar no perfil atual `host_best_effort`.
 *Nota: Fixed CodeAct offline confirmado continua permitido; dynamic CodeAct, LLM planner, shell, rede externa e external write ficam bloqueados. O gate registra `stronger_isolation_required` para LLM/codigo dinamico e exige devcontainer ou VM antes de qualquer LLM real.*
