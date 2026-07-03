@@ -96,6 +96,8 @@ Esse smoke confirma que dry-run nao cria `codeact_run_id`, que execucao offline 
 
 Os artifacts ficam em `.aiw/workspaces/<workspace_id>/agent-loop-regression/runs/<run_id>/`.
 
+Quando o smoke e executado com `--with-cockpit`, o artifact registra `localhost_http_used=true` para os GETs locais em `127.0.0.1`, mantendo `external_network_used=false`. Validacoes textuais relacionadas a este smoke devem usar paths explicitos e registrar `validation_search_scope=explicit_paths_only`.
+
 ## Como inspecionar uma run
 
 ```bash

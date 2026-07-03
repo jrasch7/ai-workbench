@@ -92,6 +92,8 @@ python3 -m aiw_context.indexer
 ./scripts/aiw-agent-loop-regression-smoke --workspace aiw
 ```
 
+O regression smoke registra `external_network_used=false` e diferencia GETs locais do Cockpit com `localhost_http_used=true` apenas quando `--with-cockpit` e usado. Validacoes textuais devem usar paths explicitos, nunca busca ampla em `.`.
+
 
 ## Estado operacional atual
 

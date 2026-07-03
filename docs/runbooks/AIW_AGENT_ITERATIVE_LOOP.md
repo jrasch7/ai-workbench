@@ -87,6 +87,8 @@ Para incluir a validacao read-only do Cockpit:
 
 O smoke grava evidencias em `.aiw/workspaces/<workspace_id>/agent-loop-regression/runs/<run_id>/` com `run.json`, `summary.md` e `checks/*.json`. Ele nao chama LLM real, nao faz GitHub/Jira write, nao roda daemon persistente e usa subprocess com argumentos em lista.
 
+O artifact diferencia rede externa de localhost: `external_network_used=false` sempre, e `localhost_http_used=true` apenas quando `--with-cockpit` faz GETs locais em `127.0.0.1`. Ele tambem registra `unsafe_broad_search_used=false` e `validation_search_scope=explicit_paths_only` para reforcar a regra de validacao textual escopada.
+
 Consulte [AIW Agent Loop Regression Smoke](AIW_AGENT_LOOP_REGRESSION_SMOKE.md) para a lista completa de checks.
 
 ## Dry-run vs Execute Offline

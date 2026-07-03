@@ -22,6 +22,24 @@ Smoke com Cockpit read-only em localhost:
 
 Por default o Cockpit e pulado. Quando `--with-cockpit` e usado, o harness inicia `./scripts/aiw-cockpit` como processo foreground controlado, usa apenas `GET` em `127.0.0.1`, e encerra o processo ao final.
 
+No artifact, isso e registrado como:
+
+```text
+external_network_used=false
+localhost_http_used=true
+cockpit_smoke_used=true
+```
+
+Sem `--with-cockpit`, o smoke registra:
+
+```text
+external_network_used=false
+localhost_http_used=false
+cockpit_smoke_used=false
+```
+
+`localhost_http_used=true` nao significa rede externa. Ele indica somente GETs locais para `127.0.0.1`.
+
 ## Artifacts
 
 Cada execucao grava:
@@ -51,6 +69,11 @@ checks_failed
 llm_real_used=false
 external_write_used=false
 daemon_used=false
+external_network_used=false
+localhost_http_used=false|true
+cockpit_smoke_used=false|true
+unsafe_broad_search_used=false
+validation_search_scope=explicit_paths_only
 generated_agent_loop_runs
 isolation_boundary
 ```
@@ -87,12 +110,25 @@ O smoke e local/offline:
 - Sem browser automation.
 - Sem `shell=True`.
 - Sem processo em background persistente.
+- Sem rede externa. O modo `--with-cockpit` usa apenas HTTP localhost em `127.0.0.1`.
 
 O CodeAct continua sendo host-sandbox best-effort. Ele e exercitado apenas pelo caminho seguro existente do Agent Loop, com codigo fixo e confirmacao explicita.
 
 ## Busca Escopada
 
-Para validar texto do projeto, use paths explicitos e nao varra o repositorio inteiro:
+Para validar texto do projeto, use paths explicitos e nao varra o repositorio inteiro. Validacao textual nunca deve usar busca ampla quando houver risco de varrer secrets.
+
+Permitido:
+
+```bash
+grep -R "external_network_used\|localhost_http_used\|unsafe_broad_search_used\|explicit_paths_only" -n \
+  aiw_workspace/agent_loop_regression.py \
+  docs/runbooks/AIW_AGENT_LOOP_REGRESSION_SMOKE.md \
+  README.md \
+  2>/dev/null || true
+```
+
+Tambem permitido:
 
 ```bash
 python3 - <<'PY'
@@ -116,7 +152,22 @@ for path in paths:
 PY
 ```
 
-Nao use busca ampla sobre `.` nem leia arquivos sensiveis como `.env`, `config/litellm.yaml` ou `AGENTS.md`.
+Proibido:
+
+```bash
+grep -R "..." -n .
+grep -R "." -n .
+find . -type f
+```
+
+Nao use busca ampla sobre `.` nem leia arquivos sensiveis como `.env`, `config/litellm.yaml` ou `AGENTS.md`. Se uma busca acidental ampla ocorrer, o relatorio deve registrar o desvio, o risco e a correcao adotada.
+
+O regression smoke registra este padrao no artifact:
+
+```text
+unsafe_broad_search_used=false
+validation_search_scope=explicit_paths_only
+```
 
 ## Interpretação
 
