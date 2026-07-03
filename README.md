@@ -20,6 +20,7 @@ A bancada evoluiu drasticamente e hoje contempla:
 * **Search Index Cache:** Cache lexical para buscas instantâneas no Cockpit.
 * **Context Injection:** O runner é capaz de injetar context packs vitais antes da call para o modelo (`--use-context-pack`).
 * **Agent Iterative Loop Offline v1:** Loop manual/foreground com mock planner, Capability Policy `local_offline_v1`, path hygiene, histórico/detalhe read-only no Cockpit e CodeAct seguro sem LLM real.
+* **Agent Loop Regression Smoke:** Harness offline para validar CLI, policy, traversal, path hygiene, CodeAct confirmado e Cockpit read-only opcional com artifacts auditáveis.
 * **Operational View:** Visão clara de missões, status de aprovação de handoffs e rejeições de patches.
 
 ## Arquitetura atual
@@ -86,6 +87,9 @@ python3 -m aiw_context.indexer
 
 # Rodar o Agent Iterative Loop offline em dry-run
 ./scripts/aiw-agent-loop --workspace aiw --task "Validate offline iterative loop" --once --dry-run
+
+# Rodar a regressao offline do Agent Loop
+./scripts/aiw-agent-loop-regression-smoke --workspace aiw
 ```
 
 
@@ -173,6 +177,7 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 * [Validation Plan](docs/runbooks/AIW_VALIDATION_PLAN.md)
 * [Validation Plan Snapshots](docs/runbooks/AIW_VALIDATION_PLAN_SNAPSHOTS.md)
 * [Agent Iterative Loop Offline v1](docs/runbooks/AIW_AGENT_ITERATIVE_LOOP.md)
+* [Agent Loop Regression Smoke](docs/runbooks/AIW_AGENT_LOOP_REGRESSION_SMOKE.md)
 
 ## Próximos Passos (Roadmap Resumido)
 

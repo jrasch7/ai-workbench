@@ -16,6 +16,8 @@ grep -R "class .*Tool\|def .*tool" aiw_runtime aiw_context aiw_workspace
 
 A busca retornará as definições exatas. Se a ferramenta não aparecer no código final injetável para o runtime (`aiw_runtime`), considere-a como não existente.
 
+Para validações de safety do Agent Loop, prefira buscas explicitamente escopadas aos arquivos relevantes e evite varredura ampla do repositório. Não leia `.env`, `config/litellm.yaml` ou `AGENTS.md` durante smokes de capability.
+
 ## Como adicionar uma capability nova
 
 1. Defina a interface em `aiw_workspace/capability_registry.py` provendo o nome, `kind` (context, tool, sandbox) e dependências.
@@ -96,3 +98,5 @@ O Cockpit usará o `capability_registry.py` para listar as ferramentas dinamicam
 * Utilize mocks que injetam JSONs estáticos (`item.json`, `patch-intent.json`) previstos no RAG ou Inbox, injetando comportamentos forjados na fila.
 * Rode `agent_dispatcher` em `--dry-run` para validar a orquestração e uso aparente do sandbox e registry pela pipeline, atestando estabilidade arquitetural sem faturar chamadas caras de LLM.
 * Rode `scripts/aiw-agent-loop` em `--dry-run` e `--execute --confirm-agent-loop` para validar a Capability Policy v1 sem modelo real, sem GitHub/Jira e sem background.
+* Rode `./scripts/aiw-agent-loop-regression-smoke --workspace aiw` para validar CLI, policy direta, bloqueios de capability/operation, path hygiene e traversal com evidencias em `.aiw/workspaces/<id>/agent-loop-regression/runs/<run_id>/`.
+* Use `--with-cockpit` apenas quando quiser incluir GETs locais read-only do Cockpit; por padrao o smoke nao inicia servidor.

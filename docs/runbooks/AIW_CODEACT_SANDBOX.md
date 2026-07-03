@@ -84,6 +84,18 @@ print(result['status'], result.get('stdout', '').strip())
 "
 ```
 
+## Regressao via Agent Loop
+
+O CodeAct tambem e validado indiretamente pelo Agent Loop Regression Smoke:
+
+```bash
+./scripts/aiw-agent-loop-regression-smoke --workspace aiw
+```
+
+Esse smoke confirma que dry-run nao cria `codeact_run_id`, que execucao offline sem confirmacao bloqueia, e que `--execute --confirm-agent-loop` roda apenas a acao fixa segura do Agent Loop e registra um `codeact_run_id`.
+
+Os artifacts ficam em `.aiw/workspaces/<workspace_id>/agent-loop-regression/runs/<run_id>/`.
+
 ## Como inspecionar uma run
 
 ```bash
@@ -142,3 +154,5 @@ O objetivo desta sprint é provar que a infraestrutura de execução controlada 
 ## Por que devcontainer/chroot ficam para sprint futura
 
 A prioridade é ter o fluxo funcional primeiro. Containerização adiciona complexidade operacional (Docker, volumes, networking) que será tratada quando a base estiver madura.
+
+Enquanto isso, o regression smoke registra explicitamente a fronteira `host-sandbox best-effort`, sem tratar CodeAct como isolamento forte.

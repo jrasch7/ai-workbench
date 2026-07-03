@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# AIW Agent Loop offline regression smoke.
+
+export PYTHONPATH="$PWD:$PYTHONPATH"
+
+exec python3 -m aiw_workspace.agent_loop_regression "$@"

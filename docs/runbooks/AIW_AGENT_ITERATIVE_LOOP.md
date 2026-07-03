@@ -71,6 +71,24 @@ Listar e ler runs:
 ./scripts/aiw-agent-loop --workspace aiw --read-run ail-1234abcd
 ```
 
+## Regression Smoke
+
+Antes de evoluir o loop ou a policy, rode o smoke offline:
+
+```bash
+./scripts/aiw-agent-loop-regression-smoke --workspace aiw
+```
+
+Para incluir a validacao read-only do Cockpit:
+
+```bash
+./scripts/aiw-agent-loop-regression-smoke --workspace aiw --with-cockpit --cockpit-port 18769
+```
+
+O smoke grava evidencias em `.aiw/workspaces/<workspace_id>/agent-loop-regression/runs/<run_id>/` com `run.json`, `summary.md` e `checks/*.json`. Ele nao chama LLM real, nao faz GitHub/Jira write, nao roda daemon persistente e usa subprocess com argumentos em lista.
+
+Consulte [AIW Agent Loop Regression Smoke](AIW_AGENT_LOOP_REGRESSION_SMOKE.md) para a lista completa de checks.
+
 ## Dry-run vs Execute Offline
 
 `--dry-run` valida argumentos, cria `plan.json`, consulta o Capability Registry, registra a decisao da Capability Policy v1 como simulacao permitida, registra o estado de contexto e cria uma iteracao simulada para cada passo do plano com status `dry_run`. Ele nao executa CodeAct.
@@ -204,6 +222,7 @@ GET /api/workspaces/<workspace_id>/agent-iterative-loop/runs/<run_id>
 - Sem patch apply.
 - Sem commit/push automatico.
 - Sem scheduler, daemon, tmux, nohup, cron ou systemd.
+- Regression smoke local/offline disponivel em `./scripts/aiw-agent-loop-regression-smoke --workspace aiw`.
 - Policy local simples; ainda nao substitui isolamento forte nem revisao humana.
 
 ## Proximos Passos

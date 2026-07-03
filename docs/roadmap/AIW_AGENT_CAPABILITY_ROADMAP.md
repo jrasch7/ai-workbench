@@ -25,6 +25,10 @@ Desenvolver um orquestrador primitivo para lidar iterativamente com a execução
 Implementar o ciclo real de repetição (ReAct / Devin-like) para permitir ao agente planejar, ler, criar patchs e validar de maneira contínua, usando o Tool Registry e o Sandbox do CodeAct até que conclua seu objetivo.
 *Nota: A v1 offline/manual foi entregue com CLI foreground, dry-run, execute confirmado, artifacts rastreaveis, consulta ao Capability Registry, Capability Policy `local_offline_v1`, path hygiene em UI/API/artifacts novos, contexto minimo ou Context Pack existente, mock planner deterministico, Cockpit read-only com historico/detalhe de run, e CodeAct com acao fixa segura. Planejamento por LLM e autonomia ficam para iteracoes futuras.*
 
+### AIW-CAP-06.4 — Regression Harness + Isolation Boundary v1 (✅ Concluído)
+Adicionar smoke offline para travar os contratos do Agent Iterative Loop: CLI, dry-run, execute confirmado, bloqueios de policy, path hygiene, traversal e Cockpit read-only opcional.
+*Nota: O comando `./scripts/aiw-agent-loop-regression-smoke --workspace aiw` grava evidencias em `.aiw/workspaces/<id>/agent-loop-regression/runs/<run_id>/` e registra a fronteira de isolamento sem LLM real, sem GitHub/Jira write, sem daemon persistente e sem `shell=True`.*
+
 ## AIW-CAP-07 — Browser/Web Tool Lab v1
 Integrar as capacidades iniciais de acesso externo controlado à internet, como captura do status de tickets remotos, ler repositórios não nativos ou realizar scraping seguro de documentações em tempo real.
 
