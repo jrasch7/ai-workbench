@@ -1,14 +1,15 @@
-ISOLATION_PROFILE = "host_best_effort"
-ISOLATION_PROFILES = ("host_best_effort", "devcontainer_required", "vm_required")
+from .runtime_gate import (
+    FIXED_CODEACT_OPERATIONS,
+    KNOWN_RUNTIME_OPERATIONS,
+    RUNTIME_PROFILE,
+    RUNTIME_PROFILES,
+    evaluate_runtime_gate,
+)
 
-FIXED_CODEACT_OPERATIONS = {"python_eval_fixed", "fixed_codeact_python_eval"}
+ISOLATION_PROFILE = RUNTIME_PROFILE
+ISOLATION_PROFILES = tuple(RUNTIME_PROFILES)
 KNOWN_ISOLATION_OPERATIONS = {
-    *FIXED_CODEACT_OPERATIONS,
-    "dynamic_codeact_python_eval",
-    "llm_planner",
-    "shell_command",
-    "network_access",
-    "external_write",
+    *KNOWN_RUNTIME_OPERATIONS,
 }
 
 
@@ -18,6 +19,11 @@ def _base_decision(operation: str, isolation_profile: str) -> dict:
         "operation": operation,
         "allowed": False,
         "reason": None,
+        "runtime_decision": None,
+        "runtime_required": isolation_profile,
+        "runtime_profile": None,
+        "runtime_allowed": False,
+        "requires_stronger_runtime": False,
         "requires_devcontainer": False,
         "requires_vm": False,
         "llm_real_allowed": False,
@@ -50,6 +56,31 @@ def evaluate_isolation_boundary(
         decision["reason"] = "unknown_operation"
         return decision
 
+    runtime_decision = evaluate_runtime_gate(
+        operation=operation,
+        mode=mode,
+        requires_confirmation=True,
+        writes_files=operation == "external_write",
+        runs_code=operation in {
+            *FIXED_CODEACT_OPERATIONS,
+            "dynamic_codeact_python_eval",
+            "shell_command",
+        },
+        external_io=operation == "network_access",
+        dynamic_code=operation == "dynamic_codeact_python_eval",
+        llm=operation == "llm_planner" or mode == "llm",
+        shell=operation == "shell_command",
+    )
+    decision.update({
+        "runtime_decision": runtime_decision,
+        "runtime_required": runtime_decision.get("runtime_required"),
+        "runtime_profile": runtime_decision.get("runtime_profile"),
+        "runtime_allowed": bool(runtime_decision.get("allowed")),
+        "requires_stronger_runtime": bool(runtime_decision.get("requires_stronger_runtime")),
+        "requires_devcontainer": runtime_decision.get("runtime_required") == "devcontainer",
+        "requires_vm": runtime_decision.get("runtime_required") == "vm",
+    })
+
     if operation in FIXED_CODEACT_OPERATIONS:
         if mode == "dry-run":
             decision["allowed"] = True
@@ -81,10 +112,12 @@ def evaluate_isolation_boundary(
 
     if operation == "network_access":
         decision["reason"] = "external_network_blocked"
+        decision["requires_devcontainer"] = True
         return decision
 
     if operation == "external_write":
         decision["reason"] = "external_write_blocked"
+        decision["requires_devcontainer"] = True
         return decision
 
     decision["reason"] = "blocked_by_isolation_boundary"

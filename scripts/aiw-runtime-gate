@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# AIW Runtime Gate evaluator. It prints runtime metadata and executes nothing.
+
+export PYTHONPATH="$PWD:$PYTHONPATH"
+
+exec python3 - "$@" <<'PYTHON'
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd()))
+
+from aiw_workspace.runtime_gate import evaluate_runtime_gate
+
+
+def main():
+    parser = argparse.ArgumentParser(description="AIW Runtime Gate evaluator")
+    parser.add_argument("--capability", default=None, help="Capability name to annotate the decision")
+    parser.add_argument("--operation", required=True, help="Operation to evaluate")
+    parser.add_argument("--mode", default="offline", choices=["dry-run", "offline", "llm"], help="Requested mode")
+    parser.add_argument("--requires-confirmation", action="store_true", help="Mark the operation as requiring confirmation")
+    parser.add_argument("--writes-files", action="store_true", help="Mark the operation as writing files")
+    parser.add_argument("--runs-code", action="store_true", help="Mark the operation as running code")
+    parser.add_argument("--external-io", action="store_true", help="Mark the operation as using external IO")
+    parser.add_argument("--dynamic-code", action="store_true", help="Mark the operation as dynamic code")
+    parser.add_argument("--llm", action="store_true", help="Mark the operation as using an LLM")
+    parser.add_argument("--shell", action="store_true", help="Mark the operation as shell execution")
+    args = parser.parse_args()
+
+    decision = evaluate_runtime_gate(
+        capability=args.capability,
+        operation=args.operation,
+        mode=args.mode,
+        requires_confirmation=args.requires_confirmation,
+        writes_files=args.writes_files,
+        runs_code=args.runs_code,
+        external_io=args.external_io,
+        dynamic_code=args.dynamic_code,
+        llm=args.llm,
+        shell=args.shell,
+    )
+    print(json.dumps({"ok": bool(decision.get("allowed")), "decision": decision}, indent=2, ensure_ascii=False))
+    return 0 if decision.get("allowed") else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+PYTHON

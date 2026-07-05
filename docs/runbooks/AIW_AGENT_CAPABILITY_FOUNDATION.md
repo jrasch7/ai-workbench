@@ -65,6 +65,11 @@ simulation_only
 capability_not_executed
 allowed
 reason
+runtime_decision
+runtime_required
+runtime_profile
+runtime_allowed
+requires_stronger_runtime
 ```
 
 Regras atuais:
@@ -74,6 +79,7 @@ Regras atuais:
 * Operation desconhecida bloqueia a run.
 * Modo `llm` bloqueia a run.
 * IO externo bloqueia execução offline.
+* Runtime Gate registra qual runtime seria necessario; nesta v1 apenas `host_best_effort` pode ser permitido.
 * Capability que exige confirmação bloqueia quando `confirmed=false`.
 * `codeact_sandbox` é `high-risk`, `runs_code=true`, `writes_files=true` e `blocked_by_default=true`; no Agent Iterative Loop ele só passa em `offline` com confirmação explícita, `operation=python_eval_fixed`, código fixo, execução local e artifacts rastreáveis.
 

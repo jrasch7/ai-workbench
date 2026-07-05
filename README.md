@@ -22,6 +22,7 @@ A bancada evoluiu drasticamente e hoje contempla:
 * **Agent Iterative Loop Offline v1:** Loop manual/foreground com mock planner, Capability Policy `local_offline_v1`, path hygiene, histórico/detalhe read-only no Cockpit e CodeAct seguro sem LLM real.
 * **Agent Loop Regression Smoke:** Harness offline para validar CLI, policy, traversal, path hygiene, CodeAct confirmado e Cockpit read-only opcional com artifacts auditáveis.
 * **Isolation Boundary Gate:** Policy conservadora `host_best_effort` que permite apenas CodeAct fixo offline confirmado e bloqueia LLM planner, codigo dinamico, shell, rede externa e external write ate existir devcontainer/VM.
+* **Runtime Gate:** Camada read-only que decide qual runtime seria necessario (`host_best_effort`, `devcontainer`, `docker`, `vm`) sem iniciar Docker, Devcontainer, VM ou LLM.
 * **Safe Search Guard:** Busca textual operacional que exige paths explicitos e bloqueia secrets/artifacts antes de leitura.
 * **Operational View:** Visão clara de missões, status de aprovação de handoffs e rejeições de patches.
 
@@ -96,12 +97,16 @@ python3 -m aiw_context.indexer
 # Avaliar o Isolation Boundary sem executar nada
 ./scripts/aiw-isolation-gate --workspace aiw --operation fixed_codeact_python_eval --mode offline --confirmed
 
+# Avaliar o Runtime Gate sem iniciar runtimes
+./scripts/aiw-runtime-gate --capability codeact_sandbox --operation python_eval_fixed
+
 # Buscar texto com guardrails de escopo
 ./scripts/aiw-safe-search "isolation_profile" --paths aiw_workspace docs/runbooks README.md
 ```
 
 O regression smoke registra `external_network_used=false` e diferencia GETs locais do Cockpit com `localhost_http_used=true` apenas quando `--with-cockpit` e usado. Validacoes textuais devem usar paths explicitos, nunca busca ampla em `.`.
 O Isolation Boundary registra `isolation_profile=host_best_effort`; LLM real, codigo dinamico e shell continuam bloqueados por policy ate existir isolamento forte.
+O Runtime Gate registra `runtime_required`; nesta etapa `devcontainer`, `docker` e `vm` sao apenas metadata e nao sao iniciados.
 Use `./scripts/aiw-safe-search` em vez de `grep -R` quando houver risco de varrer secrets ou artifacts locais.
 
 
@@ -191,6 +196,7 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 * [Agent Iterative Loop Offline v1](docs/runbooks/AIW_AGENT_ITERATIVE_LOOP.md)
 * [Agent Loop Regression Smoke](docs/runbooks/AIW_AGENT_LOOP_REGRESSION_SMOKE.md)
 * [AIW Isolation Boundary](docs/runbooks/AIW_ISOLATION_BOUNDARY.md)
+* [AIW Runtime Gate](docs/runbooks/AIW_RUNTIME_GATE.md)
 * [AIW Safe Search Guard](docs/runbooks/AIW_SAFE_SEARCH.md)
 
 ## Próximos Passos (Roadmap Resumido)

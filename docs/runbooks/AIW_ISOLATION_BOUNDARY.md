@@ -1,10 +1,12 @@
-# AIW Isolation Boundary + Devcontainer Gate v1
+# AIW Isolation Boundary + Runtime Gate v1
 
 ## Objetivo
 
 O Isolation Boundary e um gate conservador para responder se uma operacao pode continuar no estado atual do AIW.
 
 Ele nao executa codigo, nao chama LLM, nao cria devcontainer e nao roda Docker. Ele apenas retorna uma decisao JSON auditavel.
+
+O Runtime Gate, documentado em `AIW_RUNTIME_GATE.md`, responde qual runtime seria necessario para a operacao. O Isolation Boundary consome essa metadata e continua sendo a camada que decide se a operacao pode prosseguir agora.
 
 ## Perfil Atual
 
@@ -18,8 +20,9 @@ Perfis conhecidos pelo gate:
 
 ```text
 host_best_effort
-devcontainer_required
-vm_required
+devcontainer
+docker
+vm
 ```
 
 `host_best_effort` significa que a execucao acontece no host local com guardrails de processo, confirmacao, timeout e artifacts. Isso nao e sandbox forte.
@@ -127,6 +130,11 @@ isolation_profile
 isolation_allowed
 isolation_reason
 isolation_decision
+runtime_decision
+runtime_required
+runtime_profile
+runtime_allowed
+requires_stronger_runtime
 requires_devcontainer
 requires_vm
 requires_stronger_isolation_before_llm

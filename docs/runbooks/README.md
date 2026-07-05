@@ -16,6 +16,7 @@ Este diretório contém os guias operacionais (Runbooks) documentando as peças,
 - **[Agent Offline Mode](AIW_AGENT_OFFLINE_MODE.md)**: Testes de infra e pipeline sem evocar tráfego real LLM (`--offline`).
 - **[Tool Runtime Phase 3](AIW_TOOL_RUNTIME_PHASE3.md)**: Definição da Sandbox estática e limites do core.
 - **[Tool Runtime Validation Phase 3](AIW_TOOL_RUNTIME_PHASE3_VALIDATION.md)**: Critérios técnicos aplicados durante a compilação local da API de tools.
+- **[AIW Runtime Gate](AIW_RUNTIME_GATE.md)**: Camada read-only que decide qual runtime seria necessario sem iniciar Docker, Devcontainer, VM ou LLM.
 - **[PR Summary Script](AIW_PR_SUMMARY_SCRIPT.md)**: Ajudante gerador de changelogs/diffs automáticos para PRs e runs.
 - **[Run Task](AIW_RUN_TASK.md)**: Fluxo e documentação base para formatação do lifecycle de uma tarefa padronizada.
 

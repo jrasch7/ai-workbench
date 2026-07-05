@@ -74,6 +74,11 @@ def _create_run(workspace_id: str, task: str, mode: str, max_iterations: int, ta
         "isolation_profile": None,
         "isolation_decision": None,
         "isolation_decisions": [],
+        "runtime_decision": None,
+        "runtime_required": None,
+        "runtime_profile": None,
+        "runtime_allowed": False,
+        "requires_stronger_runtime": True,
         "requires_stronger_isolation_before_llm": True,
         "context_pack_id": None,
         "context_mode": None,
@@ -163,6 +168,9 @@ def _render_summary(run: dict) -> str:
         f"- Context pack: {run.get('context_pack_id')}",
         f"- Blocked reason: {run.get('blocked_reason')}",
         f"- Isolation profile: {run.get('isolation_profile')}",
+        f"- Runtime required: {run.get('runtime_required')}",
+        f"- Runtime allowed: {str(run.get('runtime_allowed')).lower()}",
+        f"- Requires stronger runtime: {str(run.get('requires_stronger_runtime')).lower()}",
         f"- Requires stronger isolation before LLM: {str(run.get('requires_stronger_isolation_before_llm')).lower()}",
         "",
         "## Task",
@@ -306,6 +314,11 @@ def run_agent_iterative_loop_once(
     isolation_decision = policy_decision.get("isolation_decision")
     run["isolation_profile"] = policy_decision.get("isolation_profile")
     run["isolation_decision"] = isolation_decision
+    run["runtime_decision"] = policy_decision.get("runtime_decision")
+    run["runtime_required"] = policy_decision.get("runtime_required")
+    run["runtime_profile"] = policy_decision.get("runtime_profile")
+    run["runtime_allowed"] = bool(policy_decision.get("runtime_allowed"))
+    run["requires_stronger_runtime"] = bool(policy_decision.get("requires_stronger_runtime", True))
     if isolation_decision:
         run["isolation_decisions"].append(isolation_decision)
     run["requires_stronger_isolation_before_llm"] = bool(

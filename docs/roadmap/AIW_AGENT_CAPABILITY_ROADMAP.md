@@ -39,6 +39,7 @@ Adicionar um gate explicito para decidir se operacoes podem continuar no perfil 
 
 ## AIW-CAP-08 — Devcontainer Sandbox v1
 Implementar isolamento forte de host via Devcontainers (ou Docker Sandbox), rodando o agente de forma efêmera sem riscos para o ambiente hospedeiro do usuário.
+*Nota: A primeira etapa entregue e o Runtime Gate v1: uma decisao metadata-only que aponta `host_best_effort`, `devcontainer`, `docker` ou `vm` sem iniciar nenhum runtime. Apenas `host_best_effort` segue permitido; `devcontainer` e requerido para codigo dinamico, LLM, shell, rede externa e external write.*
 
 ## AIW-CAP-09 — E2E Agent Harness Smoke v1
 Garantir o fluxo End-to-End da camada Capability usando mocks robustos, provando que o Capability Registry, Sandbox e Loop iterativo funcionam com segurança em modo pipeline offline.
