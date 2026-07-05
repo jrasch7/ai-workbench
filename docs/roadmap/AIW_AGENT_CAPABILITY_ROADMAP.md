@@ -43,6 +43,7 @@ Implementar isolamento forte de host via Devcontainers (ou Docker Sandbox), roda
 
 ## AIW-CAP-09 — E2E Agent Harness Smoke v1
 Garantir o fluxo End-to-End da camada Capability usando mocks robustos, provando que o Capability Registry, Sandbox e Loop iterativo funcionam com segurança em modo pipeline offline.
+*Nota: A primeira parte entregue e o Execution Provider v1, que desacopla o Agent Iterative Loop do mecanismo concreto de execucao. O provider funcional atual e apenas `CodeActExecutionProvider`; Devcontainer, Docker, VM, Claude Code, OpenHands, Codex e Ollama ficam como roadmap.*
 
 ## AIW-CAP-10 — Local Model Provider Lab
 Conectar o orquestrador (Agent Loop, Tool Registry, Context Pack) a instâncias reais de modelos de linguagem via provedor Ollama (Local) / LiteLLM, ativando inteligência nas ações dentro da camada de segurança comprovada nos passos anteriores.

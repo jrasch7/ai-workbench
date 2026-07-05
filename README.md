@@ -23,6 +23,7 @@ A bancada evoluiu drasticamente e hoje contempla:
 * **Agent Loop Regression Smoke:** Harness offline para validar CLI, policy, traversal, path hygiene, CodeAct confirmado e Cockpit read-only opcional com artifacts auditáveis.
 * **Isolation Boundary Gate:** Policy conservadora `host_best_effort` que permite apenas CodeAct fixo offline confirmado e bloqueia LLM planner, codigo dinamico, shell, rede externa e external write ate existir devcontainer/VM.
 * **Runtime Gate:** Camada read-only que decide qual runtime seria necessario (`host_best_effort`, `devcontainer`, `docker`, `vm`) sem iniciar Docker, Devcontainer, VM ou LLM.
+* **Execution Provider v1:** Abstracao read-only/execucao controlada entre Agent Loop e CodeAct; o unico provider funcional atual e `codeact`.
 * **Safe Search Guard:** Busca textual operacional que exige paths explicitos e bloqueia secrets/artifacts antes de leitura.
 * **Operational View:** Visão clara de missões, status de aprovação de handoffs e rejeições de patches.
 
@@ -100,6 +101,9 @@ python3 -m aiw_context.indexer
 # Avaliar o Runtime Gate sem iniciar runtimes
 ./scripts/aiw-runtime-gate --capability codeact_sandbox --operation python_eval_fixed
 
+# Inspecionar Execution Providers sem executar codigo
+./scripts/aiw-execution-provider --list
+
 # Buscar texto com guardrails de escopo
 ./scripts/aiw-safe-search "isolation_profile" --paths aiw_workspace docs/runbooks README.md
 ```
@@ -107,6 +111,7 @@ python3 -m aiw_context.indexer
 O regression smoke registra `external_network_used=false` e diferencia GETs locais do Cockpit com `localhost_http_used=true` apenas quando `--with-cockpit` e usado. Validacoes textuais devem usar paths explicitos, nunca busca ampla em `.`.
 O Isolation Boundary registra `isolation_profile=host_best_effort`; LLM real, codigo dinamico e shell continuam bloqueados por policy ate existir isolamento forte.
 O Runtime Gate registra `runtime_required`; nesta etapa `devcontainer`, `docker` e `vm` sao apenas metadata e nao sao iniciados.
+O Execution Provider registra quem executaria a operacao; por enquanto apenas `codeact` delega ao CodeAct Sandbox existente.
 Use `./scripts/aiw-safe-search` em vez de `grep -R` quando houver risco de varrer secrets ou artifacts locais.
 
 
@@ -197,6 +202,7 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 * [Agent Loop Regression Smoke](docs/runbooks/AIW_AGENT_LOOP_REGRESSION_SMOKE.md)
 * [AIW Isolation Boundary](docs/runbooks/AIW_ISOLATION_BOUNDARY.md)
 * [AIW Runtime Gate](docs/runbooks/AIW_RUNTIME_GATE.md)
+* [AIW Execution Provider](docs/runbooks/AIW_EXECUTION_PROVIDER.md)
 * [AIW Safe Search Guard](docs/runbooks/AIW_SAFE_SEARCH.md)
 
 ## Próximos Passos (Roadmap Resumido)

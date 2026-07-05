@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .capability_policy import evaluate_capability_policy
 from .capability_registry import get_capability, validate_capability_definition
-from .codeact_sandbox import run_codeact_action
+from .execution_provider import provider_for_capability
 from .path_hygiene import safe_display_path, sanitize_artifact_paths_for_display
 from .profiles import AIW_ROOT, resolve_workspace
 
@@ -79,6 +79,10 @@ def _create_run(workspace_id: str, task: str, mode: str, max_iterations: int, ta
         "runtime_profile": None,
         "runtime_allowed": False,
         "requires_stronger_runtime": True,
+        "execution_provider": None,
+        "execution_provider_version": None,
+        "execution_provider_supported": False,
+        "execution_provider_validation": None,
         "requires_stronger_isolation_before_llm": True,
         "context_pack_id": None,
         "context_mode": None,
@@ -171,6 +175,8 @@ def _render_summary(run: dict) -> str:
         f"- Runtime required: {run.get('runtime_required')}",
         f"- Runtime allowed: {str(run.get('runtime_allowed')).lower()}",
         f"- Requires stronger runtime: {str(run.get('requires_stronger_runtime')).lower()}",
+        f"- Execution provider: {run.get('execution_provider')}",
+        f"- Execution provider supported: {str(run.get('execution_provider_supported')).lower()}",
         f"- Requires stronger isolation before LLM: {str(run.get('requires_stronger_isolation_before_llm')).lower()}",
         "",
         "## Task",
@@ -319,6 +325,26 @@ def run_agent_iterative_loop_once(
     run["runtime_profile"] = policy_decision.get("runtime_profile")
     run["runtime_allowed"] = bool(policy_decision.get("runtime_allowed"))
     run["requires_stronger_runtime"] = bool(policy_decision.get("requires_stronger_runtime", True))
+    execution_provider = provider_for_capability(capability_name)
+    if execution_provider:
+        provider_validation = execution_provider.validate()
+        provider_supported = (
+            execution_provider.supports_runtime(policy_decision.get("runtime_required"))
+            and execution_provider.supports_operation(operation)
+            and bool(provider_validation.get("valid"))
+        )
+        run["execution_provider"] = execution_provider.name
+        run["execution_provider_version"] = execution_provider.version
+        run["execution_provider_supported"] = provider_supported
+        run["execution_provider_validation"] = provider_validation
+    else:
+        provider_validation = {
+            "provider": None,
+            "valid": False,
+            "reason": "execution_provider_not_found",
+        }
+        provider_supported = False
+        run["execution_provider_validation"] = provider_validation
     if isolation_decision:
         run["isolation_decisions"].append(isolation_decision)
     run["requires_stronger_isolation_before_llm"] = bool(
@@ -330,7 +356,7 @@ def run_agent_iterative_loop_once(
         _save_run(run)
         return {"ok": False, "error": run["blocked_reason"], "run": run}
 
-    if mode == "offline" and capability_name != "codeact_sandbox":
+    if mode == "offline" and (capability_name != "codeact_sandbox" or not provider_supported):
         run["status"] = "blocked"
         run["blocked_reason"] = "unsupported_agent_loop_capability"
         _save_run(run)
@@ -361,7 +387,16 @@ def run_agent_iterative_loop_once(
 
         if mode == "dry-run":
             if step["uses_codeact"]:
-                iteration["stdout_preview"] = "Would execute fixed safe offline CodeAct action."
+                dry_result = execution_provider.dry_run(
+                    ws_id,
+                    _fixed_codeact_action(),
+                    operation,
+                ) if execution_provider else {}
+                iteration["stdout_preview"] = dry_result.get(
+                    "stdout_preview",
+                    "Would execute fixed safe offline CodeAct action.",
+                )
+                iteration["stderr_preview"] = dry_result.get("stderr_preview", "")
             else:
                 iteration["stdout_preview"] = f"Would complete mock planner step: {step['kind']}."
             _save_iteration(run, iteration)
@@ -373,15 +408,7 @@ def run_agent_iterative_loop_once(
             _save_iteration(run, iteration)
             continue
 
-        action = {
-            "kind": "python_eval",
-            "title": "AIW Agent Iterative Loop Mock Planner Step",
-            "code": "print('AIW_AGENT_ITERATIVE_LOOP_STEP_OK')",
-            "timeout_seconds": 5,
-            "max_stdout_chars": 2000,
-            "max_stderr_chars": 2000,
-        }
-        codeact = run_codeact_action(ws_id, action, confirm=True)
+        codeact = execution_provider.execute(ws_id, _fixed_codeact_action(), operation, confirm=True)
         iteration["codeact_run_id"] = codeact.get("run_id")
         iteration["stdout_preview"] = (codeact.get("stdout") or "")[:500]
         iteration["stderr_preview"] = (codeact.get("stderr") or "")[:500]
@@ -405,6 +432,17 @@ def run_agent_iterative_loop_once(
         run["status"] = "partial"
     _save_run(run)
     return {"ok": run["status"] in {"dry_run", "completed"}, "run": run}
+
+
+def _fixed_codeact_action() -> dict:
+    return {
+        "kind": "python_eval",
+        "title": "AIW Agent Iterative Loop Mock Planner Step",
+        "code": "print('AIW_AGENT_ITERATIVE_LOOP_STEP_OK')",
+        "timeout_seconds": 5,
+        "max_stdout_chars": 2000,
+        "max_stderr_chars": 2000,
+    }
 
 
 def list_agent_loop_runs(workspace_id: str, limit: int = 20) -> dict:

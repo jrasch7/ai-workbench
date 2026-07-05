@@ -122,6 +122,8 @@ requires_stronger_runtime
 
 `aiw_workspace/capability_policy.py` propaga esses campos para artifacts de capability. O Agent Iterative Loop tambem registra os campos no `run.json`.
 
+O Execution Provider consome `runtime_required` apenas para informar se um provider suporta aquele runtime. Ele nao decide qual runtime e necessario.
+
 ## Limites
 
 - Sem LLM real.

@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# AIW Execution Provider metadata CLI. It executes no provider action.
+
+export PYTHONPATH="$PWD:$PYTHONPATH"
+
+exec python3 - "$@" <<'PYTHON'
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd()))
+
+from aiw_workspace.execution_provider import (
+    describe_execution_provider,
+    get_execution_provider,
+    list_execution_providers,
+    validate_execution_provider,
+)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="AIW Execution Provider metadata CLI")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--list", action="store_true", help="List available execution providers")
+    group.add_argument("--describe", metavar="PROVIDER", help="Describe one execution provider")
+    group.add_argument("--validate", metavar="PROVIDER", help="Validate one execution provider without execution")
+    group.add_argument("--supports-runtime", metavar="RUNTIME", help="Check whether a provider supports a runtime")
+    group.add_argument("--supports-operation", metavar="OPERATION", help="Check whether a provider supports an operation")
+    parser.add_argument("--provider", default="codeact", help="Provider for support checks; default: codeact")
+    args = parser.parse_args()
+
+    if args.list:
+        print(json.dumps({"ok": True, "providers": list_execution_providers()}, indent=2, ensure_ascii=False))
+        return 0
+
+    if args.describe:
+        result = describe_execution_provider(args.describe)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0 if result.get("ok") else 1
+
+    if args.validate:
+        result = validate_execution_provider(args.validate)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0 if result.get("ok") else 1
+
+    provider = get_execution_provider(args.provider)
+    if not provider:
+        print(json.dumps({"ok": False, "error": "execution_provider_not_found", "provider": args.provider}, indent=2, ensure_ascii=False))
+        return 1
+
+    if args.supports_runtime:
+        supported = provider.supports_runtime(args.supports_runtime)
+        print(json.dumps({
+            "ok": supported,
+            "provider": provider.name,
+            "runtime": args.supports_runtime,
+            "supported": supported,
+        }, indent=2, ensure_ascii=False))
+        return 0 if supported else 1
+
+    if args.supports_operation:
+        supported = provider.supports_operation(args.supports_operation)
+        print(json.dumps({
+            "ok": supported,
+            "provider": provider.name,
+            "operation": args.supports_operation,
+            "supported": supported,
+        }, indent=2, ensure_ascii=False))
+        return 0 if supported else 1
+
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+PYTHON

@@ -12,6 +12,8 @@ task manual
 -> Capability Registry
 -> Capability Policy v1
 -> Isolation Boundary v1
+-> Runtime Gate v1
+-> Execution Provider v1
 -> contexto local existente ou contexto minimo
 -> CodeAct Sandbox com acao fixa e segura
 -> artifacts locais
@@ -129,7 +131,7 @@ iterations/iter-002.json
 iterations/iter-003.json
 ```
 
-`run.json` inclui `run_id`, `workspace_id`, `mode`, `status`, `task`, `planner`, `max_iterations`, `plan_path`, `task_source`, `capabilities_checked`, `capability_decisions`, `isolation_profile`, `isolation_decision`, `isolation_decisions`, `requires_stronger_isolation_before_llm`, `context_pack_id`, `iterations` e `blocked_reason`.
+`run.json` inclui `run_id`, `workspace_id`, `mode`, `status`, `task`, `planner`, `max_iterations`, `plan_path`, `task_source`, `capabilities_checked`, `capability_decisions`, `isolation_profile`, `isolation_decision`, `isolation_decisions`, `runtime_decision`, `runtime_required`, `runtime_profile`, `runtime_allowed`, `execution_provider`, `execution_provider_version`, `execution_provider_supported`, `execution_provider_validation`, `requires_stronger_isolation_before_llm`, `context_pack_id`, `iterations` e `blocked_reason`.
 
 Novos artifacts usam paths de display relativos ao repo, por exemplo `.aiw/workspaces/aiw/agent-iterative-loop/runs/<run_id>/run.json`, evitando expor `/home/...` na UI/API. Artifacts antigos com paths absolutos continuam legiveis e sao higienizados quando exibidos pelo Cockpit/API.
 
@@ -201,7 +203,7 @@ O loop nao indexa `.env`, `config/litellm.yaml`, `AGENTS.md` ou `.aiw/` por cont
 
 ## CodeAct
 
-O execute offline usa `run_codeact_action(..., confirm=True)` com `kind=python_eval` e codigo fixo. Nao executa shell livre, comandos externos, Git, rede, Docker, gh, pip install ou npm install.
+O execute offline passa pelo `CodeActExecutionProvider`, que delega ao `run_codeact_action(..., confirm=True)` com `kind=python_eval` e codigo fixo. Nao executa shell livre, comandos externos, Git, rede, Docker, gh, pip install ou npm install.
 
 CodeAct continua sendo host-sandbox best-effort, nao isolamento forte. Nao deve rodar codigo nao confiavel e nao substitui container, VM ou devcontainer.
 
