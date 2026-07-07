@@ -1,5 +1,11 @@
 # AIW Agent Stack Overview
 
+> **Deprecated / Historical**
+> This document reflects an earlier vision. 
+> The current target architecture is defined in [../ARCHITECTURE.md](../ARCHITECTURE.md) (Provider-First with explicit Model/Execution/Context Providers + Model Router).
+>
+> Do not use this as reference for new work.
+
 **Visão geral**
 
 O AI Workbench (AIW) funciona como uma plataforma *Devin‑like* interna, orquestrando agentes de IA que executam tarefas de engenharia de software de forma controlada e rastreável.

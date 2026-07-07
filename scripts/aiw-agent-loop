@@ -11,7 +11,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.cwd()))
 
-from aiw_workspace.agent_iterative_loop import (
+# Preferindo aiw/ (formato atualizado) - delegate em aiw_workspace para compat
+from aiw.agent.iterative_loop import (
     list_agent_loop_runs,
     read_agent_loop_run,
     run_agent_iterative_loop_once,
@@ -19,14 +20,15 @@ from aiw_workspace.agent_iterative_loop import (
 
 
 def main():
-    parser = argparse.ArgumentParser(description="AIW Agent Iterative Loop Offline CLI with deterministic mock planner")
+    parser = argparse.ArgumentParser(description="AIW Agent Iterative Loop (aligned to new Provider-First architecture with profiles and router)")
     parser.add_argument("--workspace", required=True, help="Workspace ID")
     parser.add_argument("--task", help="Task text for the loop")
     parser.add_argument("--once", action="store_true", help="Run one foreground cycle")
-    parser.add_argument("--max-iterations", type=int, default=1, help="Mock planner steps to record, capped at 3")
+    parser.add_argument("--max-iterations", type=int, default=4, help="Número de iterações do Loop Iterativo do Agente (recomendado 3-6 para uso real)")
     parser.add_argument("--capability", default="codeact_sandbox", help="Capability to authorize through policy")
     parser.add_argument("--operation", default="python_eval_fixed", help="Policy operation name; default keeps fixed CodeAct eval")
-    parser.add_argument("--confirm-agent-loop", action="store_true", help="Confirm offline execution")
+    parser.add_argument("--confirm-agent-loop", action="store_true", help="Confirma Execução Real (necessário junto com --execute)")
+    parser.add_argument("--profile", default="software-engineer", help="Agent Profile name (e.g. software-engineer, security-analyst, code-reviewer)")
 
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="Create dry-run artifacts without CodeAct execution")
@@ -56,7 +58,20 @@ def main():
         print("Must provide --task for --once.", file=sys.stderr)
         sys.exit(1)
 
+    print("=== AIW - Modo de Desenvolvimento Real ===")
+    print("Usando Loop Iterativo do Agente com Provedor de Execução e OpenRouter (recarregue seu saldo).")
+    print("Para execução real: --execute --confirm-agent-loop")
+    print("Perfil recomendado: --profile software-engineer")
+
+    # Modo de uso real para desenvolvimento (hoje):
+    # Use --execute para rodar com LLM real (OpenRouter) e execução real via Provedor de Execução.
+    # Exemplo: ./scripts/aiw-agent-loop --workspace meu-projeto --task "refatore o modulo X e rode testes" --execute --profile software-engineer --max-iterations 5
+    # Lembre de ter OPENROUTER_API_KEY recarregado no .env ou ambiente.
     dry_run = args.dry_run or not args.execute
+    # Aligned: load from new aiw structure
+    from aiw import load_profile
+    prof = load_profile(args.profile)
+
     res = run_agent_iterative_loop_once(
         workspace_id=args.workspace,
         task=args.task,
@@ -67,7 +82,16 @@ def main():
         task_source="cli",
         capability_name=args.capability,
         operation=args.operation,
+        profile=prof,
     )
+    # Show alignment info (new architecture)
+    if "run" in res:
+        rd = res["run"].get("router_decision", {})
+        prof = res["run"].get("profile", {})
+        print("=== [Aligned] Profile + Router ===")
+        print("Profile:", prof.get("name"))
+        print("Router:", rd.get("rationale"))
+        print("Model/Provider:", rd.get("model"), "/", rd.get("provider"))
     print(json.dumps(res, indent=2, ensure_ascii=False))
     sys.exit(0 if res.get("ok") else 1)
 

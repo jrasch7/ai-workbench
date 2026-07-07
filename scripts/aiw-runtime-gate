@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.cwd()))
 
-from aiw_workspace.runtime_gate import evaluate_runtime_gate
+from aiw.policy import evaluate_runtime_gate
 
 
 def main():

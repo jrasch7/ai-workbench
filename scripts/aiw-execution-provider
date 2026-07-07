@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.cwd()))
 
-from aiw_workspace.execution_provider import (
+from aiw.providers.execution import (
     describe_execution_provider,
     get_execution_provider,
     list_execution_providers,

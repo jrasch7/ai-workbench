@@ -1,3 +1,8 @@
+# Aligned: use new policy engine for evaluate (lazy)
+def _get_new_policy():
+    from aiw.policy.registry import get_policy_engine
+    return get_policy_engine()
+
 from .capability_registry import get_capability, validate_capability_definition
 from .isolation_boundary import (
     FIXED_CODEACT_OPERATIONS,
@@ -21,6 +26,15 @@ def evaluate_capability_policy(
     local_execution: bool = True,
     tracked: bool = True,
 ) -> dict:
+    # Aligned: prefer new policy engine
+    try:
+        return _get_new_policy().evaluate_capability(
+            workspace_id, capability_name, mode=mode, operation=operation,
+            confirmed=confirmed, fixed_code=fixed_code, local_execution=local_execution, tracked=tracked
+        )
+    except Exception:
+        pass  # fallback to local impl below
+
     cap = get_capability(capability_name)
     decision = {
         "workspace_id": workspace_id,

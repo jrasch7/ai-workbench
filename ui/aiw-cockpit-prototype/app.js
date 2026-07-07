@@ -25,6 +25,7 @@ function showPage(page) {
     agents: renderAgents,
     providers: renderProviders,
     context: renderContext,
+    experiment: renderExperimentLab,
     settings: renderSettings,
   };
   const content = document.getElementById('content');
@@ -141,6 +142,73 @@ function renderAgents(){document.getElementById('content').innerHTML='<h2>Agents
   ['Hermes Executor','Validator','Integrator','Context Builder','OpenRouter','Local/Ollama futuro'].map(name=>`<div class="card"><strong>${name}</strong></div>`).join('')+'</div>';}
 function renderProviders(){document.getElementById('content').innerHTML='<h2>Providers (mocked)</h2><div class="card-grid">'+
   ['OpenRouter','Local/Ollama','Azure','AWS'].map(name=>`<div class="card"><strong>${name}</strong></div>`).join('')+'</div>';}
+function renderContext(){
+  const content = document.getElementById('content');
+  const html = `
+    <h2>Context Resilience</h2>
+    <ul class="checklist">
+      <li>Local RAG + packs</li>
+      <li>Workspace scoped</li>
+    </ul>`;
+  content.innerHTML = html;
+}
+
+function renderExperimentLab() {
+  const content = document.getElementById('content');
+  const html = `
+    <h2>Experiment Lab (Round 2)</h2>
+    <p>Use profiles + router + providers. <strong>Aligned to aiw/</strong></p>
+    <div class="card-grid">
+      <div class="card">
+        <strong>Profile</strong><br>
+        <select id="exp-profile">
+          <option>software-engineer</option>
+          <option>security-analyst</option>
+          <option>code-reviewer</option>
+        </select>
+      </div>
+      <div class="card">
+        <strong>Provider</strong><br>
+        <select id="exp-provider">
+          <option>openrouter</option>
+          <option>litellm</option>
+        </select>
+      </div>
+      <div class="card">
+        <strong>Mode</strong><br>
+        <button onclick="runExpBench()">Run Benchmark (dry)</button>
+        <button onclick="runExpArena()">Run Arena</button>
+      </div>
+    </div>
+    <pre id="exp-output">Select profile + run experiment. (Simulated - uses aiw.experiment)</pre>
+  `;
+  content.innerHTML = html;
+}
+
+function runExpBench() {
+  const prof = document.getElementById('exp-profile').value;
+  const out = document.getElementById('exp-output');
+  out.textContent = `Running bench for ${prof}...\n(Calls aiw.experiment.run_benchmark in real)`;
+  // In real: fetch or call via backend
+  setTimeout(() => { out.textContent += `\nDone. See aiw/experiment/bench.py + router decision.`; }, 400);
+}
+
+function runExpArena() {
+  const prof = document.getElementById('exp-profile').value;
+  const out = document.getElementById('exp-output');
+  out.textContent = `Arena ${prof} vs code-reviewer (via aiw.experiment.arena)`;
+}
+
+function renderSettings(){
+  const content = document.getElementById('content');
+  content.innerHTML = `
+    <h2>Settings + Alignment</h2>
+    <p>Profiles + Router now primary (aiw/profiles, aiw/router).</p>
+    <p>Execution: codeact | docker | devcontainer (stubs).</p>
+    <p>Experiment Lab integrated.</p>
+  `;
+}
+
 function renderContext(){
   const content = document.getElementById('content');
   const html = `

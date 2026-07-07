@@ -1,5 +1,11 @@
 # AIW Model Routing Architecture
 
+> **Historical**
+> Early free-tier routing ideas. 
+> Replaced by the Model Router concept in [../ARCHITECTURE.md](../ARCHITECTURE.md) (dynamic selection + AUTO mode across all providers).
+>
+> See the current design for Model Router behavior.
+
 ## Goal
 Provide a lightweight, low‑risk routing layer that directs AIW tasks to **free or free‑tier** model providers.
 

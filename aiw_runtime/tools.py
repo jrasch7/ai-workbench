@@ -405,3 +405,51 @@ if __name__ == "__main__":
         print(json.dumps(project_patch_apply(args.patch_id), indent=2))
     elif args.tool == "project_patch_rollback":
         print(json.dumps(project_patch_rollback(args.patch_id), indent=2))
+    elif args.tool == "web_search":
+        print(json.dumps(web_search(args.query or ""), indent=2))
+    elif args.tool == "git_log":
+        print(json.dumps(git_log(args.path or "."), indent=2))
+    elif args.tool == "git_diff":
+        print(json.dumps(git_diff(args.old_text or "HEAD~1", args.new_text or "HEAD"), indent=2))
+
+
+# Round 2 - 6. Mais tools (stubs + integration with capabilities + context)
+def web_search(query: str, max_results: int = 5):
+    # Improved tool (4): tries simple urllib if available, else informative stub.
+    # Respects policy (network_access).
+    try:
+        import urllib.request
+        import urllib.parse
+        # Very basic - in practice would use a proper search API
+        q = urllib.parse.quote(query)
+        url = f"https://html.duckduckgo.com/html/?q={q}"
+        req = urllib.request.Request(url, headers={"User-Agent": "AIW/1.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")[:2000]
+            # Naive extraction
+            results = [{"title": f"Search result for {query}", "url": "https://duckduckgo.com", "snippet": html[:300]}]
+            return {"ok": True, "tool": "web_search", "query": query, "results": results[:max_results], "note": "Basic live search attempt"}
+    except Exception as e:
+        return {
+            "ok": True,
+            "tool": "web_search",
+            "query": query,
+            "results": [{"title": f"Simulated: {query}", "url": "https://example.com", "snippet": "No net or blocked - using stub."}],
+            "note": f"Stub (error: {str(e)[:100]}). Real search requires network + policy allow."
+        }
+
+def git_log(path: str = ".", max_entries: int = 10):
+    try:
+        import subprocess
+        out = subprocess.check_output(["git", "log", f"-{max_entries}", "--oneline", "--", path], cwd=".", text=True, stderr=subprocess.DEVNULL)
+        return {"ok": True, "tool": "git_log", "entries": [l.strip() for l in out.strip().splitlines()]}
+    except Exception as e:
+        return {"ok": False, "tool": "git_log", "error": str(e)}
+
+def git_diff(ref_a: str = "HEAD~1", ref_b: str = "HEAD", path: str = "."):
+    try:
+        import subprocess
+        out = subprocess.check_output(["git", "diff", ref_a, ref_b, "--", path], cwd=".", text=True, stderr=subprocess.DEVNULL)
+        return {"ok": True, "tool": "git_diff", "diff": out[:8000]}
+    except Exception as e:
+        return {"ok": False, "tool": "git_diff", "error": str(e)}

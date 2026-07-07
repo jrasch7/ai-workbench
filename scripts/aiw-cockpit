@@ -38,6 +38,19 @@ from aiw_context import (
 from aiw_workspace import (
     load_workspaces_config as load_workspace_profiles,
     resolve_workspace as resolve_workspace_profile,
+)
+# Aligned imports (Round 2 mover 4/5)
+try:
+    from aiw import load_profile, get_model_router, get_experiment_lab
+    from aiw.providers.execution import list_execution_providers
+except Exception:
+    load_profile = None
+    get_model_router = None
+    get_experiment_lab = None
+    list_execution_providers = None
+
+# Legacy workspace imports (being migrated - used for compat)
+from aiw_workspace import (
     execution_policy as workspace_execution_policy,
     validate_workspace_path,
     validate_profile as validate_workspace_profile,
@@ -2121,6 +2134,12 @@ def render_page() -> str:
     git_data = git_status_payload(active_workspace)
     git_diff = git_diff_payload(active_workspace)
     from aiw_workspace.agent_iterative_loop import list_agent_loop_runs, read_agent_loop_run
+    # Round 2 mover: prefer aiw for aligned
+    try:
+        from aiw.agent.iterative_loop import list_agent_loop_runs as aiw_list_runs, read_agent_loop_run as aiw_read_run
+    except Exception:
+        aiw_list_runs = list_agent_loop_runs
+        aiw_read_run = read_agent_loop_run
     agent_loop_payload = list_agent_loop_runs(active_workspace, limit=8)
     latest_agent_loop_detail = None
     if agent_loop_payload.get("ok") and agent_loop_payload.get("runs"):
@@ -2225,6 +2244,46 @@ def render_page() -> str:
     </div>
     """
 
+    # NEW: Direct Agent Runner form for real development (uses new aiw/agent loop)
+    direct_agent_form = f"""
+    <div class="section-block" style="margin-top:20px">
+      <h3>Executar Agente Direto (Loop Iterativo Real + OpenRouter)</h3>
+      <div class="card" style="max-width:620px">
+        <form method="post" action="/runner/run-agent">
+          <div style="margin-bottom:8px">
+            <label style="font-size:11px;color:var(--muted)">Tarefa / Objetivo</label>
+            <textarea name="agent_task" class="input" rows="4" placeholder="Ex: Analise o código do diretório atual, sugira melhorias de estrutura no README e implemente uma pequena limpeza segura." required style="width:100%"></textarea>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <div>
+              <label style="font-size:11px;color:var(--muted)">Perfil</label>
+              <select name="profile" class="input">
+                <option value="software-engineer">software-engineer</option>
+                <option value="security-analyst">security-analyst</option>
+                <option value="code-reviewer">code-reviewer</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--muted)">Modelo OpenRouter</label>
+              <select name="model" class="input">
+                <option value="openai/gpt-oss-120b:free">gpt-oss-120b:free (rápido/grátis)</option>
+                <option value="anthropic/claude-3.5-sonnet">claude-3.5-sonnet</option>
+                <option value="openai/gpt-4o">gpt-4o</option>
+                <option value="google/gemini-flash-1.5">gemini-flash-1.5</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--muted)">Workspace</label>
+              <select name="workspace_id" class="input">{workspace_options}</select>
+            </div>
+          </div>
+          <button class="btn btn-primary" type="submit">Executar com Agente Real (OpenRouter)</button>
+          <small style="margin-left:8px;color:#666">Usa o novo Loop Iterativo do Agente. Requer confirmação interna para execuções.</small>
+        </form>
+      </div>
+    </div>
+    """
+
     # Execution context panel (shown before running)
     next_task = inbox_tasks[0] if inbox_tasks else None
     if next_task:
@@ -2253,10 +2312,15 @@ def render_page() -> str:
 	                  <select name="workspace_id" class="input">{workspace_options}</select>
 	                </div>
               </div>
+              <div>
+                <label style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:4px">Tarefa para o Agente (use para rodar direto, sem precisar da inbox)</label>
+                <textarea name="agent_task" class="input" rows="3" placeholder="Ex: Refatore o módulo principal para usar o novo Loop Iterativo do Agente e adicione logging de execução"></textarea>
+              </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
                 <button class="btn btn-run" type="submit" formaction="/runner/run-once">Executar One-shot (Legado)</button>
-                <button class="btn btn-primary" type="submit" formaction="/runner/run-agent">Executar modo Agent</button>
+                <button class="btn btn-primary" type="submit" formaction="/runner/run-agent">Executar modo Agent (novo Loop + OpenRouter real)</button>
                 <button class="btn btn-secondary" type="submit" formaction="/runner/run-agent-offline">Executar Agent Offline</button>
+                <small style="display:block;margin-top:4px;color:#666">Recomendado: use o modo Agent para desenvolvimento real. O loop novo em aiw/agent é usado por padrão. Preencha a tarefa acima para rodar direto.</small>
               </div>
             </form>
           </div>
@@ -3659,19 +3723,21 @@ def render_page() -> str:
             decision_summary = html.escape(
                 f"{decision.get('capability', '-')}: {decision.get('reason', 'no_decision')}"
             )
+            # Support new run format (step_results, execution_trace, total_iterations_executed)
+            new_iters = r.get("total_iterations_executed") or iter_count
+            trace_preview = ""
+            if r.get("execution_trace"):
+                trace_preview = f"<br>último passo: {html.escape(str(r['execution_trace'][-1].get('status','')))}"
             agent_loop_rows += f"""
             <div class="mini-run">
               <div class="mini-run-title">{run_id}</div>
               <div class="mini-run-meta">
                 <span class="tag status-{status}">{status}</span>
-                <span class="tag">{mode}</span>
                 <span class="tag">{planner}</span>
-                <span class="tag">context {context_mode}</span>
-                <span class="tag">max {max_iters}</span>
-                <span class="tag">{iter_count} iter</span>
+                <span class="tag">{new_iters} iters</span>
                 <a class="tag" href="/api/workspaces/{html.escape(active_workspace)}/agent-iterative-loop/runs/{run_id}" target="_blank">JSON</a>
               </div>
-              <div class="card-doc" style="margin-top:7px;margin-bottom:0">{created} · {task}<br>policy: {decision_summary}<br>blocked: {blocked_reason}</div>
+              <div class="card-doc" style="margin-top:7px;margin-bottom:0">{created} · {task}{trace_preview}</div>
             </div>
             """
     else:
@@ -3680,86 +3746,64 @@ def render_page() -> str:
     agent_loop_detail_html = ""
     if latest_agent_loop_detail and latest_agent_loop_detail.get("ok"):
         detail_run = latest_agent_loop_detail.get("run", {})
-        detail_plan = latest_agent_loop_detail.get("plan") or {}
-        detail_iterations = latest_agent_loop_detail.get("iterations", [])
-        detail_artifacts = latest_agent_loop_detail.get("artifacts", {})
-        decision_rows = ""
-        for d in detail_run.get("capability_decisions", []):
-            allowed = "allowed" if d.get("allowed") else "blocked"
-            decision_rows += f"""
-            <div class="signal-row">
-              <span class="signal-name">{html.escape(str(d.get("capability", "-")))}</span>
-              <span class="tag">{html.escape(allowed)}</span>
-              <span class="tag">{html.escape(str(d.get("reason", "-")))}</span>
-              <span class="tag">{html.escape(str(d.get("policy_profile", "-")))}</span>
-              <span class="tag">{html.escape(str(d.get("operation", "-")))}</span>
-              <span class="tag">risk {html.escape(str(d.get("risk", "-")))}</span>
-              <span class="tag">confirmed {html.escape(str(d.get("confirmed", False)))}</span>
-              <span class="tag">simulation {html.escape(str(d.get("simulation_only", False)))}</span>
-            </div>
-            """
-        if not decision_rows:
-            decision_rows = '<div class="empty-state">Nenhuma decisão de capability registrada.</div>'
+        # Support both old and new loop format
+        step_results = detail_run.get("step_results") or detail_run.get("iterations") or []
+        execution_trace = detail_run.get("execution_trace", [])
+        planner = detail_run.get("planner", "unknown")
+        total_iters = detail_run.get("total_iterations_executed") or detail_run.get("max_iterations", 1)
+        task_text = detail_run.get("task", "")
 
-        plan_rows = ""
-        for step in detail_plan.get("steps", []):
-            plan_rows += f"""
-            <div class="signal-row">
-              <span class="signal-name">#{html.escape(str(step.get("step", "-")))} {html.escape(str(step.get("title", "-")))}</span>
-              <span class="tag">{html.escape(str(step.get("kind", "-")))}</span>
-              <span class="tag">CodeAct {html.escape(str(step.get("uses_codeact", False)))}</span>
-            </div>
-            """
-        if not plan_rows:
-            plan_rows = '<div class="empty-state">Plano não encontrado.</div>'
-
-        iteration_rows = ""
-        for it in detail_iterations:
-            stdout = html.escape(str(it.get("stdout_preview", ""))[:220])
-            stderr = html.escape(str(it.get("stderr_preview", ""))[:220])
-            error = html.escape(str(it.get("error") or ""))
-            iteration_rows += f"""
-            <div class="mini-run">
-              <div class="mini-run-title">Iteração {html.escape(str(it.get("iteration", "-")))} · {html.escape(str(it.get("step_kind", "-")))}</div>
-              <div class="mini-run-meta">
-                <span class="tag status-{html.escape(str(it.get("status", "unknown")))}">{html.escape(str(it.get("status", "unknown")))}</span>
-                <span class="tag">CodeAct {html.escape(str(it.get("codeact_run_id") or "-"))}</span>
-              </div>
-              <div class="card-doc" style="margin-top:7px;margin-bottom:0">stdout: {stdout or "-"}<br>stderr: {stderr or "-"}<br>error: {error or "-"}</div>
-            </div>
-            """
-        if not iteration_rows:
-            iteration_rows = '<div class="empty-state">Nenhuma iteração registrada.</div>'
+        # New format trace rendering - collapsible per iteration/step
+        trace_html = ""
+        if execution_trace:
+            current_iter = None
+            for tr in execution_trace:
+                st = html.escape(str(tr.get("status", "-")))
+                step = tr.get("step", {}) or {}
+                title = html.escape(str(step.get("title", step.get("kind", "-"))))
+                kind = html.escape(str(step.get("kind", "")))
+                res_preview = html.escape(str(tr.get("result", ""))[:300])
+                iter_num = tr.get("iteration", 1)
+                if iter_num != current_iter:
+                    if current_iter is not None:
+                        trace_html += "</details>"
+                    current_iter = iter_num
+                    trace_html += f'<details open style="margin-bottom:8px"><summary><strong>Iteração {iter_num}</strong></summary>'
+                trace_html += f'<div class="mini-run"><span class="tag status-{st}">{st}</span> <strong>{kind}</strong>: {title}<div class="card-doc" style="font-size:11px; white-space:pre-wrap">{res_preview}</div></div>'
+            if current_iter is not None:
+                trace_html += "</details>"
+        else:
+            trace_html = '<div class="empty-state">Nenhum trace de execução (ainda rodando em modo legado?)</div>'
 
         agent_loop_detail_html = f"""
         <div class="system-panel" style="margin-top:12px">
-          <h3>Última run detalhada</h3>
+          <h3>Última run do Loop Iterativo do Agente</h3>
           <div class="signal-list">
-            <div class="signal-row"><span class="signal-name">Run</span><span class="tag">{html.escape(str(detail_run.get("run_id", "-")))}</span><span class="tag">{html.escape(str(detail_run.get("status", "-")))}</span><span class="tag">{html.escape(str(detail_run.get("mode", "-")))}</span></div>
-            <div class="signal-row"><span class="signal-name">Planner</span><span class="tag">{html.escape(str(detail_run.get("planner", "-")))}</span><span class="tag">context {html.escape(str(detail_run.get("context_mode", "-")))}</span><span class="tag">pack {html.escape(str(detail_run.get("context_pack_id", "-")))}</span></div>
-            <div class="signal-row"><span class="signal-name">Blocked reason</span><span class="tag">{html.escape(str(detail_run.get("blocked_reason", "-")))}</span></div>
-            <div class="signal-row"><span class="signal-name">Run JSON</span><span class="tag">{html.escape(str(detail_artifacts.get("run_json", "-")))}</span></div>
-            <div class="signal-row"><span class="signal-name">Plan</span><span class="tag">{html.escape(str(detail_artifacts.get("plan_json", "-")))}</span></div>
-            <div class="signal-row"><span class="signal-name">Summary</span><span class="tag">{html.escape(str(detail_artifacts.get("summary_md", "-")))}</span></div>
+            <div class="signal-row"><span class="signal-name">Run</span><span class="tag">{html.escape(str(detail_run.get("run_id", "-")))}</span><span class="tag">{html.escape(str(detail_run.get("status", "-")))}</span></div>
+            <div class="signal-row"><span class="signal-name">Planner</span><span class="tag">{html.escape(planner)}</span><span class="tag">{total_iters} iterações</span></div>
+            <div class="card-doc" style="margin:8px 0">{html.escape(task_text)[:300]}</div>
           </div>
-          <div class="card-doc" style="margin-top:8px;margin-bottom:10px">{html.escape(str(detail_run.get("task", "")))}</div>
-          <h3>Capability decisions</h3>
-          <div class="signal-list">{decision_rows}</div>
-          <h3>Plan steps</h3>
-          <div class="signal-list">{plan_rows}</div>
-          <h3>Iterations</h3>
-          {iteration_rows}
+          <h3>Execution Trace (resultados reais)</h3>
+          <div class="signal-list" style="max-height:220px;overflow:auto">{trace_html}</div>
+          <div class="api-links" style="margin-top:8px">
+            <a class="api-link" href="/api/workspaces/{html.escape(active_workspace)}/agent-iterative-loop/runs/{html.escape(str(detail_run.get("run_id", "")))}" target="_blank">JSON completo</a>
+            <form method="post" action="/runner/run-agent" style="display:inline">
+              <input type="hidden" name="agent_task" value="{html.escape(str(detail_run.get('task', '')))}">
+              <input type="hidden" name="workspace_id" value="{html.escape(active_workspace)}">
+              <button class="btn btn-small" type="submit">Re-executar com mesma tarefa</button>
+            </form>
+          </div>
         </div>
         """
 
     agent_loop_section = f"""
     <div class="section-block">
-      <h3>Agent Iterative Loop</h3>
-      <div class="signal-note" style="margin-bottom:10px">Read-only. Execuções continuam manuais via CLI.</div>
+      <h3>Agent Iterative Loop (novo - funcional via Cockpit)</h3>
+      <div class="signal-note" style="margin-bottom:10px">Use o formulário acima para rodar tarefas reais com o Loop Iterativo do Agente + OpenRouter.</div>
       {agent_loop_rows}
       {agent_loop_detail_html}
       <div class="api-links" style="margin-top:10px">
-        <a class="api-link" href="/api/workspaces/{html.escape(active_workspace)}/agent-iterative-loop/runs">agent-loop runs</a>
+        <a class="api-link" href="/api/workspaces/{html.escape(active_workspace)}/agent-iterative-loop/runs">agent-loop runs API</a>
       </div>
     </div>
     """
@@ -4081,6 +4125,7 @@ def render_page() -> str:
       </div>
       {composer_html}
       {exec_panel}
+      {direct_agent_form}
     </div>
     """
 
@@ -4457,7 +4502,7 @@ def run_once_from_cockpit(llm_enabled: str = "1", model: str = "dev-gemini-fast"
     return ok, output, run_dir
 
 
-def run_agent_from_cockpit(model: str = "dev-coder", offline: bool = False, workspace_id: str | None = None) -> tuple[bool, str, str]:
+def run_agent_from_cockpit(model: str = "dev-coder", offline: bool = False, workspace_id: str | None = None, task: str = None, profile: str = "software-engineer") -> tuple[bool, str, str]:
     model = (model or "dev-coder").strip()
 
     allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:/")
@@ -4478,6 +4523,36 @@ def run_agent_from_cockpit(model: str = "dev-coder", offline: bool = False, work
     env["AIW_USE_CONTEXT_PACK"] = "1"
     if offline:
         env["AIW_AGENT_OFFLINE"] = "1"
+
+    # Para uso real (não offline): priorizamos o novo Loop Iterativo do Agente em aiw/
+    if not offline:
+        try:
+            if str(ROOT) not in sys.path:
+                sys.path.insert(0, str(ROOT))
+            from aiw import load_profile
+            from aiw.agent.iterative_loop import run_agent_iterative_loop_once
+
+            prof = load_profile(profile or "software-engineer").copy()
+            if model:
+                prof["default_model"] = model  # override for explicit OpenRouter model selection
+            task_text = task or "Tarefa submetida pelo Cockpit (desenvolvimento real com OpenRouter)"
+            res = run_agent_iterative_loop_once(
+                workspace_id=ws_id,
+                task=task_text,
+                dry_run=False,
+                execute=True,
+                confirm_agent_loop=True,
+                max_iterations=4,
+                task_source="cockpit",
+                profile=prof,
+            )
+            output = json.dumps(res, indent=2, ensure_ascii=False)
+            run_id = res.get("run", {}).get("run_id", "")
+            run_dir = f".aiw/workspaces/{ws_id}/agent-iterative-loop/runs/{run_id}" if run_id else ""
+            return bool(res.get("ok")), output, run_dir
+        except Exception as e:
+            # fallback para legado
+            pass
 
     try:
         completed = subprocess.run(
@@ -5261,8 +5336,12 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/api/workspaces/") and path.endswith("/agent-iterative-loop/runs"):
             ws_id = path[len("/api/workspaces/"):-len("/agent-iterative-loop/runs")].strip("/")
-            from aiw_workspace.agent_iterative_loop import list_agent_loop_runs
-            payload = list_agent_loop_runs(ws_id)
+            try:
+                from aiw.agent.iterative_loop import list_agent_loop_runs as _list
+                payload = _list(ws_id)
+            except Exception:
+                from aiw_workspace.agent_iterative_loop import list_agent_loop_runs as _list
+                payload = _list(ws_id)
             self.send_json(payload, status=200 if payload.get("ok") else 404)
             return
 
@@ -5270,8 +5349,12 @@ class Handler(BaseHTTPRequestHandler):
             parts = path.split("/")
             ws_id = parts[3]
             run_id = parts[6]
-            from aiw_workspace.agent_iterative_loop import read_agent_loop_run
-            payload = read_agent_loop_run(ws_id, run_id)
+            try:
+                from aiw.agent.iterative_loop import read_agent_loop_run as _read
+                payload = _read(ws_id, run_id)
+            except Exception:
+                from aiw_workspace.agent_iterative_loop import read_agent_loop_run as _read
+                payload = _read(ws_id, run_id)
             self.send_json(payload, status=200 if payload.get("ok") else 404)
             return
 
@@ -6065,8 +6148,10 @@ class Handler(BaseHTTPRequestHandler):
         elif path in ("/runner/run-agent", "/runner/run-agent-offline"):
             model = form.get("model", ["dev-coder"])[0]
             workspace_id = form.get("workspace_id", [""])[0]
+            agent_task = form.get("agent_task", [""])[0] or "Tarefa enviada via Cockpit"
+            prof_name = form.get("profile", ["software-engineer"])[0]
             offline = path == "/runner/run-agent-offline"
-            ok, output, generated_run = run_agent_from_cockpit(model, offline=offline, workspace_id=workspace_id)
+            ok, output, generated_run = run_agent_from_cockpit(model, offline=offline, workspace_id=workspace_id, task=agent_task, profile=prof_name)
             redirect = f"/run?path={quote(generated_run)}" if generated_run else "/"
         elif path == "/action/approve":
             ok, output = run_action("approve", run_path)
@@ -6108,6 +6193,25 @@ class Handler(BaseHTTPRequestHandler):
 
         if not ok:
             self.send_json({"error": "action_failed", "output": output}, status=400)
+            return
+
+        if "run-agent" in path and not offline:
+            # Mostrar direto o trace detalhado em vez de redirect genérico
+            self.send_response(200)
+            self.send_header("Content-type", "text/html; charset=utf-8")
+            self.end_headers()
+            trace_html = f"<pre style='white-space:pre-wrap;'>{html.escape(output)}</pre>"
+            body = f"""
+            <html><head><title>Resultado do Agente</title>
+            <style>body {{ font-family: monospace; padding: 20px; }} </style>
+            </head><body>
+            <h1>Resultado do Loop Iterativo do Agente</h1>
+            <p><a href="/">← Voltar ao Cockpit</a> | <a href="/runner/run-agent">Nova tarefa</a></p>
+            {trace_html}
+            <p>Use o botão Re-executar no Cockpit para rodar novamente com a mesma tarefa.</p>
+            </body></html>
+            """
+            self.wfile.write(body.encode("utf-8"))
             return
 
         self.send_response(303)

@@ -1,137 +1,129 @@
-# AI Workbench
+# AI Workbench (AIW)
 
-AI Workbench é uma bancada local de engenharia de software assistida por agentes de IA, criada primariamente para o ecossistema Nivela e cenários reais de engenharia.
+**AIW is a powerful self-hosted AI Engineering Harness** — inspired by Manus, Devin, Claude Code, OpenHands and similar agent platforms — but designed as **your own controllable product**.
 
-O objetivo do projeto é construir uma infraestrutura própria, controlável e extensível para desenvolvimento de software com agentes autônomos. Inspirada em plataformas como Devin, Manus e ambientes CodeAct, o AI Workbench preza pela liberdade operacional, controle de custos, múltiplos provedores de LLM e adaptação profunda aos projetos locais do usuário.
+## Product Vision
+- **Full control & no limits**: Self-hosted, no vendor lock-in, no usage caps, no external telemetry.
+- **Security & isolation by design**: Every action goes through Policy, Isolation Boundary and Runtime Gates.
+- **Provider-First architecture**: Pluggable Model Providers (OpenRouter, local, etc.), Execution Providers (CodeAct, Docker, Devcontainer), Context Providers.
+- **Intelligent routing & profiles**: Model Router (AUTO mode) + Agent Profiles that drive model choice, execution environment, tools and LLM planning permission.
+- **Real engineering power**: Iterative LLM planning + gated execution, tools (code, git, web, file ops), memory, context, Experiment Lab for systematic testing.
+- **Experimentation first**: Test new models, strategies and providers safely.
 
-**Importante:** Este projeto não é um simples chatbot nem um fork de OpenHands (agora tratado apenas como referência legada). É um Cockpit próprio integrado a um Runtime seguro, com Context Pack e Gateway local de modelos.
+The LLM is just a replaceable brain. The **harness** (providers, router, policy, memory, execution, observability) turns it into a reliable software engineering agent.
 
-## Capacidades atuais
+Current inspiration: bring the autonomy and breadth of Manus/Devin to a fully private, auditable, self-hosted environment with strong guardrails.
 
-A bancada evoluiu drasticamente e hoje contempla:
+See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the complete target layers and **[docs/MIGRATION.md](docs/MIGRATION.md)** for the migration path.
 
-* **AIW Cockpit:** Interface centralizada e operacional para acompanhamento de tarefas e runs.
-* **Agent Online/Offline:** Suporte a execuções com chamadas reais ao LLM ou modos offline/dry-run para testes sem custo.
-* **Tool Runtime seguro:** Engine de tool calling protegida, nativa e acoplada.
-* **Tool Evidence Console:** Console de logs visuais precisos para cada tool invocada.
-* **File OS Seguro:** Tools guardrails para manipulação de arquivos (`file_read`, `file_write`, `file_patch`).
-* **Project Write Mode:** Fluxo imutável de `project_patch_preview`, `project_patch_apply` e `project_patch_rollback`.
-* **Context Pack v1:** Camada estruturada auditável contendo a saúde da documentação.
-* **Search Index Cache:** Cache lexical para buscas instantâneas no Cockpit.
-* **Context Injection:** O runner é capaz de injetar context packs vitais antes da call para o modelo (`--use-context-pack`).
-* **Agent Iterative Loop Offline v1:** Loop manual/foreground com mock planner, Capability Policy `local_offline_v1`, path hygiene, histórico/detalhe read-only no Cockpit e CodeAct seguro sem LLM real.
-* **Agent Loop Regression Smoke:** Harness offline para validar CLI, policy, traversal, path hygiene, CodeAct confirmado e Cockpit read-only opcional com artifacts auditáveis.
-* **Isolation Boundary Gate:** Policy conservadora `host_best_effort` que permite apenas CodeAct fixo offline confirmado e bloqueia LLM planner, codigo dinamico, shell, rede externa e external write ate existir devcontainer/VM.
-* **Runtime Gate:** Camada read-only que decide qual runtime seria necessario (`host_best_effort`, `devcontainer`, `docker`, `vm`) sem iniciar Docker, Devcontainer, VM ou LLM.
-* **Execution Provider v1:** Abstracao read-only/execucao controlada entre Agent Loop e CodeAct; o unico provider funcional atual e `codeact`.
-* **Safe Search Guard:** Busca textual operacional que exige paths explicitos e bloqueia secrets/artifacts antes de leitura.
-* **Operational View:** Visão clara de missões, status de aprovação de handoffs e rejeições de patches.
+## Current Capabilities & Way of Working (2026-07)
 
-## Arquitetura atual
+**Core Loop (Provider-First)**
+- Agent Iterative Loop with LLM-driven planning (OpenRouter + profiles) + real dispatch to Execution Providers.
+- Model Router (AUTO) + Agent Profiles that control allowed models, execution provider (codeact/docker/devcontainer), tools and whether real LLM planning is allowed.
+- Strong Policy + Isolation + Runtime Gates on every action.
 
-```text
-AIW Cockpit
-  ├── Mission Control / Operational View
-  ├── Workspace & Task Navigation
-  ├── Tool Evidence Console
-  ├── Proposed Patches
-  ├── Context Pack Health
-  └── Local Search
+**Tools & Execution**
+- Execution Providers: CodeAct (primary), Docker & Devcontainer (improved stubs with realistic dry-run + basic execution).
+- Tools: file ops, shell, git (log/diff), web_search (live attempt with graceful stub), code execution.
+- Memory layer started (short-term + long-term stubs) integrated into the loop.
 
-Agent Runner
-  ├── online mode via LiteLLM
-  ├── offline/dry-run mode
-  ├── context pack injection
-  └── run artifacts
+**Experimentation & Safety**
+- Experiment Lab (benchmarks + arena across profiles/providers).
+- Full dry-run / offline modes + evidence.
+- Everything gated; nothing executes without confirmation when risky.
 
-Tool Runtime
-  ├── directory_list
-  ├── file_read
-  ├── shell_exec seguro
-  ├── file_write restrito
-  ├── file_patch restrito
-  └── project_patch preview/apply/rollback
+**Way of working**
+1. Profile + task → Router chooses provider/model.
+2. LLM Planner produces structured steps (or fallback).
+3. Loop dispatches steps to the right Execution Provider + tools, accumulating context and memory.
+4. Policy gates + isolation enforced at every step.
+5. Results recorded; Experiment Lab used to measure and improve.
 
-Context Layer
-  ├── search-index.json
-  ├── context-pack.json
-  └── context-used por run
+See recent progress in the Architecture document and the wiring in `aiw/agent/iterative_loop.py`.
 
-LiteLLM Gateway
-  └── aliases dev-fast/dev-coder/dev-review...
-```
+**Target architecture & migration**: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/MIGRATION.md](docs/MIGRATION.md).
 
-## Segurança e Limites
+**Do not add major new features to the legacy monolith (`aiw_workspace/`).** New code targets the `aiw/` structure.
 
-Este projeto segue regras estritas de infraestrutura local:
-* **`.env` bloqueado:** Impedido de ser lido ou patcheado ativamente.
-* **Segredos mascarados:** Resumos do indexer varrem paths e ocultam padrões de secrets como `[masked]`.
-* **Path traversal bloqueado:** Bloqueio forte no Tool Runtime contra `../` saindo da base do projeto.
-* **Shell restrito:** Operações mutáveis perigosas via CLI requerem aprovação ou são sumariamente negadas em background.
-* **Patches imutáveis:** Patches rodam sempre em preview e exigem apply via UI com garantias de rollback (backups persistidos).
-* **Sem dependência externa:** O indexador léxico é python puro nativo, sem provider online para montar vetores do repositório neste estágio.
-* **Artefatos isolados:** Logs de run e tools são marcados como temporários e não compõem o histórico Git.
+## Security & Working Principles
 
-## Como rodar
+- Everything is gated by Policy / Isolation Boundary / Runtime Gate.
+- Prefer dry-run and evidence.
+- New development targets the clean `aiw/` Provider-First packages.
+- Legacy lives in `aiw_workspace/` only during the migration bridge.
 
-Inicialize o painel principal na interface web (default porta 4000 ou parametrizada):
+See the full current state, tools, and how we work in:
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [docs/guides/](docs/guides/)
+- Recent code in `aiw/agent/`, `aiw/providers/`, `aiw/memory/`, `aiw/experiment/`
+
+## Useful commands (current)
 
 ```bash
-# Iniciar o AIW Cockpit (background server + browser)
-AIW_COCKPIT_OPEN_BROWSER=0 AIW_LLM_ENABLED=1 AIW_MODEL=dev-coder ./scripts/aiw-cockpit
+# Agent loop with current wiring (profile + router + providers)
+./scripts/aiw-agent-loop --workspace sandbox-test --task "your engineering task" --profile software-engineer --dry-run --once
 
-# Iniciar uma run em modo Offline para testes e Dry-run (sem chamar a API do modelo)
-AIW_AGENT_OFFLINE=1 AIW_USE_CONTEXT_PACK=1 ./scripts/aiw-runner-agent --offline
-
-# Rodar a suíte de Tool Smoke Test atestando restrições de segurança
-./scripts/aiw-tool-smoke
-
-# Reconstruir o índice de contexto de força bruta
-python3 -m aiw_context.indexer
-
-# Rodar o Agent Iterative Loop offline em dry-run
-./scripts/aiw-agent-loop --workspace aiw --task "Validate offline iterative loop" --once --dry-run
-
-# Rodar a regressao offline do Agent Loop
-./scripts/aiw-agent-loop-regression-smoke --workspace aiw
-
-# Avaliar o Isolation Boundary sem executar nada
-./scripts/aiw-isolation-gate --workspace aiw --operation fixed_codeact_python_eval --mode offline --confirmed
-
-# Avaliar o Runtime Gate sem iniciar runtimes
-./scripts/aiw-runtime-gate --capability codeact_sandbox --operation python_eval_fixed
-
-# Inspecionar Execution Providers sem executar codigo
+# List execution providers (codeact + docker + devcontainer)
 ./scripts/aiw-execution-provider --list
 
-# Buscar texto com guardrails de escopo
-./scripts/aiw-safe-search "isolation_profile" --paths aiw_workspace docs/runbooks README.md
+# Quick experiment
+python3 -c 'from aiw.experiment import run_benchmark; print(run_benchmark(dry=True))'
 ```
 
-O regression smoke registra `external_network_used=false` e diferencia GETs locais do Cockpit com `localhost_http_used=true` apenas quando `--with-cockpit` e usado. Validacoes textuais devem usar paths explicitos, nunca busca ampla em `.`.
-O Isolation Boundary registra `isolation_profile=host_best_effort`; LLM real, codigo dinamico e shell continuam bloqueados por policy ate existir isolamento forte.
-O Runtime Gate registra `runtime_required`; nesta etapa `devcontainer`, `docker` e `vm` sao apenas metadata e nao sao iniciados.
-O Execution Provider registra quem executaria a operacao; por enquanto apenas `codeact` delega ao CodeAct Sandbox existente.
-Use `./scripts/aiw-safe-search` em vez de `grep -R` quando houver risco de varrer secrets ou artifacts locais.
+For full operational cockpit and older flows, see the scripts and runbooks (many are historical).
 
+## Como começar a usar o AIW HOJE para desenvolver (prioridade máxima agora)
 
-## Estado operacional atual
+Entendi perfeitamente. O objetivo mudou: **fazer o AIW útil para desenvolvimento real o mais rápido possível**, para você não precisar pular para Hermes/Odysseus hoje.
 
-O AIW possui hoje um fluxo local e auditável:
+### Setup em 2 minutos:
 
-GitHub Intake
-→ Integration Inbox
-→ Patch Intent
-→ Agent Queue
-→ LLM Queue Guard
-→ Patch Preview
-→ Validation Plan
-→ Review Gate
-→ Evidence Bundle
-→ Evidence Export
-→ Integration Outbox
-→ Integration Worker CLI
-→ External Worker Policy
+1. Tenha `OPENROUTER_API_KEY` com saldo (recarregue agora se precisar).
+
+2. Rode com execução real:
+
+```bash
+./scripts/aiw-agent-loop \
+  --workspace seu-projeto \
+  --task "Analise o código do módulo principal, identifique problemas e faça uma refatoração pequena e segura" \
+  --profile software-engineer \
+  --execute \
+  --confirm-agent-loop \
+  --max-iterations 5
+```
+
+O que o Loop Iterativo do Agente faz em modo real:
+- Chama OpenRouter de verdade para planejar
+- Executa múltiplas iterações
+- Usa ferramentas reais (git, web, execução de código Python)
+- O CodeAct provider pode fazer edições quando o plano pedir (sujeito à policy de segurança)
+- Mostra execution_trace detalhado no final
+
+Melhorias recentes para uso real:
+- Ações mais úteis para desenvolvimento (não só prints)
+- Suporte melhor a iterações com contexto acumulado
+- Rastreamento claro do que foi executado
+
+### Interface funcional (Cockpit - comece por aqui)
+
+```bash
+./scripts/aiw-cockpit
+```
+
+Agora tem:
+- Formulário "Executar Agente Direto" com textarea para descrever a tarefa livremente.
+- Seleção de perfil e workspace.
+- Botão que chama o **novo Loop Iterativo do Agente** com execução real + OpenRouter.
+- Resultados e execution_trace aparecem na seção Agent Iterative Loop.
+
+Isso é o início de uma interface real. Podemos melhorar o formulário, adicionar live view, etc. rapidamente.
+
+Se quiser, me diga uma tarefa específica ("Refatore o módulo Y para usar X") que eu preparo/testo o fluxo via código. 
+
+Nenhum daemon externo roda por padrão.
+Nenhuma ação GitHub/Jira é executada pela UI.
+Toda integração externa exige CLI manual, confirmação explícita e policy permitindo.
 
 Nenhum daemon externo roda por padrão.
 Nenhuma ação GitHub/Jira é executada pela UI.

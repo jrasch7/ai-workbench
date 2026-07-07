@@ -1,5 +1,37 @@
 # AIW Runbooks Index
 
+> **Important:** Many documents here are historical. 
+> The authoritative architecture is in [../ARCHITECTURE.md](../ARCHITECTURE.md).
+> All new development must follow the Provider-First model.
+> Migração contínua: código antigo de aiw_workspace/ migrado (CodeAct, queue, worker_loop thinned). Ver MIGRATION.md.
+
+## Current / Aligned with Target Architecture
+- AIW_RUNTIME_GATE.md
+- AIW_EXECUTION_PROVIDER.md
+- AIW_ISOLATION_BOUNDARY.md
+- AIW_AGENT_ITERATIVE_LOOP.md
+- AIW_CODEACT_SANDBOX.md
+- AIW_TOOL_REGISTRY.md
+- AIW_SAFE_SEARCH.md
+- AIW_AGENT_CONTEXT_INJECTION.md
+- AIW_AGENT_OFFLINE_MODE.md
+- AIW_FOREGROUND_WORKER_LOOP.md
+- AIW_AGENT_QUEUE_FOREGROUND_DISPATCHER.md
+- AIW_GITHUB_INTAKE_CLI.md
+- AIW_INTEGRATION_OUTBOX.md
+- AIW_INTEGRATION_WORKER_CLI.md
+
+## Cockpit & Observability
+- AIW_COCKPIT_*.md (various — review for alignment with new interfaces)
+
+See `historical/` for everything else.
+
+See [../MIGRATION.md](../MIGRATION.md) and [../ARCHITECTURE.md](../ARCHITECTURE.md).
+
+See [../MIGRATION.md](../MIGRATION.md) for reorganization status.
+
+---
+
 Este diretório contém os guias operacionais (Runbooks) documentando as peças, integrações e fluxos vitais do AI Workbench. 
 
 ## Cockpit (Interface & Orquestração)

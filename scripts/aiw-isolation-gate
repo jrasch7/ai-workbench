@@ -11,8 +11,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.cwd()))
 
-from aiw_workspace.isolation_boundary import evaluate_isolation_boundary
-from aiw_workspace.profiles import resolve_workspace
+from aiw.policy import evaluate_isolation_boundary
+from aiw_workspace.profiles import resolve_workspace  # still for workspace, will align later
 
 
 def main():

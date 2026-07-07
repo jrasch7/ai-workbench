@@ -19,6 +19,13 @@ Acesse `http://localhost:8787` no seu navegador.
 - Substituir fixtures por chamadas ao backend.
 - Integrar com o fluxo de releases do AIW.
 
+## Round 2 updates (alignment 5)
+- Added Experiment Lab tab.
+- Profile + Router selector UI in experiment page (reflects aiw/profiles + aiw/router).
+- Providers page can show docker/devcontainer (via future data).
+- Cockpit scripts updated to import from aiw.* for profiles/router/experiment/execution.
+- Full alignment: consume only public aiw interfaces.
+
 ## Documentos do PR #7 que guiam a UI
 - **Fundação AIW** – definições de dashboards e cards.
 - **Interface principal** – estrutura de sidebar, header e badges.

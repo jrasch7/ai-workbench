@@ -12,7 +12,8 @@ from pathlib import Path
 # sys.argv fixed
 sys.path.insert(0, str(Path.cwd()))
 
-from aiw_workspace.worker_loop import run_worker_loop_once, run_worker_loop_watch
+# Prefer aiw/ após migração
+from aiw_workspace.worker_loop import run_worker_loop_once, run_worker_loop_watch  # thin delegate
 
 def main():
     parser = argparse.ArgumentParser(description="AIW Foreground Worker Loop CLI")

@@ -1,7 +1,9 @@
 from dataclasses import dataclass
 from typing import Any
 
-from .codeact_sandbox import run_codeact_action, validate_codeact_action
+from aiw.interfaces.execution_provider import ExecutionProvider as BaseExecutionProvider
+# Migrado: usa versão atualizada em aiw
+from aiw.providers.execution.codeact_sandbox import run_codeact_action, validate_codeact_action
 from .runtime_gate import RUNTIME_PROFILE
 
 
@@ -14,14 +16,17 @@ CODEACT_SUPPORTED_OPERATIONS = {
 
 
 @dataclass(frozen=True)
-class CodeActExecutionProvider:
-    name: str = CODEACT_PROVIDER_NAME
+class CodeActExecutionProvider(BaseExecutionProvider):
+    _name: str = CODEACT_PROVIDER_NAME
     version: str = EXECUTION_PROVIDER_VERSION
     capability: str = "codeact_sandbox"
 
+    def name(self) -> str:
+        return self._name
+
     def describe(self) -> dict:
         return {
-            "name": self.name,
+            "name": self.name(),
             "version": self.version,
             "capability": self.capability,
             "kind": "codeact_sandbox",
@@ -38,7 +43,7 @@ class CodeActExecutionProvider:
             action = _fixed_probe_action()
         result = validate_codeact_action(action)
         return {
-            "provider": self.name,
+            "provider": self.name(),
             "version": self.version,
             "valid": result.get("status") == "ok",
             "validation": result,
@@ -54,7 +59,7 @@ class CodeActExecutionProvider:
         validation = self.validate(action)
         supported = self.supports_operation(operation)
         return {
-            "provider": self.name,
+            "provider": self.name(),
             "version": self.version,
             "workspace_id": workspace_id,
             "operation": operation,
@@ -89,19 +94,21 @@ def _fixed_probe_action() -> dict:
 
 
 def list_execution_providers() -> list[dict]:
-    return [CodeActExecutionProvider().describe()]
+    from aiw.providers.execution.registry import get_execution_provider_registry
+    reg = get_execution_provider_registry()
+    return [reg.get(name).describe() for name in reg.list()] if reg.list() else [CodeActExecutionProvider().describe()]
 
 
 def get_execution_provider(name: str = CODEACT_PROVIDER_NAME) -> CodeActExecutionProvider | None:
-    if name == CODEACT_PROVIDER_NAME:
-        return CodeActExecutionProvider()
-    return None
+    # Aligned
+    from aiw.providers.execution.registry import get_execution_provider_registry
+    return get_execution_provider_registry().get(name) or CodeActExecutionProvider() if name == CODEACT_PROVIDER_NAME else None
 
 
-def provider_for_capability(capability_name: str) -> CodeActExecutionProvider | None:
-    if capability_name == "codeact_sandbox":
-        return CodeActExecutionProvider()
-    return None
+def provider_for_capability(capability_name: str, exec_provider_name: str = None) -> CodeActExecutionProvider | None:
+    # Aligned: delegate to new bridge
+    from aiw.providers.execution.bridge import provider_for_capability as new_provider_for_capability
+    return new_provider_for_capability(capability_name, exec_provider_name)
 
 
 def describe_execution_provider(name: str) -> dict:

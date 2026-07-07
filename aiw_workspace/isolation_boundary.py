@@ -1,3 +1,13 @@
+# Aligned - lazy imports
+def _get_aiw_evaluate_runtime_gate():
+    from aiw.policy import evaluate_runtime_gate
+    return evaluate_runtime_gate
+
+def _get_aiw_evaluate_isolation_boundary():
+    from aiw.policy import evaluate_isolation_boundary
+    return evaluate_isolation_boundary
+
+# Keep for constants and internal calls
 from .runtime_gate import (
     FIXED_CODEACT_OPERATIONS,
     KNOWN_RUNTIME_OPERATIONS,
@@ -44,6 +54,20 @@ def evaluate_isolation_boundary(
     tracked: bool = True,
     isolation_profile: str = ISOLATION_PROFILE,
 ) -> dict:
+    # Aligned: prefer new (lazy)
+    try:
+        return _get_aiw_evaluate_isolation_boundary()(
+            operation=operation,
+            mode=mode,
+            confirmed=confirmed,
+            fixed_code=fixed_code,
+            local_execution=local_execution,
+            tracked=tracked,
+            isolation_profile=isolation_profile,
+        )
+    except Exception:
+        pass
+
     """Return a serializable isolation gate decision without executing anything."""
     decision = _base_decision(operation, isolation_profile)
 
