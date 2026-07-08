@@ -49,6 +49,7 @@ from aiw_workspace import (
 # Adicionado: preview de alterações + botão "Aplicar patch seguro" no render_agent_trace_html (de execution_trace), usa _safe_patch_* prefer aiw_runtime/tools + aiw/ paths.
 try:
     from aiw import load_profile, get_model_router, get_experiment_lab, load_profile as load_agent_profile
+    from aiw import review_gate_for_patch, list_review_gates, apply_reviewed_patch, rollback_reviewed_patch, analyze_changed_lines_coverage
     from aiw.providers.execution import list_execution_providers
     from aiw.providers.model import get_model_provider_registry  # prefer providers
     from aiw.profiles.loader import load_profile as _load_agent_profile  # perfis do agente
@@ -61,6 +62,11 @@ except Exception:
     get_model_provider_registry = None
     _load_agent_profile = None
     evaluate_runtime_gate = None
+    review_gate_for_patch = None
+    list_review_gates = None
+    apply_reviewed_patch = None
+    rollback_reviewed_patch = None
+    analyze_changed_lines_coverage = None
 
 # Helpers para preferir aiw/ em módulos migrados (github_intake, integration_*)
 # Usados em handlers do cockpit para agent/intake flows. Mantém compat.
@@ -117,9 +123,6 @@ from aiw_workspace import (
     validation_reliability,
     preview_validation_plan_command,
     run_validation_plan_commands,
-    review_gate_for_patch,
-    list_review_gates,
-    apply_reviewed_patch,
     analyze_test_coverage_intent,
     analyze_patch_coverage,
     load_patch_preview,
@@ -6284,7 +6287,8 @@ class Handler(BaseHTTPRequestHandler):
             query = parse_qs(urlparse(self.path).query)
             test_run_id = query.get("test_run_id", [None])[0]
 
-            from aiw_workspace.changed_lines_coverage import analyze_changed_lines_coverage
+            # aiw-first after migration
+            from aiw.patch.changed_lines_coverage import analyze_changed_lines_coverage
             cl_payload = analyze_changed_lines_coverage(ws_id, patch_id, test_run_id)
             return self._respond(cl_payload, 200)
 
@@ -6722,7 +6726,7 @@ class Handler(BaseHTTPRequestHandler):
             patch_id = parts[5]
             confirm = str(request_data.get("confirm", "")).lower() in ("1", "true", "yes", "on") or request_data.get("confirm") is True
             reason = request_data.get("reason", "")
-            from aiw_workspace.patch_gate import rollback_reviewed_patch
+            from aiw.patch.patch_gate import rollback_reviewed_patch
             res = rollback_reviewed_patch(ws_id, patch_id, confirm=confirm, reason=reason)
             self.send_json(res, status=200 if res.get("ok") else 400)
             return

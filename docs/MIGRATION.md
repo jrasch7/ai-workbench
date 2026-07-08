@@ -70,7 +70,8 @@ This document tracks the reorganization from the current state to the target arc
 - Provedores: CodeAct totalmente migrado (`aiw/providers/execution/codeact*`, registry, bridge atualizado). Docker/Devcontainer adapters. Model Provider OpenRouter registrado e usado via Roteador de Modelo + Perfil de Agente. LLMPlanner com fallback controlado.
 - Migração de alto valor (passos recentes): github_intake, integration_outbox, integration_worker, evidence_bundle, patch_review_flow migrados para `aiw/integration/` e `aiw/patch/` (com thin delegates). CodeAct + queue/worker_loop + path hygiene removido do loop principal.
 - `aiw-agent-loop` script prefere aiw/. Reexports em `aiw/__init__.py`.
-- Legacy: ~25-30 arquivos ainda com lógica (thinned delegates onde seguro). Cobertura pesada (coverage_*, test_*, validation_plan, patch_gate, evidence_export, external_worker_policy, agent_dispatcher, profiles.py legado) ainda depende de interconexões. Não big-bang.
+- Legacy: ~25-30 arquivos ainda com lógica (thinned delegates onde seguro). Cobertura pesada (coverage_*, test_*, validation_plan, evidence_export, external_worker_policy, agent_dispatcher, profiles.py legado) ainda depende de interconexões. Não big-bang.
+- **Step 1 approved implemented**: Migrated high-impact `aiw_workspace/patch_gate.py` + `changed_lines_coverage.py` core logic to `aiw/patch/patch_gate.py` and `aiw/patch/changed_lines_coverage.py` (with thin delegates in aiw_workspace/); updated aiw/patch/* (evidence_bundle, patch_review_flow, __init__), aiw/__init__, scripts/aiw-cockpit (prefer aiw/ imports), aiw_workspace/__init__. Behavior preserved. See verification in task.
 - Estado do Loop Iterativo do Agente + Cockpit: **pronto para uso real em desenvolvimento**. Roteador, Perfis de Agente, Provedor de Execução, Execução Real (com confirm), trace completo.
 - Termos PT consistentes aplicados em código, UI e docs ("Loop Iterativo do Agente", "Perfil de Agente", "Provedor de Execução", "Execução Real", "Roteador de Modelo").
 - Cockpit atualizado para formulários e views do Loop; listagem de runs do agente agora funciona via aiw/.
@@ -139,6 +140,25 @@ Subagent implemented:
 - Policy support for auto.
 
 Verification: logic present, E2E flows work in dry (gated in real without full confirm).
+
+## Implemented approved Step 1 (subagent): Migrate 2-3 high-impact modules
+- patch_gate.py + changed_lines_coverage.py moved to `aiw/patch/` (full logic primary).
+- `aiw_workspace/*` now thin delegates.
+- Updated `aiw/patch/__init__.py`, evidence/patch_review_flow bridges, `aiw/__init__.py` reexports, `scripts/aiw-cockpit`, callers.
+- aiw-first imports preferred; full compat for legacy paths.
+- Verified: imports from aiw / aiw.patch / aiw_workspace / aiw reexports all work; gate calls behave identically.
+- MIGRATION updated.
+
+## All 5 Approved Steps (user: "Aprovado, segue") — COMPLETE (2026-07-08)
+1. Migration (patch_gate + changed_lines_coverage) → aiw/patch + delegates.
+2. Full autonomous git/PR (commit+push+gh for aiw persistent+validated, relaxed confirm via autonomous_persistent).
+3. Deeper RAG (simple BOW+cosine embeddings + hybrid + richer injection for persistent missions).
+4. E2E multi-mission daemon test (_test_multi_daemon_persistent + regression smoke extension; ok=True with start/resume/queue/monitor/auto-PR).
+5. Policy + browser (is_trusted_ws relax for aiw; web_fetch follow/extract actions + _build detection).
+
+All subagents completed (or core landed + verified). Direct surgical polish + cycle fixes + docs updates applied. Full regression + persistent flows passing. See per-step notes above + verification in chat.
+
+Fresh analysis + next proposal below.
 
 ## Implemented approved step 2: Full autonomous git/PR for persistent validated runs on aiw ws
 
@@ -461,11 +481,38 @@ Gaps reduzidos vs Manus/Devin: agora tem daemon 24/7 (threaded, cockpit-driven);
 
 **Próximos 5 passos concretos aprovados (2026-07-08) — "Aprovado, segue"**
 
-1. Migrate 2-3 more high-impact modules (e.g. patch_gate.py + coverage/validation) to aiw/ with thin delegates + reexports; update callers to prefer aiw/.
+1. ~~Migrate 2-3 more high-impact modules (e.g. patch_gate.py + coverage/validation) to aiw/ with thin delegates + reexports; update callers to prefer aiw/.~~ **DONE (step 1)**: patch_gate + changed_lines_coverage to aiw/patch/ + delegates + aiw-first updates.
 2. Full autonomous git/PR — enhance create_pr + loop to do real git commit + push + gh pr create (with run evidence/tests) for aiw ws when persistent + validated + policy allows (reduce extra confirm for trusted ws).
 3. Deeper context/RAG — extend aiw/providers/context/ with simple local embeddings (or reuse existing indexer) + inject richer chunks/symbols + usage into LLMPlanner and loop for long missions.
 4. E2E multi-mission daemon test — add/extend regression smoke (or new test) that starts ≥2 persistent daemons via worker/cockpit, exercises resume from ckpt, queue drain, auto-PR, and monitor; run via aiw-agent-loop-regression-smoke.
 5. Policy + browser polish — relax a few more caps for aiw ws in runtime_gate/policy when trusted; add basic follow/extract actions to web_fetch (still gated, stdlib+playwright) and expose in _build_rich_action.
+
+## Step 4 Implementado (E2E multi-mission daemon test) — 2026-07-08
+
+**Approved step 4 aplicado (surgical, aiw-first, no breakage):**
+
+- Extended regression smoke (scripts/aiw-agent-loop-regression-smoke + aiw_workspace/agent_loop_regression.py) with daemon flows section.
+- Added `_test_multi_daemon_persistent()` in `aiw/agent/iterative_loop.py` (and integrated `_run_daemon_checks`).
+- Covers exactly:
+  - Start ≥2 persistent daemons (direct `start_persistent_agent_daemon` + via `get_persistent_worker` / queue).
+  - Resume from ckpt (`resume_run_id` + `_load_checkpoint` exercised).
+  - Queue drain (enqueue tasks; worker dequeues + starts daemons).
+  - Auto-PR path (mocked `create_pr` + forced validate step in plan for detect + has_real_execution).
+  - Monitor: `list_running_daemons` + `list_daemon_workers` (plus resume_all).
+- Uses aiw/ relative imports throughout. execute=False for most (safe); one controlled + patch for auto-pr (avoids real git/gh).
+- Updated ISOLATION_BOUNDARY / run.json / summary.md to `daemon_used: true` (now exercised in controlled short threads inside smoke proc).
+- Smoke script now prints the daemon test result in pre-exec python -c.
+- Verification: `./scripts/aiw-agent-loop-regression-smoke --workspace aiw` (and python -c parts) now shows "multi_mission_daemon_e2e" + "daemon_monitors..." checks (passed).
+- Updated this MIGRATION; added note to runbook.
+
+**Files touched (surgical):**
+- aiw/agent/iterative_loop.py (added test helper)
+- aiw_workspace/agent_loop_regression.py (_run_daemon_checks + integrate + boundary updates)
+- scripts/aiw-agent-loop-regression-smoke (call in -c)
+- docs/MIGRATION.md
+- docs/runbooks/AIW_AGENT_LOOP_REGRESSION_SMOKE.md (note)
+
+Closes the "E2E multi-missão tests dedicados" gap for daemon-next.
 
 ## Step 5 Implementado (Policy + browser polish) — 2026-07-08
 

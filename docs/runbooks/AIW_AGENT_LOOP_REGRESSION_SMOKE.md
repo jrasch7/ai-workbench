@@ -69,7 +69,7 @@ checks_passed
 checks_failed
 llm_real_used=false
 external_write_used=false
-daemon_used=false
+daemon_used=true
 external_network_used=false
 localhost_http_used=false|true
 cockpit_smoke_used=false|true
@@ -103,6 +103,7 @@ O smoke padrao valida:
 - Shell, rede externa e external write bloqueiam.
 - `run.json` novo e leitura endpoint-like nao expõem `/home/joao/` e usam paths relativos.
 - Leitura de run rejeita traversal como `../x`, `/tmp/x` e traversal codificado.
+- Daemon E2E (step 4): `multi_mission_daemon_e2e` + `daemon_monitors_list_running_and_workers` (start >=2 via start_persistent_agent_daemon/worker; resume ckpt; queue drain; auto-PR mock path; list_running_daemons + list_daemon_workers).
 
 Com `--with-cockpit`, tambem valida que o Cockpit responde via GET local nos endpoints de lista/detalhe read-only do Agent Loop. A pagina inicial do Cockpit e amostrada quando responde dentro do timeout; com muitos artifacts locais, os endpoints JSON continuam sendo o contrato obrigatorio do smoke.
 
@@ -112,12 +113,12 @@ O smoke e local/offline:
 
 - Sem LLM real.
 - Sem GitHub/Jira write.
-- Sem daemon persistente.
+- Daemon flows: exercised controlled (multi-mission E2E via short-lived daemon threads + worker in-process; resume/queue/auto-PR(mock)/monitors; no external side effects, no long-lived bg, no git writes -- see multi_mission_daemon_e2e check).
 - Sem Docker.
 - Sem `curl` ou `wget`.
 - Sem browser automation.
 - Sem `shell=True`.
-- Sem processo em background persistente.
+- Sem processo em background persistente (daemons do teste E2E sao threads curtos dentro do mesmo processo).
 - Sem rede externa. O modo `--with-cockpit` usa apenas HTTP localhost em `127.0.0.1`.
 
 O CodeAct continua sendo host-sandbox best-effort. Ele e exercitado apenas pelo caminho seguro existente do Agent Loop, com codigo fixo e confirmacao explicita.

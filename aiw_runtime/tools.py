@@ -855,7 +855,7 @@ def create_pr(title: str, body: str = "", base: str = "main", head: str | None =
             if not pr_payload_body:
                 try:
                     # fallback to evidence bundle info for payload
-                    from aiw.patch.evidence_bundle import list_evidence_bundles
+                    from aiw.patch.evidence_bundle import list_evidence_bundles  # aiw-first (patch/ migrated; step1 also moved patch_gate/changed_lines for gate flows)
                     eb_res = list_evidence_bundles(ws_id, patch_id)
                     if eb_res.get("bundles"):
                         b = eb_res["bundles"][0]
@@ -1019,9 +1019,10 @@ if __name__ == "__main__":
     parser.add_argument("--message", type=str)
     parser.add_argument("--title", type=str)
     parser.add_argument("--confirm", type=str, default="false")
-    # basic support for web_fetch interactive
+    # basic support for web_fetch interactive + step5 actions
     parser.add_argument("--render-js", type=str, default="false")
     parser.add_argument("--research", type=str, default="false")
+    parser.add_argument("--actions", type=str, default="")  # comma sep e.g. follow,extract
 
     args = parser.parse_args()
 
@@ -1054,7 +1055,8 @@ if __name__ == "__main__":
     elif args.tool == "web_fetch":
         rjs = (getattr(args, "render_js", "false") or "false").lower() in ("true", "1", "yes")
         rsr = (getattr(args, "research", "false") or "false").lower() in ("true", "1", "yes")
-        print(json.dumps(web_fetch(args.path or "", args.max_bytes, render_js=rjs, research=rsr), indent=2))
+        act_list = [a.strip() for a in (getattr(args, "actions", "") or "").split(",") if a.strip()] or None
+        print(json.dumps(web_fetch(args.path or "", args.max_bytes, render_js=rjs, research=rsr, actions=act_list), indent=2))
     elif args.tool == "web_search":
         print(json.dumps(web_search(args.query or ""), indent=2))
     elif args.tool == "git_log":
