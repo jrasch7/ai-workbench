@@ -122,7 +122,7 @@ def validate_shell_command(command_str: str) -> list[str]:
     if base_cmd == "git":
         if len(parts) > 1:
             sub = parts[1]
-            allowed_git = ["status", "diff", "log", "show", "branch", "rev-parse"]
+            allowed_git = ["status", "diff", "log", "show", "branch", "rev-parse", "checkout"]
             if sub not in allowed_git:
                 raise ValueError(f"Subcomando git mutável bloqueado: {sub}")
     elif base_cmd == "bash":
