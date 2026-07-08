@@ -286,9 +286,82 @@ GET /api/workspaces/<workspace_id>/agent-iterative-loop/runs/<run_id>
 - Sem GitHub/Jira write.
 - Sem patch apply.
 - Sem commit/push automatico.
-- Sem scheduler, daemon, tmux, nohup, cron ou systemd.
+- Sem scheduler, daemon, tmux, nohup, cron ou systemd. (agora: daemon 24/7 via queue+persistent implementado abaixo)
 - Regression smoke local/offline disponivel em `./scripts/aiw-agent-loop-regression-smoke --workspace aiw`.
 - Policy local simples; ainda nao substitui isolamento forte nem revisao humana.
+
+## Daemon 24/7 + Persistent Agents (Fluxo Autônomo Long-Running)
+
+Implementado via `aiw/agent/iterative_loop.py` (start_persistent_agent_daemon + checkpoints + relaxed MAX) + `aiw/queue/worker.py` (PersistentAgentWorker) + cockpit wiring + queue disk-backed.
+
+**Uso principal (Cockpit - recomendado):**
+1. `./scripts/aiw-cockpit`
+2. No form "Executar Agente Direto":
+   - Marque "Start as background daemon (24/7 queue worker + multiple runs)"
+   - Preencha Perfil (ex: software-engineer), modelo, tarefa longa.
+   - Submit via botão "Start Daemon (bg persistent)" (ou normal + checkbox).
+3. Monitor: na UI aparece "Daemons: N" + link /api/daemons ; seções de missões persistentes.
+4. Resume: use run_id de checkpoint listado, ou re-submeta com resume.
+
+**CLI equivalente:**
+```bash
+# Start via queue worker (bg)
+python3 -c '
+from aiw.queue import start_daemon_worker, list_daemon_workers
+print(start_daemon_worker("aiw"))
+print(list_daemon_workers("aiw"))
+'
+
+# Ou direto daemon para uma missão (usa thread bg + loop persistent)
+python3 -c '
+from aiw.agent.iterative_loop import start_persistent_agent_daemon, list_running_daemons
+d = start_persistent_agent_daemon("aiw", "Tarefa autônoma longa 24/7: pesquisar e refatorar", profile="software-engineer", execute=True, confirm=True)
+print(d)
+print(list_running_daemons("aiw"))
+'
+
+# Via aiw-agent-loop (foreground mas com persistent/ckpt)
+./scripts/aiw-agent-loop --workspace aiw --task "missão persistente" --persistent --profile software-engineer --execute --confirm-agent-loop --max-iterations 0
+
+# Resume de run_id (checkpoint)
+./scripts/aiw-agent-loop --workspace aiw --run-id ail-xxxx --resume --persistent ...
+
+# Env para unlimited (prático ilimitado, quebra só em !should_continue/policy/stop)
+AIW_PERSISTENT_MAX_ITERATIONS=0 ./scripts/aiw-agent-loop ...
+# (ou export; default 1000, 0 -> 1M interno)
+```
+
+**./scripts/aiw-daemon (via wrapper):**
+O script principal `aiw` suporta subcomando (adicione symlink `ln -s aiw aiw-daemon` ou use `aiw daemon`):
+```bash
+./scripts/aiw daemon aiw   # inicia worker + lista
+# ou direto:
+./scripts/aiw-cockpit  # prefira UI
+```
+
+**Resume / Recovery:**
+- Checkpoints em: `.aiw/workspaces/<ws>/agent-iterative-loop/checkpoints/<run_id>.json`
+- list_running_daemons() lista também de disco.
+- resume_all_checkpoints_as_daemons() helper no queue/worker.
+- Daemon threads são daemon=True (morrem com main); para true 24/7 use nohup/tmux ou cockpit http server rodando.
+
+**Env + Config:**
+- `AIW_PERSISTENT_MAX_ITERATIONS=0` : ilimitado (confie em checkpoints + planner.should_continue + policy gates).
+- Persistência queue: `.aiw/workspaces/<ws>/queue/queue.json` (sobrevive restart).
+- Monitor JSON: `/api/daemons` ou `/api/workspaces/aiw/daemons`
+
+**Segurança:** Todas as gates (policy, runtime, confirm, isolation) passam para o run_agent... subjacente. Auto-PR em persistent success (se validado).
+
+**Smoke/Verify:**
+```bash
+python3 -c '
+from aiw.agent.iterative_loop import _test_daemon_persistent_logic
+print(_test_daemon_persistent_logic())
+'
+./scripts/aiw-agent-loop-regression-smoke --workspace aiw  # (ou partes)
+```
+
+Ver também: aiw/queue/__init__.py , aiw/queue/worker.py , aiw/agent/iterative_loop.py (seção daemon), scripts/aiw-cockpit (start_daemon_agent_from_cockpit).
 
 ## Proximos Passos
 

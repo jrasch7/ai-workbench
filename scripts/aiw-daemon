@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# AIW Persistent 24/7 Daemon launcher (foreground CLI for real bg worker).
+# Usage: ./scripts/aiw-daemon --workspace aiw
+# Starts PersistentAgentWorker + auto-resumes checkpoints as daemons.
+# Keep running for continuous queue intake + persistent agent missions.
+# Prefer aiw/ imports. Companion to cockpit /runner/start-daemon and /api/worker/* .
+
+export PYTHONPATH="$PWD:$PYTHONPATH"
+
+# -u for unbuffered stdout so prints appear immediately even under pipe/redirect (while True keeps process)
+exec python3 -u - "$@" <<'PYTHON'
+import sys
+import argparse
+import time
+import json
+from pathlib import Path
+
+# sys.argv fixed for the heredoc exec pattern (see other aiw-* scripts)
+sys.path.insert(0, str(Path.cwd()))
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="AIW 24/7 foreground daemon (get_persistent_worker + start; resumes checkpoints)"
+    )
+    parser.add_argument("--workspace", default="aiw", help="Workspace ID (default: aiw)")
+    parser.add_argument("--poll", type=float, default=60.0, help="Status print interval in seconds")
+    parser.add_argument("--no-resume", action="store_true", help="Skip calling resume_all_checkpoints_as_daemons on start")
+    args = parser.parse_args()
+
+    ws = args.workspace or "aiw"
+    print(f"[aiw-daemon] Starting persistent worker for workspace={ws} (foreground keep-alive)", flush=True)
+    try:
+        # Prefer aiw imports (now wired via aiw/queue/__init__)
+        from aiw.queue import get_persistent_worker, resume_all_checkpoints_as_daemons
+        w = get_persistent_worker(ws)
+        start_res = w.start()
+        print("[aiw-daemon] worker.start() ->", json.dumps(start_res, indent=2, default=str), flush=True)
+
+        if not args.no_resume:
+            try:
+                rres = resume_all_checkpoints_as_daemons(ws)
+                print("[aiw-daemon] resume_all_checkpoints_as_daemons ->", json.dumps(rres, indent=2, default=str)[:600], flush=True)
+            except Exception as re:
+                print("[aiw-daemon] resume note:", re, flush=True)
+
+        print("[aiw-daemon] Running. Use Ctrl-C to stop. Cockpit /api/worker/* or start-daemon form also control.", flush=True)
+        print("[aiw-daemon] Monitor: /api/daemons or ./scripts/aiw-cockpit", flush=True)
+
+        while True:
+            time.sleep(max(1.0, args.poll))
+            try:
+                desc = w.describe()
+                dlist = w.list_daemons() or {}
+                dcount = len((dlist.get("daemons") or [])) if isinstance(dlist, dict) else 0
+                print(f"[aiw-daemon status] {json.dumps(desc, default=str)} | listed_daemons~{dcount}", flush=True)
+            except Exception as se:
+                print("[aiw-daemon] status err (nonfatal):", se, flush=True)
+    except KeyboardInterrupt:
+        print("\n[aiw-daemon] stopping (SIGINT)")
+        try:
+            w.stop()
+        except Exception:
+            pass
+        sys.exit(0)
+    except Exception as e:
+        print(f"[aiw-daemon] failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+PYTHON

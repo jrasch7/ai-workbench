@@ -65,6 +65,31 @@ case "${1:-}" in
     exec "$AIW_ROOT/scripts/aiw-cockpit" "$@"
     ;;
 
+  daemon)
+    shift
+    cd "$AIW_ROOT"
+    # Delegate to aiw/queue + persistent daemon (for 24/7 usage). Supports ws arg.
+    python3 -c '
+import sys, os
+sys.path.insert(0, ".")
+os.environ.setdefault("AIW_ROOT", ".")
+ws = sys.argv[1] if len(sys.argv) > 1 else "aiw"
+action = (sys.argv[2] if len(sys.argv) > 2 else "start").lower()
+from aiw.queue import start_daemon_worker, stop_daemon_worker, list_daemon_workers, get_persistent_worker
+from aiw.agent.iterative_loop import start_persistent_agent_daemon, list_running_daemons
+print("==> aiw daemon for workspace:", ws, "action:", action)
+if action in ("stop", "kill"):
+    print(stop_daemon_worker(ws))
+elif action == "list":
+    print(list_daemon_workers(ws))
+    print(list_running_daemons(ws))
+else:
+    print(start_daemon_worker(ws))
+    print("daemons:", list_running_daemons(ws))
+    print("tip: use AIW_PERSISTENT_MAX_ITERATIONS=0 for unlimited; resume via --run-id or cockpit")
+' "$@"
+    ;;
+
   doctor-local|local-doctor)
     shift
     cd "$AIW_ROOT"
