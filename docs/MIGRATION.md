@@ -166,7 +166,7 @@ Verification: logic present, E2E flows work in dry (gated in real without full c
 - Ainda max iters (100 em persistent); não ilimitado sem intervenção.
 - PR auto bom, mas gated (policy/confirm); não 100% sem humano para risky.
 - Browser: fetch básico; não interativo/full (sem JS, forms, auth).
-- RAG: symbols + lexical; não full semantic embeddings over large codebases.
+- RAG: symbols + lexical + simple BOW embeddings (step 3 done); não full semantic embeddings over large codebases.
 - Autonomia: loop por invocação (mesmo persistent); falta daemon 24/7 que monitore queue/issues e rode missões longas sem re-invoke.
 - Planejamento: LLM + injeções; não tree-of-thoughts ou self-reflection profunda.
 - Sandbox: worktree bom, mas não full (sem docker/devcontainer por-run).
@@ -457,7 +457,7 @@ Estado atual (pós 5 passos + worktree + web_fetch + persistent ckpt + auto PR +
 - UI: cockpit start/resume/monitor daemons + trace live.
 - Persist: queue disk + run ckpts + missions.
 - Migração: aiw/queue + aiw/agent/iterative_loop primary para daemon path.
-Gaps reduzidos vs Manus/Devin: agora tem daemon 24/7 (threaded, cockpit-driven); ainda: full browser interativo, embeddings RAG, auto-commit sem confirm em trusted, E2E multi-missão tests dedicados, relax policies.
+Gaps reduzidos vs Manus/Devin: agora tem daemon 24/7 (threaded, cockpit-driven); ainda: full browser interativo, embeddings RAG (agora: simple local BOW/hybrid em local_rag para long missions), auto-commit sem confirm em trusted, E2E multi-missão tests dedicados, relax policies.
 
 **Próximos 5 passos concretos aprovados (2026-07-08) — "Aprovado, segue"**
 
