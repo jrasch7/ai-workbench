@@ -12,8 +12,13 @@ from pathlib import Path
 # sys.argv fixed
 sys.path.insert(0, str(Path.cwd()))
 
-# Prefer aiw/ após migração
-from aiw_workspace.worker_loop import run_worker_loop_once, run_worker_loop_watch  # thin delegate
+# Prefer aiw/ imports para loop (worker é legacy thin), profiles/providers via aiw quando possível.
+# Foco: habilita Cockpit + novo Loop Iterativo do Agente (worker separado).
+try:
+    # worker_loop ainda não totalmente em aiw/queue (thinned delegate)
+    from aiw_workspace.worker_loop import run_worker_loop_once, run_worker_loop_watch
+except Exception:
+    from aiw_workspace.worker_loop import run_worker_loop_once, run_worker_loop_watch  # thin delegate
 
 def main():
     parser = argparse.ArgumentParser(description="AIW Foreground Worker Loop CLI")

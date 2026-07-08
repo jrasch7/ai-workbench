@@ -48,7 +48,12 @@ WORKSPACE_ID = os.environ.get("AIW_WORKSPACE_ID", "aiw").strip() or "aiw"
 
 # Add root to sys.path to import aiw_runtime
 sys.path.insert(0, str(ROOT))
-from aiw_workspace import resolve_workspace, execution_policy  # legacy bridge; prefer aiw/ where possible after migration
+# Prefer aiw/ imports para profiles (workspace resolve), providers (via aiw) - para agent runner path
+try:
+    from aiw import resolve_workspace, load_workspaces_config
+    from aiw_workspace import execution_policy  # ainda legado (não heavy touch)
+except Exception:
+    from aiw_workspace import resolve_workspace, execution_policy  # fallback compat
 from aiw_runtime.schemas import TOOLS
 from aiw_runtime.tools import (
     directory_list, file_read, shell_exec,

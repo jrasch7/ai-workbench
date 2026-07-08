@@ -9,6 +9,7 @@ import re
 import socketserver
 import subprocess
 import sys
+import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -39,15 +40,57 @@ from aiw_workspace import (
     load_workspaces_config as load_workspace_profiles,
     resolve_workspace as resolve_workspace_profile,
 )
-# Aligned imports (Round 2 mover 4/5)
+# Prefer aiw/ imports para loop, profiles (perfis de agente), providers (Provedor de Modelo/Execução)
+# e módulos migrados que impactam Cockpit + Loop Iterativo do Agente (github_intake, integration_* , runtime_gate/policy).
+# Usa try/except para manter compat total com legado durante transição cirúrgica.
+# Integração completa do aiw/agent/iterative_loop no Cockpit: "Executar Agente Direto" + botões usam run_agent_iterative_loop_once;
+# Perfil de Agente, modelos OpenRouter (free), trace rico com collapsibles, re-exec, display direto pós-submit, termos PT.
+# Atualizado: runtime_gate migrado para aiw/policy + integration helpers agora preferem aiw/ (sem aiw_workspace.profiles).
+# Adicionado: preview de alterações + botão "Aplicar patch seguro" no render_agent_trace_html (de execution_trace), usa _safe_patch_* prefer aiw_runtime/tools + aiw/ paths.
 try:
-    from aiw import load_profile, get_model_router, get_experiment_lab
+    from aiw import load_profile, get_model_router, get_experiment_lab, load_profile as load_agent_profile
     from aiw.providers.execution import list_execution_providers
+    from aiw.providers.model import get_model_provider_registry  # prefer providers
+    from aiw.profiles.loader import load_profile as _load_agent_profile  # perfis do agente
+    from aiw.policy import evaluate_runtime_gate  # Porta de Runtime / runtime_gate prefer aiw/ (migração cirúrgica)
 except Exception:
     load_profile = None
     get_model_router = None
     get_experiment_lab = None
     list_execution_providers = None
+    get_model_provider_registry = None
+    _load_agent_profile = None
+    evaluate_runtime_gate = None
+
+# Helpers para preferir aiw/ em módulos migrados (github_intake, integration_*)
+# Usados em handlers do cockpit para agent/intake flows. Mantém compat.
+def _get_aiw_or_legacy_integration(mod_name: str):
+    """Retorna módulo preferindo aiw.integration (Loop/Cockpit) com fallback legado.
+    Atualizado em migração cirúrgica para integration (resolve agora via aiw/).
+    Termos: Intake de GitHub, Outbox de Integração, Worker de Integração, Porta de Runtime."""
+    try:
+        if mod_name == "github_intake":
+            import aiw.integration.github_intake as m
+            return m
+        elif mod_name == "integration_outbox":
+            import aiw.integration.integration_outbox as m
+            return m
+        elif mod_name == "integration_worker":
+            import aiw.integration.integration_worker as m
+            return m
+    except Exception:
+        pass
+    # fallback legado (thin delegates em aiw_workspace)
+    if mod_name == "github_intake":
+        import aiw_workspace.github_intake as m
+        return m
+    elif mod_name == "integration_outbox":
+        import aiw_workspace.integration_outbox as m
+        return m
+    elif mod_name == "integration_worker":
+        import aiw_workspace.integration_worker as m
+        return m
+    raise ImportError(f"unknown integration mod {mod_name}")
 
 # Legacy workspace imports (being migrated - used for compat)
 from aiw_workspace import (
@@ -91,6 +134,16 @@ MODEL_OPTIONS = [
     ("Grande", "dev-large"),
     ("Revisão", "dev-review"),
     ("Arquitetura", "dev-architect"),
+]
+
+# Modelos explícitos OpenRouter para o Loop Iterativo do Agente / "Executar Agente Direto" (formulário; inclui free models)
+AGENT_OPENROUTER_MODELS = [
+    ("gpt-oss-120b:free (OpenRouter grátis/rápido)", "openai/gpt-oss-120b:free"),
+    ("claude-3.5-sonnet (Anthropic)", "anthropic/claude-3.5-sonnet"),
+    ("gpt-4o (OpenAI)", "openai/gpt-4o"),
+    ("gemini-flash-1.5 (Google)", "google/gemini-flash-1.5"),
+    ("llama-3.3-70b (Meta, free)", "meta-llama/llama-3.3-70b-instruct:free"),
+    ("qwen-2.5-coder-32b", "qwen/qwen-2.5-coder-32b-instruct"),
 ]
 
 
@@ -324,6 +377,154 @@ def active_workspace_id(workspace_id: str | None = None) -> str:
     if env_ws:
         return normalize_workspace_id(env_ws)
     return normalize_workspace_id(load_workspaces_config().get("active", "aiw"))
+
+
+# Helper para aplicar patch seguro preferindo paths aiw/ (runtime/tools é a fonte; compat com patch flows).
+# Usado pelos botões "Aplicar patch seguro" integrados na view de agent trace / Loop Iterativo do Agente.
+# Mantém uso de aiw_runtime/tools (project_patch_*) + env workspace; prefere aiw/ se wrappers futuros expostos.
+def _safe_patch_apply(patch_id: str) -> dict:
+    """Aplica patch seguro via project_patch_apply (preview -> applied)."""
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    os.environ.setdefault("AIW_WORKSPACE_ID", active_workspace_id())
+    try:
+        from aiw_runtime.tools import project_patch_apply
+        res = project_patch_apply(patch_id)
+        return res if isinstance(res, dict) else {"ok": bool(res), "result": res}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "patch_id": patch_id}
+
+
+def _safe_patch_rollback(patch_id: str) -> dict:
+    """Rollback de patch aplicado (safe)."""
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    os.environ.setdefault("AIW_WORKSPACE_ID", active_workspace_id())
+    try:
+        from aiw_runtime.tools import project_patch_rollback
+        res = project_patch_rollback(patch_id)
+        return res if isinstance(res, dict) else {"ok": bool(res), "result": res}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "patch_id": patch_id}
+
+def _safe_create_pr(patch_id: str = "", title: str = "", body: str = "", confirm: bool = False) -> dict:
+    """Call create_pr with confirm from cockpit form. Uses patch context for title/body if available. Passes patch_id for full flow + evidence/outbox payload."""
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    os.environ.setdefault("AIW_WORKSPACE_ID", active_workspace_id())
+    try:
+        from aiw_runtime.tools import create_pr
+        # load patch context via workspace (not from runtime.tools)
+        if (not title or not body) and patch_id:
+            try:
+                prev = None
+                try:
+                    from aiw_workspace.test_runner import load_patch_preview as _load_pp
+                    prev = _load_pp(active_workspace_id(), patch_id) or {}
+                except Exception:
+                    for pdir in [
+                        ROOT / ".aiw" / "workspaces" / active_workspace_id() / "patches",
+                        ROOT / ".aiw" / "patches",
+                    ]:
+                        pf = pdir / f"{patch_id}.json"
+                        if pf.exists():
+                            prev = json.loads(pf.read_text(encoding="utf-8"))
+                            break
+                if isinstance(prev, dict):
+                    title = title or f"AIW patch {patch_id}"
+                    body = body or (prev.get("diff", "")[:3000] if prev.get("diff") else prev.get("reason", ""))
+            except Exception:
+                pass
+        res = create_pr(title or "AIW automated change", body or "", confirm=confirm, use_integration=True, patch_id=patch_id)
+        return res if isinstance(res, dict) else {"ok": bool(res), "result": res}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "patch_id": patch_id}
+
+
+# === Basic persistent missions (Step 4) ===
+# Store in .aiw/workspaces/{ws}/missions/  ; extend agent runs with mission_id for grouping.
+# Runs remain compatible with current aiw/agent/iterative_loop run.json .
+def _now_iso_cockpit() -> str:
+    import datetime
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _get_missions_dir(workspace_id: str | None = None) -> Path:
+    ws = active_workspace_id(workspace_id)
+    d = ROOT / ".aiw" / "workspaces" / ws / "missions"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def create_mission(workspace_id: str | None = None, title: str = "Missão", task: str = "") -> dict:
+    ws = active_workspace_id(workspace_id)
+    mid = "mis-" + uuid.uuid4().hex[:8]
+    mdir = _get_missions_dir(ws) / mid
+    mdir.mkdir(parents=True, exist_ok=True)
+    mission = {
+        "mission_id": mid,
+        "workspace_id": ws,
+        "title": title or "Missão sem título",
+        "task": (task or "")[:500],
+        "created_at": _now_iso_cockpit(),
+        "status": "active",
+        "run_ids": [],
+    }
+    (mdir / "mission.json").write_text(json.dumps(mission, indent=2, ensure_ascii=False), encoding="utf-8")
+    return mission
+
+
+def list_missions(workspace_id: str | None = None, limit: int = 20) -> list[dict]:
+    mdir = _get_missions_dir(workspace_id)
+    items = []
+    for d in sorted([p for p in mdir.iterdir() if p.is_dir()], key=lambda p: p.stat().st_mtime, reverse=True)[:limit]:
+        mj = d / "mission.json"
+        if mj.exists():
+            try:
+                m = json.loads(mj.read_text(encoding="utf-8"))
+                items.append(m)
+            except Exception:
+                pass
+    return items
+
+
+def get_mission(mission_id: str, workspace_id: str | None = None) -> dict | None:
+    if not mission_id:
+        return None
+    mj = _get_missions_dir(workspace_id) / str(mission_id) / "mission.json"
+    if mj.exists():
+        try:
+            return json.loads(mj.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+    return None
+
+
+def attach_run_to_mission(mission_id: str, run_id: str, workspace_id: str | None = None) -> bool:
+    """Attach run_id to mission; also inject mission_id into the agent's persisted run.json for compatibility."""
+    if not mission_id or not run_id:
+        return False
+    ws = active_workspace_id(workspace_id)
+    mj_path = _get_missions_dir(ws) / mission_id / "mission.json"
+    if not mj_path.exists():
+        return False
+    try:
+        m = json.loads(mj_path.read_text(encoding="utf-8"))
+        if run_id not in m.get("run_ids", []):
+            m.setdefault("run_ids", []).append(run_id)
+            mj_path.write_text(json.dumps(m, indent=2, ensure_ascii=False), encoding="utf-8")
+        # Extend the agent run.json (works with current loop runs on disk)
+        run_j = ROOT / ".aiw" / "workspaces" / ws / "agent-iterative-loop" / "runs" / run_id / "run.json"
+        if run_j.exists():
+            try:
+                rdata = json.loads(run_j.read_text(encoding="utf-8"))
+                rdata["mission_id"] = mission_id
+                run_j.write_text(json.dumps(rdata, indent=2, ensure_ascii=False), encoding="utf-8")
+            except Exception:
+                pass
+        return True
+    except Exception:
+        return False
 
 
 def workspace_root_for_context(workspace_id: str | None = None) -> Path:
@@ -686,7 +887,7 @@ def render_tool_evidence_block(evidence: dict, rel: str) -> str:
             pid = html.escape(tool["patch_id"])
             patch_status = tool.get("patch_status") or "preview"
             if patch_status == "preview":
-                patch_actions = f'''<form method="post" action="/runner/patch/apply" style="display:inline"><input type="hidden" name="patch_id" value="{pid}"><input type="hidden" name="run_path" value="{html.escape(rel)}"><button class="btn btn-run" style="padding:6px 10px;font-size:12px" type="submit">Aplicar</button></form>'''
+                patch_actions = f'''<form method="post" action="/runner/patch/apply" style="display:inline"><input type="hidden" name="patch_id" value="{pid}"><input type="hidden" name="run_path" value="{html.escape(rel)}"><button class="btn btn-run" style="padding:6px 10px;font-size:12px" type="submit">Aplicar patch seguro</button></form>'''
             elif patch_status == "applied":
                 patch_actions = f'''<form method="post" action="/runner/patch/rollback" style="display:inline"><input type="hidden" name="patch_id" value="{pid}"><input type="hidden" name="run_path" value="{html.escape(rel)}"><button class="btn btn-danger" style="padding:6px 10px;font-size:12px" type="submit">Rollback</button></form>'''
 
@@ -1213,6 +1414,262 @@ def model_select_html(name: str = "model", selected: str = "dev-gemini-fast") ->
         sel = ' selected' if value == selected else ''
         opts += f'<option value="{html.escape(value)}"{sel}>{html.escape(label)}</option>\n'
     return f'<select class="input model-select" name="{name}">\n{opts}</select>'
+
+
+def agent_openrouter_model_select_html(name: str = "model", selected: str = "openai/gpt-oss-120b:free") -> str:
+    """Select explícito para modelos OpenRouter no Loop Iterativo do Agente."""
+    opts = ""
+    for label, value in AGENT_OPENROUTER_MODELS:
+        sel = ' selected' if value == selected else ''
+        opts += f'<option value="{html.escape(value)}"{sel}>{html.escape(label)}</option>\n'
+    return f'<select class="input" name="{name}" style="min-width:220px">\n{opts}</select>'
+
+
+def agent_profile_select_html(name: str = "profile", selected: str = "software-engineer") -> str:
+    """Select claro de Perfil de Agente (nomes em PT nos labels; usado pelo Loop Iterativo do Agente)."""
+    profiles = [
+        ("software-engineer", "software-engineer (Engenheiro de Software - padrão)"),
+        ("security-analyst", "security-analyst (Analista de Segurança)"),
+        ("code-reviewer", "code-reviewer (Revisor de Código)"),
+    ]
+    opts = ""
+    for val, label in profiles:
+        sel = ' selected' if val == selected else ''
+        opts += f'<option value="{html.escape(val)}"{sel}>{html.escape(label)}</option>\n'
+    return f'<select class="input" name="{name}">\n{opts}</select>'
+
+
+def render_unified_diff_html(diff_text: str) -> str:
+    """Enhanced visualização de diffs (Step 4): collapsible friendly, line colored unified diff (no new JS libs, pure HTML+inline CSS)."""
+    if not diff_text:
+        return '<span style="color:#888;font-size:10px">sem diff</span>'
+    lines = []
+    for raw in diff_text.splitlines():
+        line = html.escape(raw)
+        style = "font-family:ui-monospace,monospace;white-space:pre;padding:0 2px;"
+        if raw.startswith("+++") or raw.startswith("---"):
+            style += "color:#9aa4b2;font-weight:600;"
+        elif raw.startswith("@@"):
+            style += "color:#8b5cf6;"
+        elif raw.startswith("+"):
+            style += "color:#22c55e;background:rgba(34,197,94,0.08);"
+        elif raw.startswith("-"):
+            style += "color:#ef4444;background:rgba(239,68,68,0.08);"
+        else:
+            style += "color:#ddd;"
+        lines.append(f'<div style="{style}">{line}</div>')
+    joined = "".join(lines)
+    return f'<div style="font-size:9px;max-height:220px;overflow:auto;background:#0b0d12;border:1px solid #222;padding:3px 4px;line-height:1.25">{joined}</div>'
+
+
+def render_agent_trace_html(run_data: dict) -> str:
+    """Render rico e legível de execution_trace / step_results para o Loop Iterativo do Agente.
+    - Collapsible <details> por iteração
+    - Status por passo + success/fail badges
+    - Paths/links para arquivos modificados (se detectados no output dos passos ou results)
+    - Preview de alterações propostas (files a editar, diffs) extraídos de execution_trace (passos com project_patch_preview etc)
+    - Botão "Aplicar patch seguro" para patches em status preview (integra /runner/patch/apply usando aiw_runtime/tools prefer new aiw/ aligned)
+    - accumulated_context em seção própria
+    - summary / meta (perfil, modelo, provider, has_real_execution, iters)
+    Prefere aiw/agent/iterative_loop estrutura; compat com step_results legado.
+    """
+    if not isinstance(run_data, dict):
+        run_data = {}
+    execution_trace = run_data.get("execution_trace") or []
+    step_results = run_data.get("step_results") or []
+    if not execution_trace and step_results:
+        execution_trace = step_results
+    accumulated = run_data.get("accumulated_context", "") or ""
+    summary = run_data.get("summary") or run_data.get("result_summary") or ""
+    prof = (run_data.get("profile") or {}).get("name") or run_data.get("profile_name") or "software-engineer"
+    model = run_data.get("chosen_model") or (run_data.get("router_decision") or {}).get("model", "-")
+    provider = run_data.get("chosen_provider") or run_data.get("execution_provider_used", "-")
+    has_real = bool(run_data.get("has_real_execution", run_data.get("mode") == "execute"))
+    status = run_data.get("status", "-")
+    iters = run_data.get("total_iterations_executed") or run_data.get("max_iterations", 1)
+    task = run_data.get("task", "")
+    ws_id = run_data.get("workspace_id") or active_workspace_id()
+    mid = run_data.get("mission_id") or ""
+    has_previews = any( (isinstance(tr.get("result"),dict) and tr.get("result",{}).get("status")=="preview") or (isinstance(tr.get("output"),dict) and tr.get("output",{}).get("status")=="preview") for tr in (run_data.get("execution_trace") or []) )
+    appr = str(run_data.get("approval_status") or run_data.get("approval") or ("pending_approval" if has_previews else "n/a"))
+
+    meta = (
+        f'<div style="margin:4px 0;font-size:12px">'
+        f'Status: <span class="tag">{html.escape(str(status))}</span> '
+        f'Perfil de Agente: <span class="tag">{html.escape(str(prof))}</span> '
+        f'Modelo: <span class="tag">{html.escape(str(model))}</span> '
+        f'Provider: <span class="tag">{html.escape(str(provider))}</span> '
+        f'Execução Real: {"✓" if has_real else "dry/offline"} '
+        f'Iters: {iters}'
+        + (f' <span class="tag" style="background:#334455">Missão: {html.escape(str(mid)[:16])}</span>' if mid else '')
+        + f' Aprovação: <span class="tag status-{html.escape(appr.replace("_","-"))}">{html.escape(appr)}</span>'
+        + f'</div>'
+    )
+
+    sum_html = ""
+    if summary or task:
+        s = str(summary or "Ver trace para detalhes da execução.")[:280]
+        sum_html = f'<div style="margin:4px 0"><strong>Resumo:</strong> {html.escape(s)}</div>'
+
+    trace_html = ""
+    if execution_trace:
+        by_iter = {}
+        for tr in execution_trace:
+            i = int(tr.get("iteration", 1) or 1)
+            by_iter.setdefault(i, []).append(tr)
+        for i in sorted(by_iter.keys()):
+            steps = by_iter[i]
+            inner = ""
+            for tr in steps:
+                st = str(tr.get("status", tr.get("result_status", "-")))
+                succ = tr.get("success")
+                succ_html = '<span class="tag" style="background:#22c55e;color:#000">sucesso</span>' if succ else ('<span class="tag" style="background:#ef4444;color:#fff">falha</span>' if succ is False else '')
+                kind = str(tr.get("kind", (tr.get("step") or {}).get("kind", "")))
+                title = str(tr.get("title", (tr.get("step") or {}).get("title", "-")))
+                prov = tr.get("provider", "-")
+                retries = tr.get("retries", 0)
+                mode = tr.get("mode", "-")
+                res = tr.get("result") or tr.get("output") or tr.get("resumo_llm") or ""
+                res_all = json.dumps(res, ensure_ascii=False) if isinstance(res, (dict, list)) else str(res)
+                files = []
+                for m in re.finditer(r'([./A-Za-z0-9_-]+\.(py|md|json|txt|yaml|yml|sh|js|ts|html|toml|cfg|ini))', res_all):
+                    p = m.group(1)
+                    if p and len(p) > 1 and ("/" in p or p.startswith(".") or "." in p[1:]):
+                        if p not in files:
+                            files.append(p)
+                files_html = ""
+                if files:
+                    files_html = " ".join(
+                        f'<span class="tag" style="font-size:9px;background:#1f2a3a;margin:0 1px" title="arquivo afetado/criado">📄 {html.escape(p)}</span>'
+                        for p in files[:6]
+                    )
+                # Detecta info de patch/diff diretamente no resultado do passo (suporte a project_patch_preview no Loop)
+                patch_inline = ""
+                try:
+                    if isinstance(res, dict):
+                        pid_i = res.get("patch_id")
+                        if pid_i:
+                            pstat = res.get("status", "preview")
+                            ppath_i = res.get("path") or (res.get("changed_files") or [None])[0] or "-"
+                            pdiff_i = str(res.get("diff", ""))[:800]
+                            btn_i = ""
+                            if pstat == "preview":
+                                btn_i = f'''<form method="post" action="/runner/patch/apply" style="display:inline;margin-left:6px"><input type="hidden" name="patch_id" value="{html.escape(str(pid_i))}"><button class="btn btn-run" style="padding:2px 6px;font-size:10px" type="submit">Aplicar patch seguro</button></form>'''
+                            patch_inline = f' <span class="tag" style="background:#334455">patch:{html.escape(str(pid_i))}</span> 📄{html.escape(str(ppath_i)[:40])} {btn_i}'
+                            if pdiff_i:
+                                patch_inline += f' <details style="display:inline;font-size:9px"><summary>diff</summary><pre style="font-size:8px;max-height:80px">{html.escape(pdiff_i)}</pre></details>'
+                except Exception:
+                    pass
+                try:
+                    res_pretty = json.dumps(res, ensure_ascii=False, indent=1)[:1100] if isinstance(res, (dict, list)) else str(res)[:650]
+                except Exception:
+                    res_pretty = str(res)[:650]
+                res_html = html.escape(res_pretty)
+                inner += (
+                    f'<div style="margin:3px 0;padding:3px 5px;border-left:2px solid #444;background:#0e1118;font-size:11px">'
+                    f'<span class="tag status-{html.escape(st)}">{html.escape(st)}</span> {succ_html} '
+                    f'<strong>{html.escape(kind)}</strong> {html.escape(title)} '
+                    f'<span style="color:#666;font-size:9px">({html.escape(str(prov))}; ret={retries}; {html.escape(str(mode))})</span> '
+                    f'{files_html}{patch_inline}'
+                    f'<details style="margin-top:2px"><summary style="cursor:pointer;font-size:9px;color:#8b5cf6">detalhe do passo + resultado</summary>'
+                    f'<pre style="font-size:9px;white-space:pre-wrap;max-height:140px;overflow:auto;background:#111;padding:3px;margin:1px 0">{res_html}</pre>'
+                    f'</details></div>'
+                )
+            trace_html += f'<details {"open" if i <= 2 else ""} style="margin:5px 0;border:1px solid var(--line);padding:4px 6px;border-radius:3px;background:#121622"><summary style="cursor:pointer;font-weight:600">Iteração {i} ({len(steps)} passos)</summary>{inner}</details>'
+    else:
+        raw = json.dumps({"execution_trace": execution_trace, "step_results": step_results}, ensure_ascii=False)[:1800]
+        trace_html = f"<pre style='white-space:pre-wrap;font-size:10px'>{html.escape(raw)}</pre>"
+
+    # === Preview de Alterações + "Aplicar patch seguro" integrado no agent trace (do execution_trace) ===
+    # Extrai propostas de change (patch preview do loop, files a editar, diffs) para mostrar no view de resultados do Loop Iterativo do Agente.
+    proposed_changes_html = ""
+    patch_proposals = []
+    seen_pids = set()
+    for tr in (execution_trace or []):
+        outs = []
+        for key in ("output", "result", "resumo_llm"):
+            val = tr.get(key)
+            if isinstance(val, dict):
+                outs.append(val)
+            elif isinstance(val, str) and ("patch_id" in val or "diff" in val):
+                try:
+                    parsed = json.loads(val)
+                    if isinstance(parsed, dict):
+                        outs.append(parsed)
+                except Exception:
+                    pass
+        for out in outs:
+            pid = str(out.get("patch_id") or tr.get("patch_id") or "")
+            if not pid or pid in seen_pids:
+                continue
+            seen_pids.add(pid)
+            pstatus = str(out.get("status") or tr.get("patch_status") or "preview")
+            ppath = str(out.get("path") or ((out.get("changed_files") or [None])[0] if out.get("changed_files") else None) or (tr.get("step") or {}).get("target_file", "-"))
+            pdiff = str(out.get("diff") or "")
+            preason = str(out.get("reason") or (tr.get("step") or {}).get("title") or (tr.get("title") or ""))
+            patch_proposals.append({
+                "patch_id": pid,
+                "path": ppath,
+                "diff": pdiff[:1800],
+                "status": pstatus,
+                "reason": preason[:180],
+            })
+    if patch_proposals:
+        ch_inner = ""
+        for pp in patch_proposals:
+            pid = html.escape(pp["patch_id"])
+            apply_btn = ""
+            if pp["status"] == "preview":
+                # Botão "Aplicar patch seguro" - chama /runner/patch/apply (usa _safe_patch_apply -> aiw_runtime/tools prefer aiw paths)
+                apply_btn = f'''<form method="post" action="/runner/patch/apply" style="display:inline;margin-left:8px"><input type="hidden" name="patch_id" value="{pid}"><input type="hidden" name="workspace_id" value="{html.escape(str(ws_id))}"><button class="btn btn-run" style="padding:3px 8px;font-size:11px" type="submit">Aplicar patch seguro</button></form>'''
+            elif pp["status"] == "applied":
+                apply_btn = f'''<form method="post" action="/runner/patch/rollback" style="display:inline;margin-left:8px"><input type="hidden" name="patch_id" value="{pid}"><button class="btn btn-danger" style="padding:3px 8px;font-size:11px" type="submit">Rollback</button></form>'''
+            diff_html = ""
+            if pp.get("diff"):
+                # Use enhanced diff renderer for visualização de diffs propostos (better unified, colorized)
+                diff_html = f'<details style="margin-top:4px"><summary style="cursor:pointer;font-size:10px;color:#8b5cf6">Ver diff proposto (unified)</summary>{render_unified_diff_html(pp["diff"])}</details>'
+            # Aprovação de patches em linha (Step 4): explicit toggle/approve before or instead of direct apply; status pending_approval shown in meta too
+            approve_btn = ""
+            if pp["status"] == "preview":
+                approve_btn = f'''<form method="post" action="/runner/patch/approve" style="display:inline;margin-left:4px"><input type="hidden" name="patch_id" value="{pid}"><input type="hidden" name="workspace_id" value="{html.escape(str(ws_id))}"><button class="btn btn-ghost" style="padding:2px 6px;font-size:10px" type="submit">Aprovar patch (pending_approval)</button></form>'''
+            # "Gerar PR" form support: passes patch_id + confirm to /runner/pr/create (enhanced create_pr does full flow using patch ctx + evidence/outbox)
+            pr_btn = f'''<form method="post" action="/runner/pr/create" style="display:inline;margin-left:4px"><input type="hidden" name="patch_id" value="{pid}"><input type="hidden" name="confirm" value="true"><input type="hidden" name="run_path" value="{html.escape(str(run_data.get('run_path') or run_data.get('run_id', '')))}"><button class="btn btn-primary" style="padding:2px 6px;font-size:10px" type="submit">Gerar PR</button></form>'''
+            ch_inner += f'''
+            <div style="margin:4px 0;padding:5px 6px;border:1px solid #2a3040;border-radius:3px;background:#0a0c14;font-size:11px">
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                <strong>📄 {html.escape(pp["path"])}</strong>
+                <span class="tag status-{html.escape(pp["status"])}">{html.escape(pp["status"])}</span>
+                {apply_btn}
+                {approve_btn}
+                {pr_btn}
+              </div>
+              <div style="color:#888;font-size:10px;margin:2px 0">Motivo/Razão: {html.escape(pp["reason"] or "-")} (do execution_trace)</div>
+              {diff_html}
+            </div>'''
+        proposed_changes_html = f'''
+        <div style="margin:6px 0 4px;padding:4px 6px;background:#121622;border:1px solid var(--line);border-radius:3px">
+          <strong style="font-size:12px">Preview de Alterações Propostas (execution_trace - Loop Iterativo do Agente)</strong>
+          <div style="margin-top:4px">Arquivos a editar / diffs / patches gerados pelo agente via file_write + project_patch_preview. Use "Aplicar patch seguro" para efetivar (auto-apply só em workspace=aiw por segurança; para outros: use CLI tools). Edições reais usam backups + gates.</div>
+          {ch_inner}
+          <div style="margin-top:6px;font-size:10px">
+            <form method="post" action="/runner/approve-run" style="display:inline">
+              <input type="hidden" name="run_id" value="{html.escape(str(run_data.get('run_id','')))}">
+              <input type="hidden" name="workspace_id" value="{html.escape(str(ws_id))}">
+              <button class="btn btn-ghost" style="padding:2px 6px;font-size:10px" type="submit">Aprovar run (pending_approval → approved)</button>
+            </form>
+            <span style="color:#666"> (fluxo explícito de aprovação em trace para runs com patches propostos)</span>
+          </div>
+        </div>'''
+
+    acc_html = ""
+    if accumulated:
+        acc_html = (
+            f'<details style="margin-top:6px"><summary style="cursor:pointer">Contexto Acumulado (accumulated_context)</summary>'
+            f'<pre style="font-size:9px;white-space:pre-wrap;max-height:120px;overflow:auto;background:#111;padding:4px">{html.escape(str(accumulated)[:1800])}</pre></details>'
+        )
+
+    container = f'<div style="margin:4px 0;max-height:420px;overflow:auto;border:1px solid #333;padding:4px;background:#0e1118">{trace_html}{proposed_changes_html}</div>'
+    return f'{meta}{sum_html}{container}{acc_html}'
 
 
 _CSS = """
@@ -2119,6 +2576,14 @@ a:hover { text-decoration: underline; }
   .test-run-actions { justify-content: flex-start; }
   .cards { grid-template-columns: 1fr; }
 }
+
+/* Step 4: enhanced diff viz + mission/approval tags */
+.unified-diff-line { font-family: ui-monospace, monospace; white-space: pre; }
+.diff-add { color: #22c55e; background: rgba(34,197,94,0.08); }
+.diff-del { color: #ef4444; background: rgba(239,68,68,0.08); }
+.diff-hunk { color: #8b5cf6; }
+.diff-header { color: #9aa4b2; font-weight: 600; }
+.status-pending-approval, .status-pending_approval { background: #f59e0b; color: #000; }
 """
 
 
@@ -2133,19 +2598,19 @@ def render_page() -> str:
     active_workspace = workspace_data.get("active", "aiw")
     git_data = git_status_payload(active_workspace)
     git_diff = git_diff_payload(active_workspace)
-    from aiw_workspace.agent_iterative_loop import list_agent_loop_runs, read_agent_loop_run
-    # Round 2 mover: prefer aiw for aligned
+    # Prefer new aiw/ implementation for the Loop Iterativo do Agente
     try:
-        from aiw.agent.iterative_loop import list_agent_loop_runs as aiw_list_runs, read_agent_loop_run as aiw_read_run
+        from aiw.agent.iterative_loop import list_agent_loop_runs, read_agent_loop_run
     except Exception:
-        aiw_list_runs = list_agent_loop_runs
-        aiw_read_run = read_agent_loop_run
+        from aiw_workspace.agent_iterative_loop import list_agent_loop_runs, read_agent_loop_run
     agent_loop_payload = list_agent_loop_runs(active_workspace, limit=8)
     latest_agent_loop_detail = None
     if agent_loop_payload.get("ok") and agent_loop_payload.get("runs"):
         latest_run_id = agent_loop_payload["runs"][0].get("run_id")
         if latest_run_id:
             latest_agent_loop_detail = read_agent_loop_run(active_workspace, latest_run_id)
+    # Basic missions (persistent)
+    missions_list = list_missions(active_workspace, limit=5)
 
     # Queue pills
     queue_pills = ""
@@ -2187,7 +2652,7 @@ def render_page() -> str:
       <button class="nav-item" onclick="showSection('test-runs')"><span class="icon">▤</span>Test Runs {badge(test_runs_count, 'ok')}</button>
       <button class="nav-item" onclick="showSection('workspaces')"><span class="icon">▣</span>Workspaces</button>
       <button class="nav-item" onclick="showSection('git')"><span class="icon">⑂</span>Git Control</button>
-      <button class="nav-item" onclick="showSection('nova')"><span class="icon">✦</span>Nova task</button>
+      <button class="nav-item" onclick="showSection('nova')"><span class="icon">✦</span>Nova task / Missão</button>
     </nav>
     <nav class="nav-section">
       <div class="nav-label">Tarefas</div>
@@ -2244,41 +2709,42 @@ def render_page() -> str:
     </div>
     """
 
-    # NEW: Direct Agent Runner form for real development (uses new aiw/agent loop)
+    # Formulário principal "Executar Agente Direto" para o Loop Iterativo do Agente.
+    # Usa sempre aiw.agent.iterative_loop.run_agent_iterative_loop_once (prefer aiw/ + backward via workspace delegate).
+    # Campos: free-text task, Perfil de Agente (software-engineer|security-analyst|code-reviewer), modelo OpenRouter explícito (inclui :free).
     direct_agent_form = f"""
     <div class="section-block" style="margin-top:20px">
-      <h3>Executar Agente Direto (Loop Iterativo Real + OpenRouter)</h3>
+      <h3>Executar Agente Direto - Loop Iterativo do Agente (Perfil de Agente + Execução Real)</h3>
       <div class="card" style="max-width:620px">
         <form method="post" action="/runner/run-agent">
           <div style="margin-bottom:8px">
-            <label style="font-size:11px;color:var(--muted)">Tarefa / Objetivo</label>
+            <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em">Tarefa (free-text para o Loop Iterativo do Agente)</label>
             <textarea name="agent_task" class="input" rows="4" placeholder="Ex: Analise o código do diretório atual, sugira melhorias de estrutura no README e implemente uma pequena limpeza segura." required style="width:100%"></textarea>
           </div>
-          <div style="display:flex;gap:8px;margin-bottom:8px">
+          <div style="display:flex;gap:12px;margin-bottom:8px;flex-wrap:wrap">
             <div>
-              <label style="font-size:11px;color:var(--muted)">Perfil</label>
-              <select name="profile" class="input">
-                <option value="software-engineer">software-engineer</option>
-                <option value="security-analyst">security-analyst</option>
-                <option value="code-reviewer">code-reviewer</option>
-              </select>
+              <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:2px">Perfil de Agente</label>
+              {agent_profile_select_html(name='profile', selected='software-engineer')}
             </div>
             <div>
-              <label style="font-size:11px;color:var(--muted)">Modelo OpenRouter</label>
-              <select name="model" class="input">
-                <option value="openai/gpt-oss-120b:free">gpt-oss-120b:free (rápido/grátis)</option>
-                <option value="anthropic/claude-3.5-sonnet">claude-3.5-sonnet</option>
-                <option value="openai/gpt-4o">gpt-4o</option>
-                <option value="google/gemini-flash-1.5">gemini-flash-1.5</option>
-              </select>
+              <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:2px">Modelo OpenRouter (explícito)</label>
+              {agent_openrouter_model_select_html(name='model', selected='openai/gpt-oss-120b:free')}
             </div>
             <div>
-              <label style="font-size:11px;color:var(--muted)">Workspace</label>
+              <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:2px">Workspace</label>
               <select name="workspace_id" class="input">{workspace_options}</select>
             </div>
           </div>
-          <button class="btn btn-primary" type="submit">Executar com Agente Real (OpenRouter)</button>
-          <small style="margin-left:8px;color:#666">Usa o novo Loop Iterativo do Agente. Requer confirmação interna para execuções.</small>
+          <div style="margin-bottom:8px">
+            <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:2px">Missão persistente (básico - Step 4: agrupa runs de tarefa longa)</label>
+            <input class="input" name="mission_title" placeholder="Título da missão (ex: Refatorar módulo X + validar; deixe vazio para run isolado)" style="width:100%">
+            <small style="color:#666">Cria .aiw/workspaces/.../missions/mis-xxx/ + injeta mission_id no run.json. Re-execs subsequentes podem anexar (via form hidden).</small>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-primary" type="submit" formaction="/runner/run-agent">Executar (Execução Real)</button>
+            <button class="btn btn-secondary" type="submit" formaction="/runner/run-agent-offline">Executar (Offline / Dry-run)</button>
+          </div>
+          <small style="margin-left:8px;color:#666">Usa aiw/agent/iterative_loop.py (run_agent_iterative_loop_once) com Provedor de Execução real quando policy permite. Re-executar disponível após submit. Runs linkáveis como "missão".</small>
         </form>
       </div>
     </div>
@@ -2313,15 +2779,27 @@ def render_page() -> str:
 	                </div>
               </div>
               <div>
-                <label style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:4px">Tarefa para o Agente (use para rodar direto, sem precisar da inbox)</label>
-                <textarea name="agent_task" class="input" rows="3" placeholder="Ex: Refatore o módulo principal para usar o novo Loop Iterativo do Agente e adicione logging de execução"></textarea>
+                <label style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:4px">Tarefa para o Agente (free-text; usa Loop Iterativo do Agente)</label>
+                <textarea name="agent_task" class="input" rows="3" placeholder="Ex: Refatore o módulo principal para usar o Loop Iterativo do Agente e adicione logging de execução"></textarea>
               </div>
-              <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <button class="btn btn-run" type="submit" formaction="/runner/run-once">Executar One-shot (Legado)</button>
-                <button class="btn btn-primary" type="submit" formaction="/runner/run-agent">Executar modo Agent (novo Loop + OpenRouter real)</button>
-                <button class="btn btn-secondary" type="submit" formaction="/runner/run-agent-offline">Executar Agent Offline</button>
-                <small style="display:block;margin-top:4px;color:#666">Recomendado: use o modo Agent para desenvolvimento real. O loop novo em aiw/agent é usado por padrão. Preencha a tarefa acima para rodar direto.</small>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+                <div>
+                  <label style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:2px">Perfil de Agente</label>
+                  {agent_profile_select_html(name='profile', selected='software-engineer')}
+                </div>
+                <div>
+                  <label style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:2px">Modelo OpenRouter</label>
+                  {agent_openrouter_model_select_html(name='model', selected='openai/gpt-oss-120b:free')}
+                </div>
+                <div>
+                  <button class="btn btn-run" type="submit" formaction="/runner/run-once">Executar One-shot (Legado)</button>
+                </div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap">
+                  <button class="btn btn-primary" type="submit" formaction="/runner/run-agent">Executar Loop Iterativo (Execução Real)</button>
+                  <button class="btn btn-secondary" type="submit" formaction="/runner/run-agent-offline">Loop Iterativo (Offline)</button>
+                </div>
               </div>
+              <small style="display:block;margin-top:4px;color:#666">Recomendado: Loop Iterativo do Agente via aiw/agent/iterative_loop.py (Perfil de Agente + modelo explícito). One-shot é legado.</small>
             </form>
           </div>
         </div>
@@ -2691,7 +3169,15 @@ def render_page() -> str:
         </div>
         """
 
-        from aiw_workspace.integration_outbox import list_outbox_items
+        # prefer aiw/ para integration_outbox (Outbox Integração)
+        try:
+            from aiw.integration.integration_outbox import list_outbox_items
+        except Exception:
+            # prefer aiw/ (outbox)
+            try:
+                from aiw.integration.integration_outbox import list_outbox_items
+            except Exception:
+                from aiw_workspace.integration_outbox import list_outbox_items
         outbox_payload = list_outbox_items(ws_id, pid)
         outbox_items = outbox_payload.get("items", [])
         latest_item = outbox_items[0] if outbox_items else None
@@ -3008,7 +3494,9 @@ def render_page() -> str:
           {bundle_html}
           {export_html}
           {outbox_html}
-          <div class="patch-actions" style="margin-top:12px">{apply_btn}</div>
+          <div class="patch-actions" style="margin-top:12px">{apply_btn}
+            <form method="post" action="/runner/pr/create" style="display:inline;margin-left:6px"><input type="hidden" name="patch_id" value="{pid}"><input type="hidden" name="confirm" value="true"><button class="btn btn-primary" style="padding:3px 8px;font-size:11px" type="submit">Gerar PR</button></form>
+          </div>
         </div>
         """
 
@@ -3016,7 +3504,19 @@ def render_page() -> str:
     if not patches_panel:
         patches_panel = '<div class="empty-state">Nenhuma alteração proposta agora. Quando um agent gerar um project_patch_preview, ela aparece aqui.</div>'
 
-    from aiw_workspace.github_intake import list_inbox_items
+    # prefer aiw/ para github_intake (Intake GitHub para agent/cockpit)
+    try:
+        from aiw.integration.github_intake import list_inbox_items
+    except Exception:
+        # prefer aiw/ github
+        try:
+            from aiw.integration.github_intake import list_inbox_items
+        except Exception:
+            # prefer aiw/
+            try:
+                from aiw.integration.github_intake import list_inbox_items
+            except Exception:
+                from aiw_workspace.github_intake import list_inbox_items
     inbox_res = list_inbox_items(active_workspace)
     inbox_html_list = []
     if inbox_res.get("ok"):
@@ -3372,11 +3872,11 @@ def render_page() -> str:
         exec_buttons = f"""
             <form method="post" action="/runner/run-agent" style="display:inline">
               <input type="hidden" name="workspace_id" value="{html.escape(ws["id"])}">
-              <button class="btn btn-primary" type="submit">Executar Agent Online neste workspace</button>
+              <button class="btn btn-primary" type="submit">Loop Iterativo (Execução Real)</button>
             </form>
             <form method="post" action="/runner/run-agent-offline" style="display:inline">
               <input type="hidden" name="workspace_id" value="{html.escape(ws["id"])}">
-              <button class="btn btn-secondary" type="submit">Executar Agent Offline neste workspace</button>
+              <button class="btn btn-secondary" type="submit">Loop Iterativo (Offline)</button>
             </form>
         """
         from aiw_workspace.coverage_baseline import get_current_coverage_baseline
@@ -3728,9 +4228,12 @@ def render_page() -> str:
             trace_preview = ""
             if r.get("execution_trace"):
                 trace_preview = f"<br>último passo: {html.escape(str(r['execution_trace'][-1].get('status','')))}"
+            mtag = ""
+            if r.get("mission_id"):
+                mtag = f' <span class="tag" style="background:#334455">missão:{html.escape(str(r["mission_id"])[:12])}</span>'
             agent_loop_rows += f"""
             <div class="mini-run">
-              <div class="mini-run-title">{run_id}</div>
+              <div class="mini-run-title">{run_id}{mtag}</div>
               <div class="mini-run-meta">
                 <span class="tag status-{status}">{status}</span>
                 <span class="tag">{planner}</span>
@@ -3741,55 +4244,40 @@ def render_page() -> str:
             </div>
             """
     else:
-        agent_loop_rows = '<div class="empty-state">Nenhum Agent Iterative Loop encontrado.</div>'
+        agent_loop_rows = '<div class="empty-state">Nenhum run do Loop Iterativo do Agente encontrado.</div>'
 
     agent_loop_detail_html = ""
     if latest_agent_loop_detail and latest_agent_loop_detail.get("ok"):
         detail_run = latest_agent_loop_detail.get("run", {})
-        # Support both old and new loop format
+        # Suporte a formatos novo/legado do Loop Iterativo do Agente
         step_results = detail_run.get("step_results") or detail_run.get("iterations") or []
-        execution_trace = detail_run.get("execution_trace", [])
+        execution_trace = detail_run.get("execution_trace", []) or step_results
         planner = detail_run.get("planner", "unknown")
         total_iters = detail_run.get("total_iterations_executed") or detail_run.get("max_iterations", 1)
         task_text = detail_run.get("task", "")
+        chosen_model = detail_run.get("chosen_model") or (detail_run.get("router_decision") or {}).get("model", "-")
+        prof = (detail_run.get("profile") or {}).get("name", "software-engineer")
 
-        # New format trace rendering - collapsible per iteration/step
-        trace_html = ""
-        if execution_trace:
-            current_iter = None
-            for tr in execution_trace:
-                st = html.escape(str(tr.get("status", "-")))
-                step = tr.get("step", {}) or {}
-                title = html.escape(str(step.get("title", step.get("kind", "-"))))
-                kind = html.escape(str(step.get("kind", "")))
-                res_preview = html.escape(str(tr.get("result", ""))[:300])
-                iter_num = tr.get("iteration", 1)
-                if iter_num != current_iter:
-                    if current_iter is not None:
-                        trace_html += "</details>"
-                    current_iter = iter_num
-                    trace_html += f'<details open style="margin-bottom:8px"><summary><strong>Iteração {iter_num}</strong></summary>'
-                trace_html += f'<div class="mini-run"><span class="tag status-{st}">{st}</span> <strong>{kind}</strong>: {title}<div class="card-doc" style="font-size:11px; white-space:pre-wrap">{res_preview}</div></div>'
-            if current_iter is not None:
-                trace_html += "</details>"
-        else:
-            trace_html = '<div class="empty-state">Nenhum trace de execução (ainda rodando em modo legado?)</div>'
-
+        # Usa helper rico (collapsibles por iteração, status/step, paths de arquivos, contexto acumulado, summary)
+        trace_html = render_agent_trace_html(detail_run)
         agent_loop_detail_html = f"""
         <div class="system-panel" style="margin-top:12px">
           <h3>Última run do Loop Iterativo do Agente</h3>
           <div class="signal-list">
             <div class="signal-row"><span class="signal-name">Run</span><span class="tag">{html.escape(str(detail_run.get("run_id", "-")))}</span><span class="tag">{html.escape(str(detail_run.get("status", "-")))}</span></div>
-            <div class="signal-row"><span class="signal-name">Planner</span><span class="tag">{html.escape(planner)}</span><span class="tag">{total_iters} iterações</span></div>
+            <div class="signal-row"><span class="signal-name">Perfil de Agente / Modelo</span><span class="tag">{html.escape(prof)}</span><span class="tag">{html.escape(str(chosen_model))}</span><span class="tag">{total_iters} iters</span></div>
             <div class="card-doc" style="margin:8px 0">{html.escape(task_text)[:300]}</div>
           </div>
-          <h3>Execution Trace (resultados reais)</h3>
-          <div class="signal-list" style="max-height:220px;overflow:auto">{trace_html}</div>
+          <h4>Execution Trace + Preview de Alterações (Loop Iterativo do Agente - collapsível; "Aplicar patch seguro" para previews)</h4>
+          <div class="signal-list" style="max-height:320px;overflow:auto">{trace_html}</div>
           <div class="api-links" style="margin-top:8px">
             <a class="api-link" href="/api/workspaces/{html.escape(active_workspace)}/agent-iterative-loop/runs/{html.escape(str(detail_run.get("run_id", "")))}" target="_blank">JSON completo</a>
             <form method="post" action="/runner/run-agent" style="display:inline">
               <input type="hidden" name="agent_task" value="{html.escape(str(detail_run.get('task', '')))}">
               <input type="hidden" name="workspace_id" value="{html.escape(active_workspace)}">
+              <input type="hidden" name="profile" value="{html.escape(prof)}">
+              <input type="hidden" name="model" value="{html.escape(str(chosen_model))}">
+              <input type="hidden" name="mission_id" value="{html.escape(str(detail_run.get('mission_id', '') or ''))}">
               <button class="btn btn-small" type="submit">Re-executar com mesma tarefa</button>
             </form>
           </div>
@@ -3798,15 +4286,28 @@ def render_page() -> str:
 
     agent_loop_section = f"""
     <div class="section-block">
-      <h3>Agent Iterative Loop (novo - funcional via Cockpit)</h3>
-      <div class="signal-note" style="margin-bottom:10px">Use o formulário acima para rodar tarefas reais com o Loop Iterativo do Agente + OpenRouter.</div>
+      <h3>Loop Iterativo do Agente (runs recentes - aiw/agent/iterative_loop.py)</h3>
+      <div class="signal-note" style="margin-bottom:10px">Use o formulário "Executar Agente Direto" (Perfil de Agente + modelo OpenRouter via aiw/agent/iterative_loop). execution_trace mostra preview de alterações propostos + botão "Aplicar patch seguro" (integra aiw_runtime/tools / patch flows). Collapsíveis, status, paths, diffs e contexto acumulado. Suporte básico missões persistentes + aprovação patches.</div>
       {agent_loop_rows}
       {agent_loop_detail_html}
       <div class="api-links" style="margin-top:10px">
-        <a class="api-link" href="/api/workspaces/{html.escape(active_workspace)}/agent-iterative-loop/runs">agent-loop runs API</a>
+        <a class="api-link" href="/api/workspaces/{html.escape(active_workspace)}/agent-iterative-loop/runs">/agent-iterative-loop/runs (JSON)</a>
       </div>
     </div>
     """
+
+    # Basic persistent missions listing (Step 4)
+    missions_html = ""
+    if missions_list:
+        mrows = ""
+        for m in missions_list:
+            mid = html.escape(str(m.get("mission_id","")))
+            mtit = html.escape(str(m.get("title",""))[:60])
+            mstatus = html.escape(str(m.get("status","")))
+            mruns = len(m.get("run_ids", []))
+            mrows += f'<div class="mini-run" style="font-size:11px"><strong>{mtit}</strong> <span class="tag">{mid}</span> <span class="tag">{mstatus}</span> <span class="tag">{mruns} runs</span></div>'
+        missions_html = f'<div class="section-block" style="margin-top:8px"><h4>Missões persistentes (agrupam runs longos / re-execs)</h4>{mrows}<small style="color:#666">Armazenado em .aiw/workspaces/{html.escape(active_workspace)}/missions/</small></div>'
+    agent_loop_section += missions_html
 
     # Overview section content
     active_total = running_count + review_count
@@ -4502,8 +5003,15 @@ def run_once_from_cockpit(llm_enabled: str = "1", model: str = "dev-gemini-fast"
     return ok, output, run_dir
 
 
-def run_agent_from_cockpit(model: str = "dev-coder", offline: bool = False, workspace_id: str | None = None, task: str = None, profile: str = "software-engineer") -> tuple[bool, str, str]:
-    model = (model or "dev-coder").strip()
+def run_agent_from_cockpit(model: str = "dev-coder", offline: bool = False, workspace_id: str | None = None, task: str = None, profile: str = "software-engineer", mission_id: str | None = None, mission_title: str = "") -> tuple[bool, str, str]:
+    """Executa via Loop Iterativo do Agente (aiw/agent/iterative_loop.py preferencial, aiw/ imports).
+    - model: OpenRouter explícito (ex: openai/gpt-oss-120b:free e outros)
+    - profile: Perfil de Agente (software-engineer, security-analyst, code-reviewer)
+    - offline=False => execute=True + confirm_agent_loop para Execução Real (policy + provider)
+    - mission_id / mission_title: suporte básico a missões persistentes (Step 4) - cria container + agrupa via mission_id injetado no run.json
+    - Mantém backward compat (fallback só offline); "Executar Agente Direto" usa isso.
+    """
+    model = (model or "openai/gpt-oss-120b:free").strip()
 
     allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:/")
     if not model or any(ch not in allowed for ch in model):
@@ -4514,6 +5022,55 @@ def run_agent_from_cockpit(model: str = "dev-coder", offline: bool = False, work
     if not ws or not ws.get("exists"):
         return False, "workspace not found or unavailable", ""
 
+    # Sempre tentar primeiro o novo aiw/agent para Loop Iterativo do Agente (confiável)
+    try:
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        from aiw import load_profile
+        from aiw.agent.iterative_loop import run_agent_iterative_loop_once
+
+        prof = load_profile(profile or "software-engineer").copy()
+        if model:
+            prof["default_model"] = model  # seleção explícita de modelo OpenRouter etc.
+        task_text = task or "Tarefa submetida pelo Cockpit via Loop Iterativo do Agente"
+        execute_flag = not offline
+        res = run_agent_iterative_loop_once(
+            workspace_id=ws_id,
+            task=task_text,
+            dry_run=False,
+            execute=execute_flag,
+            confirm_agent_loop=execute_flag,  # necessário para execute real
+            max_iterations=3,
+            task_source="cockpit",
+            profile=prof,
+        )
+        output = json.dumps(res, indent=2, ensure_ascii=False)
+        run = res.get("run", {}) if isinstance(res, dict) else {}
+        run_id = run.get("run_id", "") or res.get("run_id", "")
+        run_dir = f".aiw/workspaces/{ws_id}/agent-iterative-loop/runs/{run_id}" if run_id else ""
+        # Basic persistent mission support (Step 4): create if title given (for new long task), attach run to mission, inject mission_id to run.json
+        try:
+            effective_mid = mission_id
+            if mission_title and not effective_mid:
+                m = create_mission(ws_id, mission_title, task or task_text)
+                effective_mid = m.get("mission_id")
+            if effective_mid and run_id:
+                attach_run_to_mission(effective_mid, run_id, ws_id)
+                # also augment in-memory res for callers that use it
+                if isinstance(run, dict):
+                    run["mission_id"] = effective_mid
+                if isinstance(res, dict) and isinstance(res.get("run"), dict):
+                    res["run"]["mission_id"] = effective_mid
+        except Exception:
+            pass
+        return bool(res.get("ok")), output, run_dir
+    except Exception as e:
+        # Fallback mínimo apenas para offline/legado se o aiw falhar (mantém cockpit funcional)
+        if not offline:
+            # Para execução "Loop Iterativo do Agente" (real), reporta erro do aiw/agent em vez de fallback silencioso
+            return False, f"aiw/agent/iterative_loop failed (execute=True): {e}. Verifique OPENROUTER_API_KEY, policy e providers.", ""
+
+    # Fallback legado só para casos offline (evita quebrar fluxos antigos)
     env = os.environ.copy()
     env["AIW_MODEL"] = model
     env["AIW_ROOT"] = str(ROOT)
@@ -4523,36 +5080,6 @@ def run_agent_from_cockpit(model: str = "dev-coder", offline: bool = False, work
     env["AIW_USE_CONTEXT_PACK"] = "1"
     if offline:
         env["AIW_AGENT_OFFLINE"] = "1"
-
-    # Para uso real (não offline): priorizamos o novo Loop Iterativo do Agente em aiw/
-    if not offline:
-        try:
-            if str(ROOT) not in sys.path:
-                sys.path.insert(0, str(ROOT))
-            from aiw import load_profile
-            from aiw.agent.iterative_loop import run_agent_iterative_loop_once
-
-            prof = load_profile(profile or "software-engineer").copy()
-            if model:
-                prof["default_model"] = model  # override for explicit OpenRouter model selection
-            task_text = task or "Tarefa submetida pelo Cockpit (desenvolvimento real com OpenRouter)"
-            res = run_agent_iterative_loop_once(
-                workspace_id=ws_id,
-                task=task_text,
-                dry_run=False,
-                execute=True,
-                confirm_agent_loop=True,
-                max_iterations=4,
-                task_source="cockpit",
-                profile=prof,
-            )
-            output = json.dumps(res, indent=2, ensure_ascii=False)
-            run_id = res.get("run", {}).get("run_id", "")
-            run_dir = f".aiw/workspaces/{ws_id}/agent-iterative-loop/runs/{run_id}" if run_id else ""
-            return bool(res.get("ok")), output, run_dir
-        except Exception as e:
-            # fallback para legado
-            pass
 
     try:
         completed = subprocess.run(
@@ -4580,6 +5107,18 @@ def run_agent_from_cockpit(model: str = "dev-coder", offline: bool = False, work
                 pass
 
     ok = completed.returncode == 0 and bool(run_dir)
+    # Legacy fallback: still support attaching mission if provided (extract run_id from path)
+    try:
+        if (mission_id or mission_title) and run_dir:
+            rid = run_dir.split("/")[-1] if run_dir else ""
+            effective_mid = mission_id
+            if mission_title and not effective_mid:
+                m = create_mission(ws_id, mission_title, task or "")
+                effective_mid = m.get("mission_id")
+            if effective_mid and rid:
+                attach_run_to_mission(effective_mid, rid, ws_id)
+    except Exception:
+        pass
     return ok, output, run_dir
 
 
@@ -4746,7 +5285,7 @@ def render_run_detail(run_dir: Path) -> str:
 
                     apply_btn = ""
                     if p_status == "preview" and run_workspace_id == "aiw":
-                        apply_btn = f'''<form method="post" action="/runner/patch/apply" style="display:inline"><input type="hidden" name="patch_id" value="{pid}"><input type="hidden" name="run_path" value="{rel}"><button class="btn btn-run" style="padding:4px 8px;font-size:12px" type="submit">Aplicar</button></form>'''
+                        apply_btn = f'''<form method="post" action="/runner/patch/apply" style="display:inline"><input type="hidden" name="patch_id" value="{pid}"><input type="hidden" name="run_path" value="{rel}"><button class="btn btn-run" style="padding:4px 8px;font-size:12px" type="submit">Aplicar patch seguro</button></form>'''
                     elif p_status == "applied":
                         apply_btn = f'''<form method="post" action="/runner/patch/rollback" style="display:inline"><input type="hidden" name="patch_id" value="{pid}"><input type="hidden" name="run_path" value="{rel}"><button class="btn btn-danger" style="padding:4px 8px;font-size:12px" type="submit">Rollback</button></form>'''
                     elif p_status == "preview":
@@ -4759,6 +5298,7 @@ def render_run_detail(run_dir: Path) -> str:
                             <div>
                                 <span class="tag status-{p_status}" style="margin-right:8px">{p_status}</span>
                                 {apply_btn}
+                                <form method="post" action="/runner/pr/create" style="display:inline;margin-left:4px"><input type="hidden" name="patch_id" value="{pid}"><input type="hidden" name="run_path" value="{rel}"><input type="hidden" name="confirm" value="true"><button class="btn btn-primary" style="padding:2px 5px;font-size:10px" type="submit">Gerar PR</button></form>
                             </div>
                         </div>
                         <div style="color:var(--muted);font-size:13px;margin-bottom:8px">Motivo: {html.escape(p_reason)}</div>
@@ -5260,7 +5800,19 @@ class Handler(BaseHTTPRequestHandler):
             patch_id = parts[5]
             item_id = parts[7]
             filename = parts[9]
-            from aiw_workspace.integration_outbox import resolve_outbox_item_file
+            # prefer aiw/ integration_outbox
+            try:
+                from aiw.integration.integration_outbox import resolve_outbox_item_file
+            except Exception:
+                # prefer aiw/
+                try:
+                    from aiw.integration.integration_outbox import resolve_outbox_item_file
+                except Exception:
+                    # prefer aiw/
+                    try:
+                        from aiw.integration.integration_outbox import resolve_outbox_item_file
+                    except Exception:
+                        from aiw_workspace.integration_outbox import resolve_outbox_item_file
             fpath = resolve_outbox_item_file(ws_id, item_id, filename)
             if not fpath:
                 self.send_json({"ok": False, "error": "file_not_found"}, status=404)
@@ -5285,7 +5837,19 @@ class Handler(BaseHTTPRequestHandler):
                 item_id = parts[7]
             else:
                 item_id = parts[5]
-            from aiw_workspace.integration_outbox import read_outbox_item
+            # prefer aiw/ integration_outbox
+            try:
+                from aiw.integration.integration_outbox import read_outbox_item
+            except Exception:
+                # prefer aiw/
+                try:
+                    from aiw.integration.integration_outbox import read_outbox_item
+                except Exception:
+                    # prefer aiw/
+                    try:
+                        from aiw.integration.integration_outbox import read_outbox_item
+                    except Exception:
+                        from aiw_workspace.integration_outbox import read_outbox_item
             return self._respond(read_outbox_item(ws_id, item_id), 200)
 
         if path.startswith("/api/workspaces/") and "/integration-outbox/" in path and path.endswith("/attempts"):
@@ -5295,19 +5859,47 @@ class Handler(BaseHTTPRequestHandler):
                 item_id = parts[7]
             else:
                 item_id = parts[5]
-            from aiw_workspace.integration_worker import list_item_attempts
+            # prefer aiw/ para integration_worker
+            try:
+                from aiw.integration.integration_worker import list_item_attempts
+            except Exception:
+                # prefer aiw/
+                try:
+                    from aiw.integration.integration_worker import list_item_attempts
+                except Exception:
+                    # prefer aiw/
+                    try:
+                        from aiw.integration.integration_worker import list_item_attempts
+                    except Exception:
+                        from aiw_workspace.integration_worker import list_item_attempts
             return self._respond(list_item_attempts(ws_id, item_id), 200)
 
         if path.startswith("/api/workspaces/") and "/patches/" in path and path.endswith("/integration-outbox"):
             parts = path.split("/")
             ws_id = parts[3]
             patch_id = parts[5]
-            from aiw_workspace.integration_outbox import list_outbox_items
+            # prefer aiw/ para integration_outbox (Outbox Integração)
+            try:
+                from aiw.integration.integration_outbox import list_outbox_items
+            except Exception:
+                # prefer aiw/ (outbox)
+                try:
+                    from aiw.integration.integration_outbox import list_outbox_items
+                except Exception:
+                    from aiw_workspace.integration_outbox import list_outbox_items
             return self._respond(list_outbox_items(ws_id, patch_id), 200)
 
         if path.startswith("/api/workspaces/") and path.endswith("/integration-outbox"):
             ws_id = path[len("/api/workspaces/"):-len("/integration-outbox")].strip("/")
-            from aiw_workspace.integration_outbox import list_outbox_items
+            # prefer aiw/ para integration_outbox (Outbox Integração)
+            try:
+                from aiw.integration.integration_outbox import list_outbox_items
+            except Exception:
+                # prefer aiw/ (outbox)
+                try:
+                    from aiw.integration.integration_outbox import list_outbox_items
+                except Exception:
+                    from aiw_workspace.integration_outbox import list_outbox_items
             return self._respond(list_outbox_items(ws_id), 200)
 
         if path.startswith("/api/workspaces/") and path.endswith("/worker-loop/runs"):
@@ -5363,7 +5955,19 @@ class Handler(BaseHTTPRequestHandler):
             ws_id = parts[3]
             item_id = parts[5]
             filename = parts[7]
-            from aiw_workspace.github_intake import resolve_inbox_item_file
+            # prefer aiw/ para github_intake (resolve)
+            try:
+                from aiw.integration.github_intake import resolve_inbox_item_file
+            except Exception:
+                # prefer aiw/
+                try:
+                    from aiw.integration.github_intake import resolve_inbox_item_file
+                except Exception:
+                    # prefer aiw/
+                    try:
+                        from aiw.integration.github_intake import resolve_inbox_item_file
+                    except Exception:
+                        from aiw_workspace.github_intake import resolve_inbox_item_file
             fpath = resolve_inbox_item_file(ws_id, item_id, filename)
             if not fpath:
                 self.send_json({"ok": False, "error": "file_not_found"}, status=404)
@@ -5383,19 +5987,51 @@ class Handler(BaseHTTPRequestHandler):
             parts = path.split("/")
             ws_id = parts[3]
             item_id = parts[5]
-            from aiw_workspace.github_intake import list_inbox_item_attempts
+            # prefer aiw/ para github_intake (attempts)
+            try:
+                from aiw.integration.github_intake import list_inbox_item_attempts
+            except Exception:
+                # prefer aiw/
+                try:
+                    from aiw.integration.github_intake import list_inbox_item_attempts
+                except Exception:
+                    # prefer aiw/
+                    try:
+                        from aiw.integration.github_intake import list_inbox_item_attempts
+                    except Exception:
+                        from aiw_workspace.github_intake import list_inbox_item_attempts
             return self._respond(list_inbox_item_attempts(ws_id, item_id), 200)
 
         if path.startswith("/api/workspaces/") and "/integration-inbox/" in path and not "/file/" in path and not path.endswith("/status") and not path.endswith("/attempts"):
             parts = path.split("/")
             ws_id = parts[3]
             item_id = parts[5]
-            from aiw_workspace.github_intake import read_inbox_item
+            # prefer aiw/ (github_intake)
+            try:
+                from aiw.integration.github_intake import read_inbox_item
+            except Exception:
+                # prefer aiw/
+                try:
+                    from aiw.integration.github_intake import read_inbox_item
+                except Exception:
+                    # prefer aiw/
+                    try:
+                        from aiw.integration.github_intake import read_inbox_item
+                    except Exception:
+                        from aiw_workspace.github_intake import read_inbox_item
             return self._respond(read_inbox_item(ws_id, item_id), 200)
 
         if path.startswith("/api/workspaces/") and path.endswith("/integration-inbox"):
             ws_id = path[len("/api/workspaces/"):-len("/integration-inbox")].strip("/")
-            from aiw_workspace.github_intake import list_inbox_items
+            # prefer aiw/ para github_intake (Intake GitHub para agent/cockpit)
+            try:
+                from aiw.integration.github_intake import list_inbox_items
+            except Exception:
+                # prefer aiw/ github
+                try:
+                    from aiw.integration.github_intake import list_inbox_items
+                except Exception:
+                    from aiw_workspace.github_intake import list_inbox_items
             return self._respond(list_inbox_items(ws_id), 200)
 
         if path.startswith("/api/workspaces/") and "/agent-queue/" in path and "/file/" in path:
@@ -5984,7 +6620,15 @@ class Handler(BaseHTTPRequestHandler):
             target = request_data.get("target")
             kind = request_data.get("kind")
             export_id = request_data.get("export_id")
-            from aiw_workspace.integration_outbox import create_outbox_item
+            # prefer aiw/ integration_outbox create
+            try:
+                from aiw.integration.integration_outbox import create_outbox_item
+            except Exception:
+                # prefer aiw/
+                try:
+                    from aiw.integration.integration_outbox import create_outbox_item
+                except Exception:
+                    from aiw_workspace.integration_outbox import create_outbox_item
             res = create_outbox_item(ws_id, patch_id, target, kind, export_id)
             self.send_json(res, status=200 if res.get("ok") else 400)
             return
@@ -6001,7 +6645,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "confirmation_required"}, status=400)
                 return
             status = request_data.get("status")
-            from aiw_workspace.integration_outbox import update_outbox_item_status
+            # prefer aiw/ integration_outbox update
+            try:
+                from aiw.integration.integration_outbox import update_outbox_item_status
+            except Exception:
+                # prefer aiw/
+                try:
+                    from aiw.integration.integration_outbox import update_outbox_item_status
+                except Exception:
+                    from aiw_workspace.integration_outbox import update_outbox_item_status
             res = update_outbox_item_status(ws_id, item_id, status)
             self.send_json(res, status=200 if res.get("ok") else 400)
             return
@@ -6015,7 +6667,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "confirmation_required"}, status=400)
                 return
             status = request_data.get("status")
-            from aiw_workspace.github_intake import update_inbox_item_status
+            # prefer aiw/ github_intake update
+            try:
+                from aiw.integration.github_intake import update_inbox_item_status
+            except Exception:
+                # prefer aiw/
+                try:
+                    from aiw.integration.github_intake import update_inbox_item_status
+                except Exception:
+                    from aiw_workspace.github_intake import update_inbox_item_status
             res = update_inbox_item_status(ws_id, item_id, status)
             self.send_json(res, status=200 if res.get("ok") else 400)
             return
@@ -6133,6 +6793,14 @@ class Handler(BaseHTTPRequestHandler):
 
         run_path = form.get("path", [""])[0]
         reason = form.get("reason", [""])[0]
+        # defaults for agent direct form (used in direct trace render and reexec)
+        agent_task = form.get("agent_task", [""])[0] or ""
+        workspace_id = form.get("workspace_id", [""])[0] or ""
+        prof_name = form.get("profile", ["software-engineer"])[0]
+        model_for_agent = form.get("model", ["openai/gpt-oss-120b:free"])[0]
+        # mission for Step 4
+        mission_id = form.get("mission_id", [""])[0] or None
+        mission_title = form.get("mission_title", [""])[0] or ""
 
         if path == "/task/create":
             title = form.get("title", [""])[0]
@@ -6146,12 +6814,15 @@ class Handler(BaseHTTPRequestHandler):
             ok, output, generated_run = run_once_from_cockpit(llm_enabled, model)
             redirect = f"/run?path={quote(generated_run)}" if generated_run else "/"
         elif path in ("/runner/run-agent", "/runner/run-agent-offline"):
+            # "Executar Agente Direto" e botões de agente: sempre delegam para run_agent_from_cockpit que usa aiw.agent.iterative_loop.run_agent_iterative_loop_once
             model = form.get("model", ["dev-coder"])[0]
             workspace_id = form.get("workspace_id", [""])[0]
             agent_task = form.get("agent_task", [""])[0] or "Tarefa enviada via Cockpit"
             prof_name = form.get("profile", ["software-engineer"])[0]
+            mission_id = form.get("mission_id", [""])[0] or None
+            mission_title = form.get("mission_title", [""])[0] or ""
             offline = path == "/runner/run-agent-offline"
-            ok, output, generated_run = run_agent_from_cockpit(model, offline=offline, workspace_id=workspace_id, task=agent_task, profile=prof_name)
+            ok, output, generated_run = run_agent_from_cockpit(model, offline=offline, workspace_id=workspace_id, task=agent_task, profile=prof_name, mission_id=mission_id, mission_title=mission_title)
             redirect = f"/run?path={quote(generated_run)}" if generated_run else "/"
         elif path == "/action/approve":
             ok, output = run_action("approve", run_path)
@@ -6159,34 +6830,269 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/action/reject":
             ok, output = run_action("reject", run_path, reason)
             redirect = f"/run?path={quote(run_path)}"
-        elif path == "/runner/patch/apply":
+        elif path in ("/runner/patch/apply", "/runner/patch/rollback"):
             patch_id = form.get("patch_id", [""])[0]
             run_path = form.get("run_path", [""])[0]
             if patch_id:
-                if str(ROOT) not in sys.path:
-                    sys.path.insert(0, str(ROOT))
-                from aiw_runtime.tools import project_patch_apply
-                os.environ["AIW_WORKSPACE_ID"] = active_workspace_id()
-                res = project_patch_apply(patch_id)
+                if path.endswith("/apply"):
+                    res = _safe_patch_apply(patch_id)
+                    default_st = "applied" if res.get("ok", False) else "error"
+                else:
+                    res = _safe_patch_rollback(patch_id)
+                    default_st = "rolled_back" if res.get("ok", False) else "error"
                 ok = res.get("ok", False)
-                output = res.get("error", "Unknown error")
+                status = res.get("status", default_st)
+                output = res.get("error") or f"{status} (backup: {res.get('backup_path', '-')})"
+                # Polish for step 3: after _safe_patch_*, for agent-iterative-loop runs (when run_path provided by form),
+                # load via existing read logic (or .aiw/.../run.json fallback), update in-memory patch status in trace,
+                # then return full HTML (success banner + updated trace via render_agent_trace_html).
+                # Re-uses direct trace render pattern like /runner/run-agent. Backward compat: other runs still redirect.
+                if ok and run_path and "agent-iterative-loop" in str(run_path):
+                    try:
+                        rid = str(run_path).split("/")[-1] if "/" in str(run_path) else str(run_path)
+                        ws = active_workspace_id()
+                        run_data = {}
+                        # Prefer existing read logic (aiw.agent.iterative_loop.read_agent_loop_run etc)
+                        try:
+                            from aiw.agent.iterative_loop import read_agent_loop_run as _read_run
+                        except Exception:
+                            from aiw_workspace.agent_iterative_loop import read_agent_loop_run as _read_run
+                        try:
+                            payload = _read_run(ws, rid)
+                            if isinstance(payload, dict):
+                                run_data = payload.get("run", payload) if payload.get("ok", True) else {}
+                        except Exception:
+                            run_data = {}
+                        if not run_data:
+                            # fallback direct read as allowed
+                            rj = ROOT / ".aiw" / "workspaces" / ws / "agent-iterative-loop" / "runs" / rid / "run.json"
+                            if rj.exists():
+                                run_data = json.loads(rj.read_text(encoding="utf-8"))
+                        # Update any in-memory patch status if possible so that "Preview de Alterações"
+                        # (which extracts status from execution_trace results) reflects applied/rolled_back immediately.
+                        new_status = status
+                        bp = res.get("backup_path")
+                        for lst in (run_data.get("execution_trace") or [], run_data.get("step_results") or []):
+                            if not isinstance(lst, list):
+                                continue
+                            for tr in lst:
+                                if not isinstance(tr, dict):
+                                    continue
+                                for k in ("result", "output", "resumo_llm"):
+                                    v = tr.get(k)
+                                    if isinstance(v, dict) and str(v.get("patch_id") or "") == str(patch_id):
+                                        v["status"] = new_status
+                                        if bp is not None:
+                                            v["backup_path"] = bp
+                                if str(tr.get("patch_id") or "") == str(patch_id):
+                                    tr["patch_status"] = new_status
+                        # also record last action
+                        run_data["patch_last"] = {"patch_id": patch_id, "status": new_status, "backup_path": bp}
+                        trace_html = render_agent_trace_html(run_data)
+                        verb = "aplicado" if path.endswith("/apply") else "rollback"
+                        banner = f'<div style="background:#0a3; color:#fff; padding:6px; margin:8px 0; border-radius:3px">Patch {verb}: status={html.escape(str(new_status))}, backup={html.escape(str(bp or "-"))}</div>'
+                        self.send_response(200)
+                        self.send_header("Content-type", "text/html; charset=utf-8")
+                        self.end_headers()
+                        # Full HTML response reusing direct trace render style from /runner/run-agent success path
+                        body = f"""<html><head><title>Patch Result - AIW Cockpit</title>
+<style>
+  body {{ font-family: system-ui, sans-serif; padding:20px; background:#0b0d12; color:#f5f7fb; }}
+  .tag {{ display:inline-block;padding:1px 6px;border:1px solid #444;border-radius:2px;font-size:10px;margin-right:4px; }}
+  pre {{ background:#111; padding:6px; overflow:auto; }}
+  details {{ background:#121622; padding:4px 8px; margin:4px 0; border-radius:3px; }}
+  a, .btn {{ color:#8b5cf6; }}
+</style>
+</head><body>
+<h1>Patch Result - Loop Iterativo do Agente</h1>
+<p><a href="/">← Voltar ao Cockpit</a> | <a href="{html.escape('/run?path=' + quote(run_path))}">Ver run</a> | <a href="/runner/run-agent">Nova tarefa (Executar Agente Direto)</a></p>
+{banner}
+<h3>Trace de Execução + Preview de Alterações (atualizado)</h3>
+<p style="font-size:12px;color:#9aa4b2;margin:2px 0 6px">Status do patch refletido imediatamente na seção de Preview (sem reload da página inteira).</p>
+{trace_html}
+<div style="margin-top:12px">
+  <a class="api-link" href="/api/workspaces/{html.escape(str(ws))}/agent-iterative-loop/runs/{html.escape(str(rid))}" target="_blank">Ver JSON do run</a>
+</div>
+<p style="color:#888;font-size:12px;margin-top:12px">Aplica/rollback via _safe_patch_*; trace re-rendered via render_agent_trace_html.</p>
+</body></html>"""
+                        self.wfile.write(body.encode("utf-8"))
+                        return
+                    except Exception as e:
+                        output += f" (trace refresh err: {e})"
             else:
                 ok, output = False, "Missing patch_id"
             redirect = f"/run?path={quote(run_path)}" if run_path else "/"
-        elif path == "/runner/patch/rollback":
+        elif path == "/runner/pr/create":
             patch_id = form.get("patch_id", [""])[0]
+            confirm = str(form.get("confirm", [""])[0]).lower() in ("1", "true", "yes", "on")
+            title = form.get("title", [""])[0] or ("AIW PR for " + (patch_id or "change"))
             run_path = form.get("run_path", [""])[0]
-            if patch_id:
-                if str(ROOT) not in sys.path:
-                    sys.path.insert(0, str(ROOT))
-                from aiw_runtime.tools import project_patch_rollback
-                os.environ["AIW_WORKSPACE_ID"] = active_workspace_id()
-                res = project_patch_rollback(patch_id)
-                ok = res.get("ok", False)
-                output = res.get("error", "Unknown error")
-            else:
-                ok, output = False, "Missing patch_id"
+            res = _safe_create_pr(patch_id, title, "", confirm)
+            ok = res.get("ok", False)
+            pr_url = res.get("pr_url")
+            proposal = res.get("proposal_file") or res.get("note")
+            output = pr_url or proposal or res.get("error") or "PR proposal created (see trace)"
+            # update run with pr result if agent-iterative-loop run
+            if run_path and "agent-iterative-loop" in str(run_path):
+                try:
+                    rid = str(run_path).split("/")[-1] if "/" in str(run_path) else str(run_path)
+                    ws = active_workspace_id()
+                    rj = ROOT / ".aiw" / "workspaces" / ws / "agent-iterative-loop" / "runs" / rid / "run.json"
+                    run_data = {}
+                    if rj.exists():
+                        run_data = json.loads(rj.read_text(encoding="utf-8"))
+                    # record pr info in run
+                    run_data["pr_result"] = {
+                        "patch_id": patch_id,
+                        "pr_url": pr_url,
+                        "proposal": proposal,
+                        "ok": ok,
+                        "created_at": _now_iso_cockpit(),
+                        "confirmed": confirm,
+                    }
+                    if not run_data.get("artifacts"):
+                        run_data["artifacts"] = {}
+                    run_data["artifacts"]["pr"] = pr_url or proposal
+                    if pr_url:
+                        run_data["pr_url"] = pr_url
+                    rj.write_text(json.dumps(run_data, indent=2, ensure_ascii=False), encoding="utf-8")
+                except Exception as e:
+                    output += f" (run update err: {e})"
+            # show real pr_url or proposal in trace (re-render if possible)
+            if run_path and "agent-iterative-loop" in str(run_path):
+                try:
+                    rid = str(run_path).split("/")[-1] if "/" in str(run_path) else str(run_path)
+                    ws = active_workspace_id()
+                    run_data = {}
+                    try:
+                        from aiw.agent.iterative_loop import read_agent_loop_run as _read_run
+                        payload = _read_run(ws, rid)
+                        if isinstance(payload, dict):
+                            run_data = payload.get("run", payload) if payload.get("ok", True) else {}
+                    except Exception:
+                        rj2 = ROOT / ".aiw" / "workspaces" / ws / "agent-iterative-loop" / "runs" / rid / "run.json"
+                        if rj2.exists():
+                            run_data = json.loads(rj2.read_text(encoding="utf-8"))
+                    pr_banner = f'<div style="background:#036;color:#fff;padding:6px;margin:8px 0;border-radius:3px">PR Result: {html.escape(str(pr_url or proposal or output))} (patch={html.escape(str(patch_id or "-"))})</div>'
+                    trace_html = render_agent_trace_html(run_data)
+                    self.send_response(200)
+                    self.send_header("Content-type", "text/html; charset=utf-8")
+                    self.end_headers()
+                    body = f"""<html><head><title>PR Result - AIW Cockpit</title><style>body{{font-family:system-ui;background:#0b0d12;color:#f5f7fb;padding:12px}} .tag{{display:inline-block;padding:1px 6px;border:1px solid #444;border-radius:2px;font-size:10px;margin-right:4px}} pre{{background:#111;padding:6px;overflow:auto}} a, .btn{{color:#8b5cf6}}</style></head><body>
+                    <p><a href="/">← Cockpit</a> | <a href="{html.escape('/run?path=' + quote(run_path))}">Ver run</a></p>
+                    {pr_banner}
+                    <h3>Trace atualizado (pr_url/proposal no run + trace)</h3>
+                    {trace_html}
+                    <p style="font-size:12px;color:#888;margin-top:12px">Chamou create_pr(confirm=from form, patch_id) com full flow (branch/commit/push/gh se confirm). Usa evidence/outbox para payload.</p>
+                    </body></html>"""
+                    self.wfile.write(body.encode("utf-8"))
+                    return
+                except Exception as e:
+                    output += f" (trace render err {e})"
             redirect = f"/run?path={quote(run_path)}" if run_path else "/"
+        elif path == "/runner/patch/approve":
+            # Aprovação em linha de patch (não muda status core do patch para não quebrar apply tool; adiciona marcador "approval")
+            patch_id = form.get("patch_id", [""])[0]
+            run_path = form.get("run_path", [""])[0] or form.get("workspace_id", [""])[0]  # compat
+            ws_for_p = form.get("workspace_id", [""])[0] or active_workspace_id()
+            if patch_id:
+                try:
+                    pfile = None
+                    for cand in [
+                        ROOT / ".aiw" / "workspaces" / ws_for_p / "patches" / f"{patch_id}.json",
+                        ROOT / ".aiw" / "patches" / f"{patch_id}.json",
+                    ]:
+                        if cand.exists():
+                            pfile = cand
+                            break
+                    if pfile:
+                        pdata = json.loads(pfile.read_text(encoding="utf-8"))
+                        pdata["approval"] = {"status": "approved", "approved_at": _now_iso_cockpit()}
+                        # keep status=preview so _safe_patch_apply continues to work
+                        pfile.write_text(json.dumps(pdata, indent=2, ensure_ascii=False), encoding="utf-8")
+                        ok = True
+                        status = "pending_approval"  # UI reports as pending_approval resolved
+                        output = f"Patch {patch_id} aprovado (marcador approval; status preview mantido p/ apply)"
+                        # If run_path hints at agent run, try to refresh trace like apply path
+                        if run_path and "agent-iterative-loop" in str(run_path):
+                            # reuse similar refresh logic (simplified)
+                            rid = str(run_path).split("/")[-1] if "/" in str(run_path) else str(run_path)
+                            run_data = {}
+                            try:
+                                from aiw.agent.iterative_loop import read_agent_loop_run as _read_run
+                            except Exception:
+                                from aiw_workspace.agent_iterative_loop import read_agent_loop_run as _read_run
+                            try:
+                                payload = _read_run(ws_for_p, rid)
+                                if isinstance(payload, dict):
+                                    run_data = payload.get("run", payload) if payload.get("ok", True) else {}
+                            except Exception:
+                                pass
+                            if not run_data:
+                                rj = ROOT / ".aiw" / "workspaces" / ws_for_p / "agent-iterative-loop" / "runs" / rid / "run.json"
+                                if rj.exists():
+                                    run_data = json.loads(rj.read_text(encoding="utf-8"))
+                            run_data["approval_status"] = "approved"
+                            trace_html = render_agent_trace_html(run_data)
+                            banner = f'<div style="background:#0a3; color:#fff; padding:6px; margin:8px 0; border-radius:3px">Patch aprovado: {html.escape(patch_id)} (agora pode Aplicar)</div>'
+                            self.send_response(200)
+                            self.send_header("Content-type", "text/html; charset=utf-8")
+                            self.end_headers()
+                            body = f"""<html><head><title>Patch Approved - AIW Cockpit</title>
+<style>body {{ font-family: system-ui, sans-serif; padding:20px; background:#0b0d12; color:#f5f7fb; }} .tag {{ display:inline-block;padding:1px 6px;border:1px solid #444;border-radius:2px;font-size:10px;margin-right:4px; }} pre {{ background:#111; padding:6px; overflow:auto; }} details {{ background:#121622; padding:4px 8px; margin:4px 0; border-radius:3px; }} a, .btn {{ color:#8b5cf6; }}</style>
+</head><body>
+<h1>Patch Aprovado - Loop Iterativo</h1>
+<p><a href="/">← Cockpit</a> | <a href="{html.escape('/run?path=' + quote(str(run_path)))}">Ver run</a></p>
+{banner}
+{trace_html}
+</body></html>"""
+                            self.wfile.write(body.encode("utf-8"))
+                            return
+                    else:
+                        ok, output = False, "patch file not found for approve"
+                except Exception as e:
+                    ok, output = False, f"approve err: {e}"
+            else:
+                ok, output = False, "Missing patch_id for approve"
+            redirect = f"/run?path={quote(str(run_path))}" if run_path else "/"
+        elif path == "/runner/approve-run":
+            # Explicit approval flow for agent runs / missões (status pending_approval)
+            rid = form.get("run_id", [""])[0]
+            ws = form.get("workspace_id", [""])[0] or active_workspace_id()
+            if rid:
+                try:
+                    rj = ROOT / ".aiw" / "workspaces" / ws / "agent-iterative-loop" / "runs" / rid / "run.json"
+                    if rj.exists():
+                        rdata = json.loads(rj.read_text(encoding="utf-8"))
+                        rdata["approval_status"] = "approved"
+                        rdata["approved_at"] = _now_iso_cockpit()
+                        rj.write_text(json.dumps(rdata, indent=2, ensure_ascii=False), encoding="utf-8")
+                        ok = True
+                        output = f"Run {rid} aprovado (pending_approval -> approved)"
+                        # re-render trace if possible
+                        trace_html = render_agent_trace_html(rdata)
+                        banner = f'<div style="background:#063; color:#fff; padding:6px; margin:8px 0; border-radius:3px">Run aprovado: status=approved</div>'
+                        self.send_response(200)
+                        self.send_header("Content-type", "text/html; charset=utf-8")
+                        self.end_headers()
+                        body = f"""<html><head><title>Run Approved - AIW Cockpit</title>
+<style>body {{ font-family: system-ui, sans-serif; padding:20px; background:#0b0d12; color:#f5f7fb; }} .tag {{ display:inline-block;padding:1px 6px;border:1px solid #444;border-radius:2px;font-size:10px;margin-right:4px; }} pre {{ background:#111; padding:6px; overflow:auto; }} details {{ background:#121622; padding:4px 8px; margin:4px 0; border-radius:3px; }} a, .btn {{ color:#8b5cf6; }}</style>
+</head><body>
+<h1>Run Aprovado</h1>
+<p><a href="/">← Cockpit</a> | <a href="/api/workspaces/{html.escape(ws)}/agent-iterative-loop/runs/{html.escape(rid)}">JSON</a></p>
+{banner}
+{trace_html}
+<p style="font-size:12px;color:#888">Aprovação explícita (pending_approval) gravada no run.json + trace atualizado.</p>
+</body></html>"""
+                        self.wfile.write(body.encode("utf-8"))
+                        return
+                    else:
+                        ok, output = False, "run.json not found"
+                except Exception as e:
+                    ok, output = False, f"approve-run err:{e}"
+            else:
+                ok, output = False, "missing run_id"
+            redirect = "/"
         else:
             self.send_json({"error": "not_found", "path": path}, status=404)
             return
@@ -6195,20 +7101,61 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": "action_failed", "output": output}, status=400)
             return
 
-        if "run-agent" in path and not offline:
-            # Mostrar direto o trace detalhado em vez de redirect genérico
+        if path.startswith("/runner/run-agent"):
+            # Resultados do Loop Iterativo do Agente: mostra trace DIRETAMENTE (evita redirect genérico para /run legacy).
+            # Sempre usa o helper render_agent_trace_html para rich view: <details> por iteração, status por step,
+            # paths de arquivos modificados, accumulated_context, summary, Perfil de Agente, Execução Real flag.
             self.send_response(200)
             self.send_header("Content-type", "text/html; charset=utf-8")
             self.end_headers()
-            trace_html = f"<pre style='white-space:pre-wrap;'>{html.escape(output)}</pre>"
+            run_data = {}
+            try:
+                parsed = json.loads(output)
+                run_data = parsed.get("run", parsed) if isinstance(parsed, dict) else {}
+            except Exception:
+                run_data = {"raw_output": output, "task": agent_task or "Tarefa via Cockpit"}
+            try:
+                ws_for_re = workspace_id or (active_workspace_id() if 'active_workspace_id' in globals() else "aiw")
+            except Exception:
+                ws_for_re = "aiw"
+            prof = (run_data.get("profile") or {}).get("name", "software-engineer")
+            chosen_model = run_data.get("chosen_model") or (run_data.get("router_decision") or {}).get("model", "-")
+            task_val = run_data.get("task", agent_task if 'agent_task' in dir() else "")
+            run_id = run_data.get("run_id", "-")
+            # Render rico via helper centralizado (suporta execution_trace + step_results)
+            trace_html = render_agent_trace_html(run_data)
+            reexec_form = f'''
+            <form method="post" action="/runner/run-agent" style="display:inline;margin-right:8px">
+              <input type="hidden" name="agent_task" value="{html.escape(str(task_val))}">
+              <input type="hidden" name="workspace_id" value="{html.escape(str(ws_for_re))}">
+              <input type="hidden" name="profile" value="{html.escape(prof)}">
+              <input type="hidden" name="model" value="{html.escape(str(chosen_model))}">
+              <input type="hidden" name="mission_id" value="{html.escape(str(run_data.get('mission_id', '') or ''))}">
+              <button class="btn btn-small" type="submit">Re-executar com mesma tarefa</button>
+            </form>
+            '''
             body = f"""
-            <html><head><title>Resultado do Agente</title>
-            <style>body {{ font-family: monospace; padding: 20px; }} </style>
+            <html><head><title>Resultado - Loop Iterativo do Agente</title>
+            <style>
+              body {{ font-family: system-ui, sans-serif; padding:20px; background:#0b0d12; color:#f5f7fb; }}
+              .tag {{ display:inline-block;padding:1px 6px;border:1px solid #444;border-radius:2px;font-size:10px;margin-right:4px; }}
+              pre {{ background:#111; padding:6px; overflow:auto; }}
+              details {{ background:#121622; padding:4px 8px; margin:4px 0; border-radius:3px; }}
+              a, .btn {{ color:#8b5cf6; }}
+            </style>
             </head><body>
             <h1>Resultado do Loop Iterativo do Agente</h1>
-            <p><a href="/">← Voltar ao Cockpit</a> | <a href="/runner/run-agent">Nova tarefa</a></p>
+            <p><a href="/">← Voltar ao Cockpit</a> | <a href="/runner/run-agent">Nova tarefa (Executar Agente Direto)</a></p>
+            <div style="margin:8px 0"><strong>Tarefa:</strong> {html.escape(str(task_val)[:320])}</div>
+            {f'<div style="margin:4px 0;font-size:11px">Missão: <span class="tag">{html.escape(str(run_data.get("mission_id","")))}</span> (persistente, runs agrupados)</div>' if run_data.get("mission_id") else ''}
+            <h3>Trace de Execução + Preview de Alterações (execution_trace) - Loop Iterativo do Agente</h3>
+            <p style="font-size:12px;color:#9aa4b2;margin:2px 0 6px">Propostas de changes (arquivos, diffs) extraídas do trace. Botão "Aplicar patch seguro" usa fluxo de patch seguro (aiw_runtime/tools prefer aiw/ paths) para patches preview.</p>
             {trace_html}
-            <p>Use o botão Re-executar no Cockpit para rodar novamente com a mesma tarefa.</p>
+            <div style="margin-top:12px">
+              {reexec_form}
+              <a class="api-link" href="/api/workspaces/{html.escape(str(ws_for_re))}/agent-iterative-loop/runs/{html.escape(str(run_id))}" target="_blank">Ver JSON do run</a>
+            </div>
+            <p style="color:#888;font-size:12px;margin-top:12px">Usa aiw/agent/iterative_loop.run_agent_iterative_loop_once (prefer aiw/ imports). Perfil de Agente + modelo OpenRouter. Execução Real quando não offline. "Aplicar patch seguro" integrado no trace view. Re-exec preenche o form.</p>
             </body></html>
             """
             self.wfile.write(body.encode("utf-8"))

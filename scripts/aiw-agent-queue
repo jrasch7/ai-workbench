@@ -12,15 +12,27 @@ from pathlib import Path
 # Fix sys.argv since we passed '-' as the script name
 # sys.argv fixed
 
-# Ensure aiw_workspace is accessible
+# Ensure path; prefer aiw/ imports para queue (loop/agent related), profiles/providers.
+# Algumas funcs delegam internamente; update_queue etc ainda legado mas namespace aiw preferido onde exposto.
 sys.path.insert(0, str(Path.cwd()))
-from aiw_workspace.agent_queue import (
-    create_queue_item_from_inbox,
-    update_queue_item_status,
-    run_queue_item_offline,
-    run_queue_item_llm,
-    set_queue_dispatch
-)
+try:
+    from aiw.queue import get_agent_queue, create_queue_item_from_inbox
+    # run_ e set ainda via legacy thin
+    from aiw_workspace.agent_queue import (
+        update_queue_item_status,
+        run_queue_item_offline,
+        run_queue_item_llm,
+        set_queue_dispatch
+    )
+except Exception:
+    from aiw_workspace.agent_queue import (
+        create_queue_item_from_inbox,
+        update_queue_item_status,
+        run_queue_item_offline,
+        run_queue_item_llm,
+        set_queue_dispatch
+    )
+    get_agent_queue = None  # compat
 
 def main():
     parser = argparse.ArgumentParser(description="AIW Agent Queue CLI")

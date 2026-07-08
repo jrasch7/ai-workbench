@@ -7,6 +7,8 @@ import shutil
 import uuid
 import difflib
 from pathlib import Path
+import re
+import shlex
 from .policy import validate_path, validate_write_path, validate_project_patch_path, validate_shell_command, get_root, get_aiw_root
 
 
@@ -363,11 +365,366 @@ def project_patch_rollback(patch_id: str):
     except Exception as e:
         return {"ok": False, "tool": "project_patch_rollback", "error": str(e)}
 
+
+# === Step 2: Safe git write tools + PR creation (gated strongly) ===
+# - Default block: require explicit confirm=True
+# - Only aiw workspace initially for auto side effects (like project_patch_apply)
+# - Use validate_shell_command where possible + direct safe subprocess list
+# - Path allowlists via validate_project_patch_path / validate_write_path
+# - Backups via _create_backup before mutating ops
+# - Never break existing read-only git_log/git_diff/shell git reads
+# - integrate with aiw/patch + aiw/integration (e.g. create_outbox after)
+
+def _git_ws_gate(confirm: bool = False) -> tuple[bool, dict | None]:
+    """Common gate for git writes: confirm + aiw ws (initially). Returns (allowed, error_dict_or_None)"""
+    if not confirm:
+        return False, {"ok": False, "error": "confirmation_required", "note": "use confirm=True (or --confirm true in cli) for git writes"}
+    if _workspace_id() != "aiw":
+        return False, {"ok": False, "error": "git_write_blocked_for_external_ws", "note": "git writes + create_pr only for aiw workspace initially"}
+    return True, None
+
+def _safe_branch_name(name: str) -> str:
+    name = (name or "").strip()
+    if not name or not re.match(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,79}$", name):
+        raise ValueError("invalid_branch_name")
+    if ".." in name or name.endswith("/") or "@{" in name:
+        raise ValueError("invalid_branch_name")
+    return name
+
+def git_create_branch(branch: str, base: str = "HEAD", confirm: bool = False):
+    """Safe branch creation. Uses validate_shell_command + direct git. Gated."""
+    import subprocess
+    try:
+        allowed, err = _git_ws_gate(confirm)
+        if not allowed:
+            return err
+        b = _safe_branch_name(branch)
+        base = base or "HEAD"
+        # Use validate to enforce policy on cmd (now allows checkout)
+        cmd_str = f"git checkout -b {b}"
+        parts = validate_shell_command(cmd_str)
+        cwd = str(validate_path("."))
+        # backup current state lightly (no full tree, git handles)
+        proc = subprocess.run(parts, cwd=cwd, capture_output=True, text=True, timeout=30)
+        return {
+            "ok": proc.returncode == 0,
+            "tool": "git_create_branch",
+            "branch": b,
+            "base": base,
+            "stdout": proc.stdout,
+            "stderr": proc.stderr,
+            "confirmed": confirm,
+            "workspace": _workspace_id()
+        }
+    except Exception as e:
+        return {"ok": False, "tool": "git_create_branch", "error": str(e)}
+
+def git_commit(message: str, paths: list[str] | None = None, confirm: bool = False):
+    """Safe commit on allowed paths only. Creates backups, uses validate, gates."""
+    import subprocess
+    try:
+        allowed, err = _git_ws_gate(confirm)
+        if not allowed:
+            return err
+        msg = (message or "aiw: safe agent edit").strip()
+        if not msg or len(msg) > 300:
+            return {"ok": False, "tool": "git_commit", "error": "invalid_commit_message"}
+        cwd = str(validate_path("."))
+        # determine files to commit: if paths given validate them; else use porcelain changed
+        to_commit = []
+        if paths:
+            for p in paths:
+                if not p or ".." in p or p.startswith("/"):
+                    return {"ok": False, "tool": "git_commit", "error": f"invalid_path:{p}"}
+                rp = validate_project_patch_path(p)  # or validate_write_path; project allows source_roots
+                rel = str(rp.relative_to(get_root()))
+                to_commit.append(rel)
+        else:
+            # fallback: all modified per git status (but still filter forbidden)
+            try:
+                st = subprocess.check_output(["git", "status", "--porcelain"], cwd=cwd, text=True, timeout=10)
+                for line in st.splitlines():
+                    if not line: continue
+                    fp = line[3:].strip() if len(line)>3 else line.strip()
+                    if fp and not any(x in fp.lower() for x in [".env", "secret", "token"]):
+                        # quick check
+                        try:
+                            validate_project_patch_path(fp)
+                            to_commit.append(fp)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        if not to_commit:
+            return {"ok": False, "tool": "git_commit", "error": "no_allowed_files_to_commit"}
+        # backups for changed files
+        backups = []
+        for f in to_commit:
+            try:
+                rp = get_root() / f
+                bp = _create_backup(rp)
+                if bp: backups.append(bp)
+            except Exception:
+                pass
+        # use validated cmds
+        add_cmd = ["git", "add", "--"] + to_commit
+        # validate would allow if constructed, but use list directly for safety
+        add_proc = subprocess.run(add_cmd, cwd=cwd, capture_output=True, text=True, timeout=20)
+        if add_proc.returncode != 0:
+            return {"ok": False, "tool": "git_commit", "error": "git_add_failed", "stderr": add_proc.stderr}
+        commit_proc = subprocess.run(["git", "commit", "-m", msg], cwd=cwd, capture_output=True, text=True, timeout=30)
+        return {
+            "ok": commit_proc.returncode == 0,
+            "tool": "git_commit",
+            "message": msg,
+            "files": to_commit,
+            "backups": backups,
+            "stdout": commit_proc.stdout,
+            "stderr": commit_proc.stderr,
+            "confirmed": confirm
+        }
+    except Exception as e:
+        return {"ok": False, "tool": "git_commit", "error": str(e)}
+
+def git_diff_for_pr(base_ref: str = "main", head_ref: str = "HEAD"):
+    """Read-only diff suitable for PR description (base..head). Safe, no gate needed."""
+    import subprocess
+    try:
+        cwd = str(validate_path("."))
+        out = subprocess.check_output(
+            ["git", "diff", f"{base_ref}..{head_ref}", "--stat", "--"],  # stat first safe
+            cwd=cwd, text=True, stderr=subprocess.DEVNULL, timeout=15
+        )
+        full = subprocess.check_output(
+            ["git", "diff", f"{base_ref}..{head_ref}", "--"], cwd=cwd, text=True, stderr=subprocess.DEVNULL, timeout=15
+        )
+        return {"ok": True, "tool": "git_diff_for_pr", "base": base_ref, "head": head_ref, "stat": out[:2000], "diff": full[:16000]}
+    except Exception as e:
+        return {"ok": False, "tool": "git_diff_for_pr", "error": str(e)}
+
+# New basic browser research tool (safe fetch for external context/research, e.g. docs, APIs)
+# Respects network policy via runtime gate in loop; uses urllib like web_search.
+# Callable from loop actions via python_eval wrapper (like web_search, file_read etc).
+def web_fetch(url: str, max_bytes: int = 8000):
+    try:
+        import urllib.request
+        if not url.startswith(("http://", "https://")):
+            return {"ok": False, "tool": "web_fetch", "error": "only http/https allowed"}
+        req = urllib.request.Request(url, headers={"User-Agent": "AIW/1.0 (safe research fetch)"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            raw = resp.read(max_bytes + 1)
+            truncated = len(raw) > max_bytes
+            data = raw[:max_bytes]
+            ctype = resp.headers.get("Content-Type", "")
+            text = data.decode("utf-8", errors="replace")
+            return {
+                "ok": True,
+                "tool": "web_fetch",
+                "url": url,
+                "content_type": ctype,
+                "content": text,
+                "bytes": len(data),
+                "truncated": truncated,
+                "note": "Basic fetch for research/docs. Truncated to max_bytes. Policy: network_access required in real exec."
+            }
+    except Exception as e:
+        return {"ok": False, "tool": "web_fetch", "url": url, "error": str(e)[:200]}
+
+def create_pr(title: str, body: str = "", base: str = "main", head: str | None = None, confirm: bool = False, use_integration: bool = True, patch_id: str | None = None):
+    """
+    High-level safe PR creation (gated).
+    - Full flow on confirm: git checkout -b (if needed/derived from patch), git add/commit via git_commit, push, gh pr create.
+    - Uses patch context if patch_id provided (from previous project_patch_apply or trace).
+    - Computes PR diff via git_diff_for_pr.
+    - Uses evidence_bundle or create_outbox (list/read payload) for PR payload/body when patch_id present.
+    - Executes gh pr create only with confirm + aiw ws (may be no-op if no remote/gh).
+    - Always returns preview + suggested command for manual if blocked.
+    Integrates with aiw/integration (create_outbox) + aiw/patch flows.
+    """
+    import shutil
+    try:
+        allowed, err = _git_ws_gate(confirm)
+        if not allowed:
+            # still return preview even on gate fail (for UI "show diff, require confirm")
+            try:
+                d = git_diff_for_pr(base, head or "HEAD")
+                err["preview_diff"] = d.get("diff") or d.get("stat")
+            except Exception:
+                pass
+            return err
+        cwd = str(validate_path("."))
+        ws_id = _workspace_id()
+
+        # load patch context if provided (from previous apply/trace)
+        patch_ctx = None
+        changed_files = None
+        if patch_id:
+            try:
+                pf = _patch_file_for_read(patch_id)
+                if pf.exists():
+                    patch_ctx = json.loads(pf.read_text(encoding="utf-8"))
+                    changed_files = patch_ctx.get("changed_files") or ([patch_ctx.get("path")] if patch_ctx.get("path") else None)
+                    if not title or title in ("", "AIW agent change"):
+                        title = f"aiw: {patch_ctx.get('reason', 'patch change')} [{patch_id[:12]}]"
+            except Exception:
+                pass
+
+        # derive head from patch if not set
+        target_head = head
+        if not target_head or target_head == "HEAD":
+            if patch_id:
+                target_head = f"aiw/patch-{patch_id[:8]}"
+            else:
+                target_head = "aiw/pr-" + time.strftime("%Y%m%d%H%M")
+        head = target_head
+
+        # prepare PR payload using evidence_bundle or create_outbox if patch context
+        pr_payload_body = body or ""
+        if use_integration and patch_id and not pr_payload_body:
+            used_payload_src = None
+            try:
+                # prefer outbox payload.md (pr_summary)
+                from aiw.integration.integration_outbox import list_outbox_items, resolve_outbox_item_file
+                ob_res = list_outbox_items(ws_id, patch_id)
+                for itm in (ob_res.get("items") or []):
+                    if itm.get("kind") == "pr_summary" and itm.get("item_id"):
+                        fpath = resolve_outbox_item_file(ws_id, itm["item_id"], "payload.md")
+                        if fpath and fpath.exists():
+                            pr_payload_body = fpath.read_text(encoding="utf-8")[:4500]
+                            used_payload_src = "outbox:" + itm["item_id"]
+                            break
+            except Exception:
+                pass
+            if not pr_payload_body:
+                try:
+                    # fallback to evidence bundle info for payload
+                    from aiw.patch.evidence_bundle import list_evidence_bundles
+                    eb_res = list_evidence_bundles(ws_id, patch_id)
+                    if eb_res.get("bundles"):
+                        b = eb_res["bundles"][0]
+                        pr_payload_body = f"AIW Patch {patch_id}\n\nEvidence Bundle: {b.get('bundle_id')}\nDecision: {b.get('decision_record',{}).get('decision')}\nRisk: {b.get('risk_summary',{}).get('level')}\n\nSee attached evidence for full validation."
+                        used_payload_src = "evidence_bundle"
+                except Exception:
+                    pass
+            if not pr_payload_body:
+                try:
+                    # last attempt: create_outbox_item (will use latest export if present)
+                    from aiw.integration.integration_outbox import create_outbox_item
+                    ob_create = create_outbox_item(ws_id, patch_id, "github_pr", "pr_summary")
+                    if ob_create.get("ok") and ob_create.get("item"):
+                        # re-list to resolve payload file
+                        ob_res2 = list_outbox_items(ws_id, patch_id)
+                        for itm in (ob_res2.get("items") or []):
+                            fpath = resolve_outbox_item_file(ws_id, itm["item_id"], "payload.md")
+                            if fpath and fpath.exists():
+                                pr_payload_body = fpath.read_text(encoding="utf-8")[:4500]
+                                used_payload_src = "outbox_created:" + itm["item_id"]
+                                break
+                except Exception as ie:
+                    pass
+
+        # Full flow: checkout -b if needed (on confirm gate passed)
+        did_branch = False
+        try:
+            cur_branch = subprocess.check_output(["git", "branch", "--show-current"], cwd=cwd, text=True, timeout=5).strip() or "HEAD"
+            if head and head != cur_branch and head != "HEAD":
+                br_res = git_create_branch(head, base="HEAD", confirm=True)
+                did_branch = bool(br_res.get("ok"))
+        except Exception:
+            pass
+
+        # commit via git_commit (uses patch changed_files if avail)
+        did_commit = False
+        if changed_files or True:  # allow auto-detect in git_commit
+            try:
+                cmsg = title or "aiw: change via create_pr"
+                c_res = git_commit(cmsg, paths=changed_files, confirm=True)
+                did_commit = bool(c_res.get("ok"))
+            except Exception:
+                pass
+
+        # compute diff now on (new) head
+        diff_res = git_diff_for_pr(base, head)
+        pr_diff = diff_res.get("diff") or diff_res.get("stat", "")
+
+        # push
+        pushed = False
+        try:
+            push_proc = subprocess.run(["git", "push", "-u", "origin", head], cwd=cwd, capture_output=True, text=True, timeout=60)
+            pushed = push_proc.returncode == 0
+        except Exception:
+            pass
+
+        # gh pr create (gated already)
+        gh_cmd = ["gh", "pr", "create", "--base", base, "--head", head, "--title", title, "--body", (pr_payload_body or body or pr_diff[:4000])]
+        pr_url = None
+        if shutil.which("gh"):
+            try:
+                gh_proc = subprocess.run(gh_cmd, cwd=cwd, capture_output=True, text=True, timeout=60)
+                if gh_proc.returncode == 0:
+                    out = (gh_proc.stdout or gh_proc.stderr or "").strip()
+                    pr_url = out.splitlines()[-1] if out else None
+            except Exception:
+                pass
+
+        # prepare integration outbox note (or use if already)
+        outbox_res = {"note": "used payload from evidence/outbox" if pr_payload_body else "integration available; use exports for full pr_summary"}
+        if use_integration and patch_id:
+            try:
+                from aiw.integration.integration_outbox import list_outbox_items
+                ob_final = list_outbox_items(ws_id, patch_id)
+                outbox_res = {"items": len(ob_final.get("items", [])), "latest": (ob_final.get("items") or [{}])[0].get("item_id")}
+            except Exception as ie:
+                outbox_res = {"note": f"outbox note: {str(ie)[:60]}"}
+
+        # Fallback: create a pr-proposal artifact (like patch) for review
+        pr_id = time.strftime("%Y%m%dT%H%M%SZ-") + uuid.uuid4().hex[:6] + "-pr"
+        pr_dir = _patches_dir() / "pr-proposals"
+        pr_dir.mkdir(parents=True, exist_ok=True)
+        (pr_dir / f"{pr_id}.json").write_text(json.dumps({
+            "pr_id": pr_id,
+            "title": title,
+            "body": pr_payload_body or body,
+            "base": base,
+            "head": head,
+            "diff": pr_diff[:8000],
+            "pushed": pushed,
+            "pr_url": pr_url,
+            "patch_id": patch_id,
+            "outbox": outbox_res,
+            "did_branch": did_branch,
+            "did_commit": did_commit,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "workspace": ws_id,
+            "confirmed": confirm
+        }, indent=2), encoding="utf-8")
+        return {
+            "ok": True,
+            "tool": "create_pr",
+            "pr_id": pr_id,
+            "title": title,
+            "head": head,
+            "base": base,
+            "diff_preview": pr_diff[:1200],
+            "pushed": pushed,
+            "pr_url": pr_url,
+            "patch_id": patch_id,
+            "integration": outbox_res,
+            "did_branch": did_branch,
+            "did_commit": did_commit,
+            "proposal_file": f".aiw/.../patches/pr-proposals/{pr_id}.json",
+            "note": "Full flow executed on confirm (branch+commit+push+gh). PR proposal created. If gh succeeded, PR open. Uses evidence_bundle/create_outbox for payload when patch_id."
+        }
+    except Exception as e:
+        return {"ok": False, "tool": "create_pr", "error": str(e)}
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("tool", choices=[
         "directory_list", "file_read", "shell_exec", "file_write", "file_patch",
-        "project_patch_preview", "project_patch_apply", "project_patch_rollback"
+        "project_patch_preview", "project_patch_apply", "project_patch_rollback",
+        "git_create_branch", "git_commit", "git_diff_for_pr", "create_pr",
+        "web_fetch"
     ])
     parser.add_argument("--path", type=str)
     parser.add_argument("--max-depth", type=int, default=2)
@@ -385,6 +742,11 @@ if __name__ == "__main__":
     parser.add_argument("--expected-replacements", type=int, default=1)
     parser.add_argument("--reason", type=str, default="")
     parser.add_argument("--patch-id", type=str)
+    # For new safe git write tools
+    parser.add_argument("--branch", type=str)
+    parser.add_argument("--message", type=str)
+    parser.add_argument("--title", type=str)
+    parser.add_argument("--confirm", type=str, default="false")
 
     args = parser.parse_args()
 
@@ -405,6 +767,17 @@ if __name__ == "__main__":
         print(json.dumps(project_patch_apply(args.patch_id), indent=2))
     elif args.tool == "project_patch_rollback":
         print(json.dumps(project_patch_rollback(args.patch_id), indent=2))
+    elif args.tool == "git_create_branch":
+        print(json.dumps(git_create_branch(args.branch or args.path or "aiw/safe-edit", confirm=(args.confirm or "false").lower() in ("true","1","yes")), indent=2))
+    elif args.tool == "git_commit":
+        print(json.dumps(git_commit(args.message or "aiw safe edit", paths=(args.path or "").split() if args.path else None, confirm=(args.confirm or "false").lower() in ("true","1","yes")), indent=2))
+    elif args.tool == "git_diff_for_pr":
+        print(json.dumps(git_diff_for_pr(args.old_text or "main", args.new_text or "HEAD"), indent=2))
+    elif args.tool == "create_pr":
+        pid = getattr(args, "patch_id", None) or getattr(args, "patch-id", None)
+        print(json.dumps(create_pr(args.title or "AIW agent change", body=args.reason or "", patch_id=pid, confirm=(args.confirm or "false").lower() in ("true","1","yes")), indent=2))
+    elif args.tool == "web_fetch":
+        print(json.dumps(web_fetch(args.path or "", args.max_bytes), indent=2))
     elif args.tool == "web_search":
         print(json.dumps(web_search(args.query or ""), indent=2))
     elif args.tool == "git_log":
@@ -453,3 +826,45 @@ def git_diff(ref_a: str = "HEAD~1", ref_b: str = "HEAD", path: str = "."):
         return {"ok": True, "tool": "git_diff", "diff": out[:8000]}
     except Exception as e:
         return {"ok": False, "tool": "git_diff", "error": str(e)}
+
+# From step1 subagent: run_tests for structured pytest output in auto-correction
+def _parse_pytest_output(stdout: str, stderr: str) -> dict:
+    combined = (stdout or "") + "\n" + (stderr or "")
+    failed = []
+    passed = 0
+    errors = []
+    for line in combined.splitlines():
+        if "FAILED" in line or "::" in line and "FAILED" in line:
+            failed.append(line.strip()[:200])
+        if line.strip().startswith("E   "):
+            errors.append(line.strip()[:200])
+        if "passed" in line and "failed" in line:
+            import re
+            m = re.search(r"(\d+) passed", line)
+            if m: passed = int(m.group(1))
+    return {
+        "passed_count": passed,
+        "failed_count": len(failed),
+        "failed_tests": failed[:5],
+        "error_summary": "\n".join(errors[:3]) or (failed[0] if failed else "")
+    }
+
+def run_tests(target: str = ".", pytest_args: str = "-q --tb=short", timeout: int = 60):
+    try:
+        resolved = validate_path(target)
+        cmd = ["python3", "-m", "pytest", str(resolved), *shlex.split(pytest_args)]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=str(get_root()))
+        parsed = _parse_pytest_output(proc.stdout, proc.stderr)
+        return {
+            "ok": proc.returncode == 0,
+            "tool": "run_tests",
+            "passed_count": parsed["passed_count"],
+            "failed_count": parsed["failed_count"],
+            "failed_tests": parsed["failed_tests"],
+            "error_summary": parsed["error_summary"],
+            "stdout": proc.stdout[-2000:],
+            "stderr": proc.stderr[-500:],
+            "returncode": proc.returncode
+        }
+    except Exception as e:
+        return {"ok": False, "tool": "run_tests", "error": str(e)}

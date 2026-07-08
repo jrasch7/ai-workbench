@@ -1,8 +1,27 @@
-# AIW Agent Iterative Loop Offline v1
+# AIW Agent Iterative Loop (Loop Iterativo do Agente)
 
-## Objetivo
+**Nota de estado (2026-07):** O **Loop Iterativo do Agente** é o runtime principal em `aiw/agent/iterative_loop.py`. Suporta planejamento LLM (OpenRouter quando permitido pelo perfil), re-planejamento com feedback de resultados anteriores, despacho real a Provedores de Execução (CodeAct), execução com side-effects controlados (file_write + project_patch_preview/apply via aiw_runtime/tools), execution_trace estruturado e integração profunda com Cockpit.
 
-O Agent Iterative Loop Offline v1 prova o primeiro ciclo local e auditavel do AIW sem modelo real, sem integracao externa e sem automacao em background.
+Recursos recentes:
+- Refatorações **precisas**: prompt instrui LLM a fazer `file_read` primeiro, depois emitir `old_text`/`new_text` exatos (do conteúdo lido) para `project_patch_preview` em fontes reais.
+- Cockpit: após "Aplicar patch seguro", resultado (status + backup) é mostrado inline com trace atualizado (sem reload completo para runs do agent).
+- Teste completo de fluxo: `_test_full_edit_preview_apply_validate_flow` + integrado no regression smoke.
+- Preferências aiw/ cirúrgicas em policy (capabilities/registry).
+
+Mantenha dry-run por padrão; use `--execute --confirm-agent-loop` apenas para tarefas reais seguras.
+
+## Objetivo (v1 conceitual)
+
+O Agent Iterative Loop prova ciclos locais e auditáveis do AIW. Versão atual suporta modelo real + execução controlada.
+
+Fluxo atual:
+- Task via Cockpit ou CLI
+- Perfil de Agente + Roteador de Modelo (AUTO / OpenRouter)
+- Planejador LLM (ou mock)
+- Despacho a Provedor de Execução + tools
+- Acumulação de contexto + memória
+- execution_trace para visibilidade
+- Múltiplas iterações com resultados anteriores
 
 Fluxo:
 
@@ -22,73 +41,106 @@ task manual
 
 Esta versao nao e um agente autonomo completo. Ela nao planeja com LLM, nao aplica patch, nao roda daemon e nao escreve em GitHub/Jira.
 
-## Mock Planner
+## Planejador (LLM + Mock)
 
-O planner interno `build_mock_plan(task, max_iterations)` e deterministico. Ele gera de 1 a 3 passos, nunca transforma texto da task em codigo executavel e nunca chama LLM, internet ou GitHub.
+- Quando `llm_planning_allowed=true` no perfil e chave OpenRouter disponível: usa `LLMPlanner` (model.generate). O prompt instrui explicitamente para refatorações precisas:
+  1. Passo `file_read` com `target_file`.
+  2. Passo seguinte com `kind: patch` + `old_text` + `new_text` **exatos** (copiados do conteúdo do read anterior).
+- Fallback: `_mock_plan` (determinístico, com hints de "editar" e suporte a target/old/new).
 
-Plano padrao de 3 passos:
-
+Exemplo de passo gerado para edição precisa:
 ```json
-[
-  {"step": 1, "kind": "inspect_context", "title": "Inspect available context", "uses_codeact": false},
-  {"step": 2, "kind": "codeact_python_eval", "title": "Run safe offline CodeAct check", "uses_codeact": true},
-  {"step": 3, "kind": "summarize", "title": "Summarize offline result", "uses_codeact": false}
-]
+{"step":2, "kind":"codeact_python_eval", "action_hint":"editar com old/new exatos do read anterior",
+ "target_file":"aiw/agent/iterative_loop.py", "old_text":"def _now_iso(): ...", "new_text":"def _now_iso(): ... # refatorado"}
 ```
 
-## CLI
+_build_rich_action converte isso em wrapper que chama `project_patch_preview` (ou `file_write` para .aiw/generated).
 
-Ajuda:
+## CLI (atual - usa Loop em aiw/)
 
 ```bash
 ./scripts/aiw-agent-loop --help
 ```
 
-Dry-run padrao:
+Dry-run (recomendado para explorar):
 
 ```bash
 ./scripts/aiw-agent-loop \
   --workspace aiw \
-  --task "Validate mock planner loop" \
+  --task "Liste arquivos e identifique o propósito do projeto" \
   --once \
   --dry-run \
+  --profile software-engineer \
   --max-iterations 3
 ```
 
-Execucao offline explicita:
+Execução real (requer OPENROUTER_API_KEY com saldo/recarga quando aplicável + confirmação):
 
 ```bash
 ./scripts/aiw-agent-loop \
   --workspace aiw \
-  --task "Validate mock planner loop" \
+  --task "Analise X e sugira refatoração segura" \
   --once \
   --execute \
   --confirm-agent-loop \
-  --max-iterations 3
+  --profile software-engineer \
+  --max-iterations 4
 ```
 
-Listar e ler runs:
+Listar/ler runs do Loop Iterativo do Agente (agora implementado em aiw/agent/):
 
 ```bash
 ./scripts/aiw-agent-loop --workspace aiw --list
-./scripts/aiw-agent-loop --workspace aiw --read-run ail-1234abcd
+./scripts/aiw-agent-loop --workspace aiw --read-run ail-xxxx
 ```
+
+**Fluxo preferencial:** use o **Cockpit** (`./scripts/aiw-cockpit`) para submeter tarefas reais com **Perfil de Agente** + modelo OpenRouter e ver `execution_trace` renderizado imediatamente. O Cockpit é a interface principal para desenvolvimento real.
+
+### Exemplo simples de uso real (hoje)
+
+```bash
+# 1. Inicie o Cockpit
+./scripts/aiw-cockpit
+
+# 2. No formulário:
+#    - Perfil: software-engineer
+#    - Modelo: openai/gpt-oss-120b:free (ou outro)
+#    - Tarefa: "Analise aiw/agent/iterative_loop.py e liste 2 pontos de melhoria (sem editar)"
+#    - Clique "Executar Loop Iterativo do Agente (execute=True)" (ou offline)
+
+# 3. Veja na resposta:
+#    - router_decision (openrouter + modelo do perfil)
+#    - execution_trace com passos (inspect, codeact etc), status, resultados
+#    - Re-execute para iterar
+```
+
+Com `OPENROUTER_API_KEY` válido: planner="llm", planos adaptados à tarefa. Execução Real usa o **Provedor de Execução** (codeact) do perfil.
 
 ## Regression Smoke
 
-Antes de evoluir o loop ou a policy, rode o smoke offline:
+Rode antes de mudanças maiores:
 
 ```bash
 ./scripts/aiw-agent-loop-regression-smoke --workspace aiw
 ```
 
-Para incluir a validacao read-only do Cockpit:
+O smoke agora inclui o check completo **full_edit_preview_apply_validate_via_loop**:
+- Loop com tarefa contendo "editar" + `execute=True` + `confirm_agent_loop=True` (mock planning, execução real via CodeAct).
+- Gera `project_patch_preview` (verifica `patch_id`, `tool` e "editar" no trace).
+- Executa `project_patch_apply` (só para workspace "aiw").
+- Valida com `py_compile`.
+- Afirmações: `has_real_execution`, `produced_preview`, `applied`, `validate_success`.
 
+Helper direto:
 ```bash
-./scripts/aiw-agent-loop-regression-smoke --workspace aiw --with-cockpit --cockpit-port 18769
+python3 -c '
+from aiw.agent.iterative_loop import _test_full_edit_preview_apply_validate_flow
+import json
+print(json.dumps(_test_full_edit_preview_apply_validate_flow(), indent=2, default=str))
+'
 ```
 
-O smoke grava evidencias em `.aiw/workspaces/<workspace_id>/agent-loop-regression/runs/<run_id>/` com `run.json`, `summary.md` e `checks/*.json`. Ele nao chama LLM real, nao faz GitHub/Jira write, nao roda daemon persistente e usa subprocess com argumentos em lista.
+Artefatos vão para `.aiw/workspaces/aiw/agent-iterative-loop/runs/...` e `.aiw/.../patches/`.
 
 O artifact diferencia rede externa de localhost: `external_network_used=false` sempre, e `localhost_http_used=true` apenas quando `--with-cockpit` faz GETs locais em `127.0.0.1`. Ele tambem registra `unsafe_broad_search_used=false` e `validation_search_scope=explicit_paths_only` para reforcar a regra de validacao textual escopada.
 

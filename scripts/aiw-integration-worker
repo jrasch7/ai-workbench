@@ -14,8 +14,10 @@ from pathlib import Path
 
 # Ensure aiw_workspace is accessible
 sys.path.insert(0, str(Path.cwd()))
-from aiw_workspace.integration_worker import run_worker
-from aiw_workspace.integration_outbox import set_outbox_dispatch
+
+# Prefer aiw/ após migração (funcionalidade existe em aiw/integration)
+from aiw.integration.integration_worker import run_worker
+from aiw.integration.integration_outbox import set_outbox_dispatch
 
 def main():
     parser = argparse.ArgumentParser(description="AIW Integration Worker CLI")

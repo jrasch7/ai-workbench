@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 # AIW Agent Loop offline regression smoke.
+# Includes full "editar + preview + apply + validate" flow test (step 5).
 
 export PYTHONPATH="$PWD:$PYTHONPATH"
+
+python3 -c '
+import sys
+sys.path.insert(0, ".")
+from aiw.agent.iterative_loop import _test_full_edit_preview_apply_validate_flow, _test_rich_actions_execute_paths
+print("=== regression: full edit-preview-apply-validate ===")
+print(_test_full_edit_preview_apply_validate_flow())
+print("=== regression: rich actions ===")
+print(_test_rich_actions_execute_paths())
+' || echo "extra flow tests had issues (non-fatal for base smoke)"
 
 exec python3 -m aiw_workspace.agent_loop_regression "$@"

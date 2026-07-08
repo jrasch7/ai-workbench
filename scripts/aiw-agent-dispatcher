@@ -12,6 +12,7 @@ from pathlib import Path
 # sys.argv fixed
 sys.path.insert(0, str(Path.cwd()))
 
+# agent_dispatcher (legacy, ainda não migrado para aiw/ para evitar heavy; prefer aiw/ para loop/profiles/providers em outros)
 from aiw_workspace.agent_dispatcher import run_agent_dispatcher_once, run_agent_dispatcher_watch
 
 def main():

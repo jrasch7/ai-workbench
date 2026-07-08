@@ -1,6 +1,12 @@
 #!/bin/bash
 # AIW Agent Iterative Loop Offline CLI
 
+set -a
+if [[ -f .env ]]; then
+  source .env
+fi
+set +a
+
 export PYTHONPATH="$PWD:$PYTHONPATH"
 
 exec python3 - "$@" <<'PYTHON'
@@ -11,12 +17,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.cwd()))
 
-# Preferindo aiw/ (formato atualizado) - delegate em aiw_workspace para compat
+# Preferindo aiw/ (formato atualizado) - delegate em aiw_workspace para compat.
+# Atualizado para runtime_gate/policy + profiles/agent durante migração cirúrgica.
 from aiw.agent.iterative_loop import (
     list_agent_loop_runs,
     read_agent_loop_run,
     run_agent_iterative_loop_once,
 )
+
+# Prefer aiw.policy para Porta de Runtime (agora em aiw/ após migração)
+try:
+    from aiw.policy import evaluate_runtime_gate
+except Exception:
+    evaluate_runtime_gate = None  # fallback não necessário, legacy via policy engine
 
 
 def main():
@@ -24,11 +37,12 @@ def main():
     parser.add_argument("--workspace", required=True, help="Workspace ID")
     parser.add_argument("--task", help="Task text for the loop")
     parser.add_argument("--once", action="store_true", help="Run one foreground cycle")
-    parser.add_argument("--max-iterations", type=int, default=4, help="Número de iterações do Loop Iterativo do Agente (recomendado 3-6 para uso real)")
+    parser.add_argument("--max-iterations", type=int, default=3, help="Número de iterações do Loop Iterativo do Agente (max 3 para smoke/compat; recomendado 3)")
     parser.add_argument("--capability", default="codeact_sandbox", help="Capability to authorize through policy")
     parser.add_argument("--operation", default="python_eval_fixed", help="Policy operation name; default keeps fixed CodeAct eval")
     parser.add_argument("--confirm-agent-loop", action="store_true", help="Confirma Execução Real (necessário junto com --execute)")
     parser.add_argument("--profile", default="software-engineer", help="Agent Profile name (e.g. software-engineer, security-analyst, code-reviewer)")
+    parser.add_argument("--model", default="", help="Modelo OpenRouter explícito (ex: openai/gpt-oss-120b:free, meta-llama/llama-3.3-70b-instruct:free). Sobrescreve default do profile para LLM real.")
 
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="Create dry-run artifacts without CodeAct execution")
@@ -58,19 +72,23 @@ def main():
         print("Must provide --task for --once.", file=sys.stderr)
         sys.exit(1)
 
-    print("=== AIW - Modo de Desenvolvimento Real ===")
-    print("Usando Loop Iterativo do Agente com Provedor de Execução e OpenRouter (recarregue seu saldo).")
-    print("Para execução real: --execute --confirm-agent-loop")
-    print("Perfil recomendado: --profile software-engineer")
+    import sys
+    print("=== AIW - Modo de Desenvolvimento Real ===", file=sys.stderr)
+    print("Usando Loop Iterativo do Agente com Provedor de Execução e OpenRouter (recarregue seu saldo).", file=sys.stderr)
+    print("Para execução real: --execute --confirm-agent-loop --model <openrouter-model>", file=sys.stderr)
+    print("Perfil recomendado: --profile software-engineer", file=sys.stderr)
 
     # Modo de uso real para desenvolvimento (hoje):
     # Use --execute para rodar com LLM real (OpenRouter) e execução real via Provedor de Execução.
-    # Exemplo: ./scripts/aiw-agent-loop --workspace meu-projeto --task "refatore o modulo X e rode testes" --execute --profile software-engineer --max-iterations 5
-    # Lembre de ter OPENROUTER_API_KEY recarregado no .env ou ambiente.
+    # Exemplo: ./scripts/aiw-agent-loop --workspace aiw --task "refatore funcao X e rode py_compile" --execute --confirm-agent-loop --profile software-engineer --model openai/gpt-oss-120b:free --max-iterations 1
+    # Lembre de ter OPENROUTER_API_KEY recarregado no .env ou ambiente (o script agora faz source .env).
     dry_run = args.dry_run or not args.execute
     # Aligned: load from new aiw structure
     from aiw import load_profile
     prof = load_profile(args.profile)
+    if args.model:
+        prof = dict(prof)  # copia
+        prof["default_model"] = args.model
 
     res = run_agent_iterative_loop_once(
         workspace_id=args.workspace,
@@ -84,14 +102,15 @@ def main():
         operation=args.operation,
         profile=prof,
     )
-    # Show alignment info (new architecture)
+    # Show alignment info (new architecture) - to stderr so stdout is pure json for smoke/parse
     if "run" in res:
-        rd = res["run"].get("router_decision", {})
-        prof = res["run"].get("profile", {})
-        print("=== [Aligned] Profile + Router ===")
-        print("Profile:", prof.get("name"))
-        print("Router:", rd.get("rationale"))
-        print("Model/Provider:", rd.get("model"), "/", rd.get("provider"))
+        rd = res.get("run", {}) or {}
+        prof = (res.get("run", {}) or {}).get("profile") or {}
+        rd = rd.get("router_decision") or {}
+        print("=== [Aligned] Profile + Router ===", file=sys.stderr)
+        print("Profile:", (prof or {}).get("name"), file=sys.stderr)
+        print("Router:", rd.get("rationale"), file=sys.stderr)
+        print("Model/Provider:", rd.get("model"), "/", rd.get("provider"), file=sys.stderr)
     print(json.dumps(res, indent=2, ensure_ascii=False))
     sys.exit(0 if res.get("ok") else 1)
 

@@ -14,7 +14,9 @@ from pathlib import Path
 
 # Ensure aiw_workspace is accessible
 sys.path.insert(0, str(Path.cwd()))
-from aiw_workspace.github_intake import run_github_intake
+
+# Prefer aiw/ após migração (funcionalidade existe em aiw/integration)
+from aiw.integration.github_intake import run_github_intake
 
 def main():
     parser = argparse.ArgumentParser(description="AIW GitHub Intake CLI")

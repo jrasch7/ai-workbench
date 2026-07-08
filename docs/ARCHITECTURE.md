@@ -41,13 +41,16 @@ The LLM is just one replaceable component. The power comes from the harness arou
 - Pluggable everything via Provider-First design.
 - Tools & working style: LLM-planned iterative loops, profile-driven routing, gated execution providers, memory/context accumulation, systematic experimentation.
 
-**Current Alignment Status (post 1-5 recent work, 2026-07)**:
-- `aiw/` structure: interfaces, providers (Model/OpenRouter, Execution/CodeAct+Docker+Devcontainer, Context), router+perfis, policy, planner, **Loop Iterativo do Agente** (múltiplas iterações, re-planejamento, despacho real para provedores), experiment lab, memória, queue. Legacy further migrated (thinned worker_loop, agent_queue; CodeAct logic in aiw/).
-- Legacy `aiw_workspace/`: still contains most operational code (29 files); key pieces are now thin delegates.
-- Recent progress: execution dispatch wired + refined, docker/devcontainer adapters, memory integration, tools (web/git) wired, mover on queue.
-- Overall alignment: ~65-70% toward clean runtime. Structure is being actively cleaned (empty layers now have status READMEs, historical docs isolated).
+**Current Alignment Status (2026-07-08, após passos de migração 1-4)**:
+- `aiw/` structure solid: interfaces, providers (Model/OpenRouter real registrado + usado, Execution/CodeAct migrado completamente + Docker/Devcontainer), **Roteador de Modelo** + **Perfis de Agente**, policy, **Loop Iterativo do Agente** (primário em aiw/agent/iterative_loop.py: iterações reais, replanejamento com contexto, execution_trace estruturado, rich actions via tools, retry, Execução Real com confirm, persistência de runs).
+- Cockpit é a interface principal para desenvolvimento real: formulário com seleção de **Perfil de Agente** + modelo OpenRouter explícito, executa via novo loop, exibe trace renderizado + "Re-executar com mesma tarefa".
+- Legacy `aiw_workspace/`: reduzido via thin delegates (~25+ arquivos pesados remanescentes em coverage/patch/test/validation/worker flows). Vários módulos high-value (github/integration/patch/evidence) migrados para aiw/ com delegates.
+- Migração: Avançada nos componentes que habilitam uso real (CodeAct, loop core, router/profiles/providers, cockpit wiring). Foco em não quebrar operacional.
+- Progresso recente: Loop + Cockpit + Perfis + Provedores prontos para tarefas reais de dev. "Right way" documentado em README (seção "Como usar o AIW para desenvolvimento real hoje").
+- Overall: Usável **hoje** via Cockpit + Perfil de Agente + OpenRouter para desenvolvimento real (gated, traceável). ~75% alinhado no núcleo de agente. Gaps remanescentes em fluxos legados pesados (PR/patch full, experiment lab avançado).
+- Visão: Self-hosted como Manus/Devin com controle total + security por design via Provider-First. Foco atual: refinar Loop Iterativo do Agente, Execução Real e completar delegates.
 
-See MIGRATION.md for phase tracking. ROUND2 control file removed.
+See MIGRATION.md para tracking de fases e partes usáveis. O fluxo recomendado é Cockpit + Loop Iterativo do Agente.
 
 ---
 
@@ -244,23 +247,44 @@ Capabilities:
 
 **Existing pieces that align with target:**
 - Capability Registry + Policy + Isolation Boundary + Runtime Gate
-- Execution Provider (early stage, only CodeAct)
-- Agent Iterative Loop (base for Agent Runtime)
-- CodeAct Sandbox (core execution with strong guardrails)
+- Execution Providers (CodeAct migrado completamente + Docker/Devcontainer em `aiw/providers/execution/`)
+- **Loop Iterativo do Agente** primário (`aiw/agent/iterative_loop.py`: iterações, replanejamento, rich actions com file_write/patch/git via tools, retry, `execution_trace` estruturado, Execução Real com confirm)
+- Roteador de Modelo + Perfis de Agente (profile-driven routing para OpenRouter/litellm + execution_provider)
+- Model Providers (OpenRouter registrado e usado)
 - aiw_context (Context Pack, Index, Search — foundation for Context/RAG)
 - Workspace profiles + path hygiene + Safe Search
-- Queue, Worker Loop, Dispatcher, GitHub Intake
-- Cockpit + artifact system (observability foundation)
+- Queue, Worker Loop, Dispatcher, GitHub Intake (com thin delegates em vários casos)
+- Cockpit + artifact system (observability foundation) — formulário com **Perfil de Agente** + modelo OpenRouter, trace rico + re-exec
 
-**Problems to solve:**
-- `aiw_workspace` is a large monolith mixing many concerns.
-- CodeAct is still hardcoded in multiple places.
-- No Model Router yet.
-- No distinction of the three provider types.
-- `aiw_langgraph` is an isolated experiment (not integrated).
-- `aiw_runtime` is underutilized and unclear.
-- Cockpit and scripts reach into internal modules.
-- Lots of historical runbooks and aspirational docs that are out of date.
+**Alinhamento do fluxo real de desenvolvimento (tarefa real → trace com edição → resultado):**
+- Cockpit form → escolhe **Perfil de Agente** (`software-engineer`) + modelo OpenRouter explícito → `run_agent_iterative_loop_once(execute=..., profile=..., model=...)`.
+- Router decide → LLMPlanner (ou mock) → despacho ao **Provedor de Execução** (codeact).
+- Execução Real (confirm) produz side-effects seguros (ex: `file_write` em `.aiw/generated/*` via aiw_runtime.tools) → trace registra `status: "executado"`, `mode: "Execucao_Real"`, stdout com `bytes_written` + path, policy.
+- UI mostra collapsibles + destaques de arquivos editados; botão re-exec preserva Perfil + modelo.
+- Persistência + list/read via aiw/agent (independente de legado para o core).
+
+Exemplo concreto (tarefa que gera edição):
+Tarefa: "Liste os principais arquivos e diretórios do projeto e crie um resumo em .aiw/generated/... usando o Provedor de Execução."
+Resultado no trace (resumido):
+```json
+{
+  "router_decision": {"provider": "openrouter", "model": "openai/gpt-oss-120b:free", "profile_used": "software-engineer"},
+  "profile": {"name": "software-engineer", "execution_provider": "codeact", ...},
+  "execution_trace": [
+    {"iteration":1, "kind":"codeact_python_eval", "status":"executado", "success":true, "provider":"codeact", "mode":"Execucao_Real",
+     "result": {"stdout": "... 'tool': 'file_write', 'path': '.aiw/generated/...', 'bytes_written': N ..."}}
+  ],
+  "has_real_execution": true
+}
+```
+Re-executa → novo run reutilizando Perfil de Agente + modelo. Ver `.aiw/generated/` e o run.json persistido.
+
+**Problemas / gaps remanescentes:**
+- `aiw_workspace` ainda contém lógica pesada (thinned delegates em ~25+ arquivos para coverage/patch/test/validation/workers).
+- Algumas integrações de patch/PR completas ainda dependem de CLI legado.
+- Migração cirúrgica em andamento (foco em não quebrar operacional + Cockpit/Loop).
+
+O núcleo Provider-First + Loop Iterativo do Agente + Cockpit está alinhado e usável para desenvolvimento real hoje.
 
 ---
 

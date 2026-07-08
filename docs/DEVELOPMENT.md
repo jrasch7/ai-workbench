@@ -6,7 +6,9 @@ Documentation and structural alignment with the target architecture.
 No major feature development should happen until the documentation and high-level structure are solid.
 
 ## Running the Project
-See root README.md and existing runbooks for current commands.
+See root README.md (seção "Como usar o AIW para desenvolvimento real hoje") e runbooks para comandos atuais.
+
+Cockpit é o ponto de entrada para uso do Loop Iterativo do Agente com Provedores e Perfis.
 
 ## Working with the New Structure
 - New interfaces go in `aiw/interfaces/`
