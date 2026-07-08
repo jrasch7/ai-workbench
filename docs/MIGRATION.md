@@ -118,7 +118,78 @@ Next immediate work: OpenRouter wired into the agent loop for summarize step (us
 
 - Perfil `code-reviewer`: llm_planning_allowed=false → plano mock + ferramentas de review.
 
-## Próximo Passo Aplicado (2026-07-08): Full PR end-to-end + Browser research tool
+## Próximo Passo Aplicado (2026-07-08): Full PR end-to-end + Browser research tool + Worktree Sandbox + Auto web_fetch
+
+(Worktree sandboxing em CodeAct para exec isolada segura; auto-inject web_fetch no planner para tarefas de pesquisa.)
+
+Verificação (bg task): auto_research/web_fetch injetado=True; worktree flag passado=True.
+
+## Próximo Passo Aplicado: Persistent long-running agents with checkpointing
+
+Subagent implemented checkpointing, resume via resume_run_id, relaxed max iters for persistent mode, periodic saves, cockpit support for start/resume + live ckpt status in trace/read.
+
+Verification: resume increases iters, ckpt files created/loaded, persistent flag/mode set.
+
+## Próximo Passo Aplicado (2026-07-08): Full auto PR in persistent mode
+
+Subagent implemented:
+- Auto PR creation in loop for persistent + completed + successful validation: detects tests passed, calls create_pr with run_id + test_results + evidence.
+- Enhanced create_pr to accept run_id/test_results, augments body, policy gate.
+- Cockpit displays "Auto-PR status" with link/evidence note.
+- Policy support for auto.
+
+Verification: logic present, E2E flows work in dry (gated in real without full confirm).
+
+## Implemented approved step 2: Full autonomous git/PR for persistent validated runs on aiw ws
+
+- In aiw_runtime/tools.py: updated _git_ws_gate (keep but add trusted_ws exception for aiw when autonomous_persistent), git_commit (extended w/ push= support for auto push after commit safely), create_pr (add autonomous_persistent + evidence params; relax confirm req for aiw+auton via flag; still policy gate; default allow commit/push for aiw trusted; pass flags to internal git_create_branch/git_commit).
+- Enhanced auto-PR block in aiw/agent/iterative_loop.py (around Full autonomous PR creation): collect/pass run_id/test_results/evidence, call create_pr(confirm=False, autonomous_persistent=True) when policy + persistent + validated.
+- git_commit + push now auto in aiw ws success path for persistent validated (via flag + extension).
+- Non-aiw ws still gated (exception only for aiw).
+- Surgical: builds directly on existing "autonomous for persistent" / auto-PR comments in loop + tools.
+- Verified via python -c (mocks, direct calls, dry paths, gate checks for aiw vs other ws); imports + no breakage.
+- MIGRATION.md updated (this note).
+- Uses aiw/ paths only (aiw/agent/iterative_loop.py + aiw_runtime/tools.py); thin delegates propagate.
+
+## Análise Atual vs Manus/Devin + Próximo Passo Definido
+
+**Estado atual (pós 5 passos + worktree + web_fetch auto + persistent ckpt + auto PR):**
+- Execução real poderosa: edits isolados (worktree), pesquisa auto (web_fetch), correção auto (until_success + failure parse), validação (experiment + tests), PR auto em persistent success.
+- Persistência: checkpoint/resume para long-running (até 100 iters), missões no cockpit.
+- UI: cockpit com trace, apply, PR, approvals, isolated, persistent.
+- Contexto: AST indexing + early injection.
+- Política/segurança: worktree_sandbox, gates, confirm.
+- Migração: aiw/ core + delegates.
+- Testes: E2E real + smoke.
+
+**Gaps vs Manus/Devin (agentes autônomos full):**
+- Ainda max iters (100 em persistent); não ilimitado sem intervenção.
+- PR auto bom, mas gated (policy/confirm); não 100% sem humano para risky.
+- Browser: fetch básico; não interativo/full (sem JS, forms, auth).
+- RAG: symbols + lexical + simple BOW embeddings (step 3 done); não full semantic embeddings over large codebases.
+- Autonomia: loop por invocação (mesmo persistent); falta daemon 24/7 que monitore queue/issues e rode missões longas sem re-invoke.
+- Planejamento: LLM + injeções; não tree-of-thoughts ou self-reflection profunda.
+- Sandbox: worktree bom, mas não full (sem docker/devcontainer por-run).
+- Self-improvement: experiment integrado, mas não meta-learning.
+- Escala: ainda depende de chaves externas; não full self-hosted sem fallback.
+- UI: bom para submissão/trace, mas não dashboard live para múltiplos agentes longos.
+
+**Próximo passo apropriado:**
+**Remover limites duros de iters em modo persistent (ou usar config ilimitado com checkpoints), adicionar daemon/background worker para autonomia 24/7 (usando queue + persistent runs), e implementar browser interativo básico (e.g., playwright stub seguro para forms/JS research) integrado no planner para tarefas complexas.**
+
+Isso avança para full long-running autonomous agents como Devin/Manus, mantendo surgical (aiw/, gates).
+
+Subagente pode ser lançado para isso. Diga "sim, segue" para aplicar.
+
+Docs atualizados. Sistema está muito mais próximo de harness poderoso self-hosted.
+
+- Persistir estado (plan, results, context, worktree) em checkpoints após cada iteração.
+- Suporte a resume de run_id com checkpoint.
+- Modo 'persistent' relaxando limites de iters, com gates para ações de risco.
+- Integração com worktree existente + web_fetch.
+- Cockpit: UI para iniciar/resumir missões longas com status ao vivo.
+
+Rumo a autonomia full (Devin-like long sessions).
 
 Adicionado:
 - web_fetch em aiw_runtime/tools.py (urllib safe fetch, network_access, para research/docs como Devin).
@@ -335,3 +406,105 @@ Atualização registrada para rastreamento da Fase 5 (Cockpit Alignment).
 Esta atualização cirúrgica continua o alinhamento Fase 5 sem regressões. Próximo (se aplicável): mais targeted se solicitado.
 
 Atualização registrada (2026-07-08).
+
+## Daemon-Next Completo (2026-07-08) — 5 Subpassos + Fluxo 24/7
+
+**daemon-next marcado completo** após verificação (smokes, imports, exec básico, compile, _test_daemon_persistent_logic, cockpit wiring, queue disk + worker).
+
+**5 subpassos aplicados (todos verificados presentes e operacionais):**
+1. Relaxar limites duros de iters em modo persistent: `MAX_ITERATIONS_PERSISTENT` via env `AIW_PERSISTENT_MAX_ITERATIONS=0` (prático ilimitado, quebra em !should_continue / policy / stop explícito). Código em aiw/agent/iterative_loop.py + suporte em aiw-agent-loop --persistent.
+2. Checkpointing + resume: `_save_checkpoint` / `_load_checkpoint` + resume_state no loop (plan, previous_results, accumulated_context, status), paths em `.aiw/.../checkpoints/<run_id>.json`, listagem de ckpts em list_running_daemons, resume_run_id param em start_persistent_agent_daemon e CLI --resume --run-id.
+3. Daemon bg + queue intake: `start_persistent_agent_daemon` (enqueue + thread bg chamando run_... com persistent=True), list_running_daemons, stop_persistent_agent_daemon; + `PersistentAgentWorker` em aiw/queue/worker.py (poll, start_daemon_worker, max_concurrent, requeue, resume_all_checkpoints_as_daemons); disk-backed queue em AgentQueue (persist/load em queue.json).
+4. Integração Cockpit + UI/monitor 24/7: start_daemon_agent_from_cockpit, list_daemons_from_cockpit, checkbox "start_daemon", botão "Start Daemon (bg persistent)", handlers /runner/start-daemon + /api/daemons + /api/workspaces/.../daemons; daemon_status_html; suporte a mission_id.
+5. Auto-PR + research em persistent + tools: auto create_pr em persistent completed + has_real + tests pass (em loop); web_fetch (com render_js) + detecção "daemon-next-3" (pesquisar/research/fetch) no _build_rich_action; policy network_access; Fluxo completo com queue + daemon threads.
+
+**Verificação realizada:**
+- python -c imports + basic calls (daemon, persistent, queue, web_fetch('https://httpbin.org/html'))
+- _test_daemon_persistent_logic() -> ok
+- ./scripts/aiw-agent-loop-regression-smoke components (targeted) + compile py (aiw/agent/iterative_loop.py, aiw/queue/* etc)
+- Sistema roda (no syntax errors, basic exec de start/list/stop/ckpt)
+- Todos os 5 subpassos: código + delegates + reexports + cockpit + env + resume presentes e exercitados.
+
+**Fluxo 24/7 (exemplo completo):**
+```bash
+# 1. Cockpit (UI principal)
+./scripts/aiw-cockpit
+# marque "Start as background daemon", perfil software-engineer, tarefa "pesquisar docs + editar + validar até sucesso", submit
+
+# 2. CLI daemon worker
+./scripts/aiw daemon aiw
+# ou
+python3 -c 'from aiw.queue import start_daemon_worker; start_daemon_worker("aiw")'
+
+# 3. Env unlimited + resume
+AIW_PERSISTENT_MAX_ITERATIONS=0 ./scripts/aiw-agent-loop --workspace aiw --task "missão longa autônoma" --persistent --execute --confirm-agent-loop --run-id <rid> --resume
+
+# 4. Monitor
+python3 -c '
+from aiw.queue import list_daemon_workers
+from aiw.agent.iterative_loop import list_running_daemons
+print(list_daemon_workers()); print(list_running_daemons())
+'
+# ou GET /api/daemons no cockpit server
+```
+Auto-PR dispara em persistent+completed+real exec+validação sucesso. Checkpoints permitem recovery pós-restart.
+
+**Atualização "Análise Atual" (pós daemon-next):**
+Estado atual (pós 5 passos + worktree + web_fetch + persistent ckpt + auto PR + daemon-next 24/7):
+- Autonomia: daemon bg 24/7 com queue intake + múltiplas missões + checkpoint recovery (sem re-invoke manual).
+- Exec real + self-correction + PR auto + research (web_fetch) em long-running.
+- Iters: ilimitado prático via env + gates.
+- UI: cockpit start/resume/monitor daemons + trace live.
+- Persist: queue disk + run ckpts + missions.
+- Migração: aiw/queue + aiw/agent/iterative_loop primary para daemon path.
+Gaps reduzidos vs Manus/Devin: agora tem daemon 24/7 (threaded, cockpit-driven); ainda: full browser interativo, embeddings RAG (agora: simple local BOW/hybrid em local_rag para long missions), auto-commit sem confirm em trusted, E2E multi-missão tests dedicados, relax policies.
+
+**Próximos 5 passos concretos aprovados (2026-07-08) — "Aprovado, segue"**
+
+1. Migrate 2-3 more high-impact modules (e.g. patch_gate.py + coverage/validation) to aiw/ with thin delegates + reexports; update callers to prefer aiw/.
+2. Full autonomous git/PR — enhance create_pr + loop to do real git commit + push + gh pr create (with run evidence/tests) for aiw ws when persistent + validated + policy allows (reduce extra confirm for trusted ws).
+3. Deeper context/RAG — extend aiw/providers/context/ with simple local embeddings (or reuse existing indexer) + inject richer chunks/symbols + usage into LLMPlanner and loop for long missions.
+4. E2E multi-mission daemon test — add/extend regression smoke (or new test) that starts ≥2 persistent daemons via worker/cockpit, exercises resume from ckpt, queue drain, auto-PR, and monitor; run via aiw-agent-loop-regression-smoke.
+5. Policy + browser polish — relax a few more caps for aiw ws in runtime_gate/policy when trusted; add basic follow/extract actions to web_fetch (still gated, stdlib+playwright) and expose in _build_rich_action.
+
+## Step 5 Implementado (Policy + browser polish) — 2026-07-08
+
+**Approved step 5 aplicado (surgical, aiw-first):**
+
+- **Policy relax for trusted ws="aiw"**:
+  - Added `is_trusted_ws(workspace_id)` helper in `aiw/policy/registry.py` (and minimal in runtime_gate.py for no-cycle).
+  - `PolicyEngine.evaluate_capability` in registry now post-processes decisions: for caps like create_pr, web_fetch, network_access, file_write (and git_*) when ws=="aiw" + (offline/persistent/confirmed/success path) => allowed=True, requires_confirmation=False, tagged "relaxed_for_trusted_aiw_ws".
+  - Updated `evaluate_runtime_gate` (aiw/policy/runtime_gate.py) to accept `workspace_id`, relax network_access block for trusted aiw (return host_best_effort allowed + flag).
+  - Updated `_check_capability` + gates in `aiw/agent/iterative_loop.py` (pass explicit ws context in call_kwargs, use "web_fetch" cap for browser hints, local relax awareness for aiw trusted). Calls to create_pr / web still gated (network_access etc checked).
+  - Legacy path benefits because cap_policy tries aiw engine first.
+
+- **Browser polish (web_fetch + _build_rich_action)**:
+  - `aiw_runtime/tools.py:web_fetch`: extended to fully support `actions: list` (e.g. ["follow", "extract", "extract:code"]). 
+    - `follow`: explicit manual redirect hops (stdlib urllib + urljoin, <=3 hops) + record.
+    - `extract`: stdlib re for code blocks (```), <title>, <h1>, <p> paragraphs/content. Post-processes content for agent. Graceful on err, works in urllib + playwright paths. Returns "actions_executed", "final_url" etc. No new deps.
+  - `aiw/agent/iterative_loop.py:_build_rich_action`: detects hints "follow url", "extract from page", "browser follow", "extract", "follow" etc (in kind/hint/combined) => builds python_eval wrapper calling `web_fetch(..., actions=[...])`. Also updated step policy check to use "web_fetch" cap for such hints (triggers relax).
+  - Kept gated: network_access/runtime still evaluated; web_fetch cap checked; only aiw ws gets relax in success/persistent.
+
+- **Verification**:
+  - `python -c "from aiw_runtime.tools import web_fetch; print(web_fetch('https://example.com', actions=['follow','extract']))"` (and variants).
+  - `python -c "from aiw.policy.registry import get_policy_engine, is_trusted_ws; ... evaluate_capability('aiw', 'create_pr'/'web_fetch'/'network_access', ...);"` -> allowed relaxed for aiw, not for other ws.
+  - Runtime gate similar for aiw ws.
+  - Imports/compile clean; surgical only aiw/ + loop + tools + migration.
+
+- Files edited (aiw-first relative): aiw/policy/registry.py, aiw/policy/runtime_gate.py, aiw/policy/__init__.py, aiw/agent/iterative_loop.py, aiw_runtime/tools.py, docs/MIGRATION.md.
+
+Mantém 100% compat, gates, no hard deps. Avança browser research + less friction em trusted aiw persistent paths (create_pr auto etc).
+
+**Step 3 (Deeper RAG with simple local embeddings) implemented (aiw-first, stdlib only):**
+- aiw/providers/context/local_rag.py: added _tokenize/_counter/_cosine/_build_embedding_index (BOW over symbols+chunks.jsonl)/_retrieve_with_embeddings; index-on-build; retrieve now does hybrid lexical + code_aware + embed (combined score boost via overlap).
+- aiw/planner/llm_planner.py: improved chunks_str to show embedding_score + richer usage/symbols + note for persistent.
+- aiw/agent/iterative_loop.py: explicit use_embeddings=True on retrieve calls; for persistent/long missions: re-retrieve richer context_chunks (limit+embed) passed to planner.plan per replan.
+- Registry unchanged (auto). For long missions: fresher richer chunks injected.
+- Verify: python -c "from aiw.providers.context.local_rag import LocalRAGContextProvider; ..."; planner/loop paths exercised.
+- MIGRATION: this note. No new deps. Surgical.
+
+Todos os passos com subagentes paralelos, surgical aiw-first, relative paths, read-before-edit, smoke/E2E verification.
+
+Subagentes lançados para os 5 passos. Progresso em paralelo.
+
+Atualização registrada (após aprovação do usuário).

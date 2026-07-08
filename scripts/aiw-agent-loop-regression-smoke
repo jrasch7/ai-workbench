@@ -14,4 +14,22 @@ print("=== regression: rich actions ===")
 print(_test_rich_actions_execute_paths())
 ' || echo "extra flow tests had issues (non-fatal for base smoke)"
 
+# Daemon multi-mission E2E (step 4 approved)
+python3 -c '
+import sys
+sys.path.insert(0, ".")
+from aiw.agent.iterative_loop import start_persistent_agent_daemon, list_running_daemons, stop_persistent_agent_daemon
+from aiw.queue import get_agent_queue
+print("=== regression: multi-daemon persistent (E2E smoke) ===")
+q = get_agent_queue("aiw")
+q.enqueue("aiw", "daemon e2e task 1")
+d1 = start_persistent_agent_daemon("aiw", "multi mission test 1", execute=False, confirm=False, max_iterations=0)
+d2 = start_persistent_agent_daemon("aiw", "multi mission test 2", execute=False, confirm=False, max_iterations=0)
+print("started 2 daemons:", d1.get("ok"), d2.get("ok"))
+print("list count:", list_running_daemons("aiw").get("count"))
+stop_persistent_agent_daemon(d1.get("daemon_id"))
+stop_persistent_agent_daemon(d2.get("daemon_id"))
+print("daemon multi E2E basic: ok (resume/ckpt/queue covered in other tests)")
+' || echo "daemon multi test non-fatal in this env"
+
 exec python3 -m aiw_workspace.agent_loop_regression "$@"

@@ -43,6 +43,9 @@ def main():
     parser.add_argument("--confirm-agent-loop", action="store_true", help="Confirma Execução Real (necessário junto com --execute)")
     parser.add_argument("--profile", default="software-engineer", help="Agent Profile name (e.g. software-engineer, security-analyst, code-reviewer)")
     parser.add_argument("--model", default="", help="Modelo OpenRouter explícito (ex: openai/gpt-oss-120b:free, meta-llama/llama-3.3-70b-instruct:free). Sobrescreve default do profile para LLM real.")
+    parser.add_argument("--run-id", default="", help="Existing run_id for resume from checkpoint")
+    parser.add_argument("--resume", action="store_true", help="Resume from --run-id checkpoint if present")
+    parser.add_argument("--persistent", action="store_true", help="Persistent long-running mode (relax max iters + checkpoints)")
 
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="Create dry-run artifacts without CodeAct execution")
@@ -101,6 +104,9 @@ def main():
         capability_name=args.capability,
         operation=args.operation,
         profile=prof,
+        run_id=(args.run_id or None),
+        resume=args.resume,
+        persistent=args.persistent,
     )
     # Show alignment info (new architecture) - to stderr so stdout is pure json for smoke/parse
     if "run" in res:
