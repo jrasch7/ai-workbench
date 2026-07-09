@@ -24,6 +24,7 @@ BUILTIN_PROFILES: Dict[str, Dict[str, Any]] = {
         "allowed_execution_providers": ["codeact", "docker", "devcontainer"],
         "llm_planning_allowed": True,
         "context_strategy": "context-pack",
+        "context_provider": "local_rag",
     },
     "security-analyst": {
         "name": "security-analyst",
@@ -38,6 +39,7 @@ BUILTIN_PROFILES: Dict[str, Dict[str, Any]] = {
         "allowed_execution_providers": ["codeact", "docker", "devcontainer"],
         "llm_planning_allowed": True,
         "context_strategy": "context-pack",
+        "context_provider": "local_rag",
     },
     "code-reviewer": {
         "name": "code-reviewer",
@@ -52,6 +54,7 @@ BUILTIN_PROFILES: Dict[str, Dict[str, Any]] = {
         "allowed_execution_providers": ["codeact"],
         "llm_planning_allowed": False,
         "context_strategy": "context-pack",
+        "context_provider": "local_rag",
     },
 }
 

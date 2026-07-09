@@ -202,6 +202,11 @@ def main():
         from aiw.queue import get_persistent_worker, resume_all_checkpoints_as_daemons
         w = get_persistent_worker(ws)
         start_res = w.start()
+        try:
+            from aiw.observability import log_structured
+            log_structured("daemon_main_start", workspace_id=ws, pid=os.getpid())
+        except Exception:
+            pass
         print("[aiw-daemon-debug] start() returned", flush=True)
         log("worker.start()", level="info", start_res=start_res)
         if getattr(args, "notify", False) or os.environ.get("NOTIFY_SOCKET"):

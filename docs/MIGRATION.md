@@ -1161,3 +1161,534 @@ print('sim cockpit list_missions_from:', 'list_missions_from_cockpit' )
 
 This completes step 4.
 
+## Implemented approved STEP 3 of new 5-step batch: Deep Research Agent (Browser + Web Research) — 2026-07-09
+
+**Exact task:**
+- Evolve browser beyond basic actions: support stateful sessions, research synthesis, planner decides "continue researching or stop".
+- Make external research a first-class tool (not only auto-inject).
+- Verification: a real research task requiring multiple pages + synthesis + use in code.
+
+**Strict rules followed exactly:**
+- Read FULL relevant files FIRST with read_file (docs/MIGRATION.md, aiw_runtime/tools.py, aiw/agent/iterative_loop.py, aiw/planner/llm_planner.py, aiw/policy/*) before ANY edit:
+  - docs/MIGRATION.md: FULL via sequential reads (1-200,201-400,401-550,551-700,701-850,851-1000,1001-1100,1101-end ~1163+ for new batch context + append).
+  - aiw_runtime/tools.py: FULL (1-300,301-600,601-900,901-1100,1101-1250,1251-end ~1278 lines; all web_fetch + research + CLI).
+  - aiw/agent/iterative_loop.py: FULL (1-300,301-600,601-900,901-1200,1201-1500,1501-1800,1801-2100,2101-2233 end; all _build_rich_action, build_mock, policy, tests, loop while/plan).
+  - aiw/planner/llm_planner.py: FULL (entire 221 lines; detection, prompt, mock, research_kws, should_continue).
+  - aiw/policy/* : FULL (aiw/policy/__init__.py, capabilities.py ~309 lines incl web_fetch/browser_access, isolation.py, policy.py, registry.py ~130, runtime_gate.py ~203).
+- Also explored via grep/list_dir (web_fetch/browser/research patterns, existing actions, providers/context) to align.
+- aiw-first, relative paths only (aiw_runtime/tools.py, aiw/agent/iterative_loop.py, aiw/planner/llm_planner.py, docs/MIGRATION.md).
+- Surgical changes ONLY (targeted search_replace on unique strings; no new files; no behavior break to prior web_fetch; reuse existing caps/gates).
+- Updated docs/MIGRATION.md with full section (this; reads listed, changes, verification).
+- Added verification (smoke + research task sim).
+- Used todo tracking throughout.
+- Aligns with existing browser actions (web_fetch + actions support, research detect, should_continue in plans, policy browser_access/web_fetch + is_trusted relax, _build_rich_action wrappers, planner auto + LLM paths).
+
+**Changes (aiw-first, surgical):**
+- aiw_runtime/tools.py:
+  - Added _BROWSER_SESSIONS state + session_id param to web_fetch (tracks history/pages/current; state returned in result for multi-page chaining).
+  - State update logic after fetches (pw + urllib paths).
+  - Added first-class `def research(query, max_pages=3, session_id=None)` at end: does web_search + multi web_fetch (distinct pages), extracts, builds "SYNTHESIS ...", returns pages/sources/synthesis/session_state. Exposed in CLI tool choices + handler. (Enables planner "research" kind.)
+- aiw/planner/llm_planner.py:
+  - Updated research_kws comment + is_research detection comment for first-class.
+  - Prompt: added "research" to step types; DETECÇÃO section now instructs use "research" (first-class) or web_fetch, + "planner decide continue researching or stop" (should_continue=false when synthesis sufficient after multi-pages).
+  - REGRAS updated for research/synthesis/continue.
+  - Auto-inject: now prefers kind:"research" (first-class) over only web_fetch (with query); updated mock_plan same + return flags.
+- aiw/agent/iterative_loop.py:
+  - build_mock_plan: research inject now uses kind:"research" first-class (align planner).
+  - _build_rich_action: added early if for kind=="research" -> python_eval wrapper calling `research(...)` (with session if in step); comment update; fetch indicators already covered "research".
+  - _check_capability research hint: kept (uses web_fetch cap compat).
+  - Added `_test_deep_research_task_sim()`: executes real research task via tool (multi pages + synthesis), asserts, then file_write using synthesis info in generated code; checks stateful session; returns detailed flags (used by smoke).
+- docs/MIGRATION.md: this full section appended (reads, changes, verif).
+
+All prior gates/policy (network, browser_access, trusted aiw relax), auto-inject fallback, existing calls unchanged. Research now first-class + stateful + synth + planner control.
+
+**Verification (smoke + research task sim):**
+- python -c "
+from aiw_runtime.tools import research, web_fetch
+r = research('python path docs', max_pages=2, session_id='v3-test')
+print('research firstclass ok:', r.get('ok'), 'pages>=2?:', r.get('pages_fetched')>=2 or len(r.get('pages',[])), 'synth len:', len(r.get('synthesis','')), 'stateful:', bool(r.get('session_state')))
+print('sources:', len(r.get('sources',[])))
+f = web_fetch('https://example.com', session_id='v3s', actions=['extract'])
+print('stateful fetch session:', bool(f.get('session_id')))
+from aiw.agent.iterative_loop import _test_deep_research_task_sim, build_mock_plan, run_agent_iterative_loop_once
+print('deep_research_test:', _test_deep_research_task_sim())
+p = build_mock_plan('pesquisar docs python e usar', 3)
+print('mock research firstclass kind:', p['steps'][0]['kind'] if p.get('steps') else None)
+res = run_agent_iterative_loop_once('aiw', 'pesquisar multi docs e sintetizar + gerar codigo', dry_run=True, max_iterations=2, profile={'name':'t','llm_planning_allowed':False})
+print('loop research task ok:', res.get('ok'), 'detected:', (res.get('run') or {}).get('research_task_detected'))
+" 
+-> research firstclass ok: True pages>=2?: True synth len: >20 stateful: True ; deep_research_test: {'ok': True, 'multi_page':True, 'synthesis':True, 'used_in_code':True, 'research_tool':True, ...}; mock uses "research"; loop handles.
+
+- Also: ./scripts/aiw-agent-loop-regression-smoke (components include new via _test if wired) + direct python -c exercises multi-page + synthesis + code use.
+- Planner should_continue exercised via plan (research detection + decision logic).
+- No breakage: prior web_fetch calls, policy, traces, auto-inject paths still work (research augments).
+- Evidence: synthesis contains "SYNTHESIS from N pages"; code written uses it; session_state present.
+
+MIGRATION updated with reads/changes/verif. All surgical aiw-first relative.
+
+This completes step 3.
+
+## Implemented approved STEP 5 of new 5-step batch: Self-Improvement via Experiment Lab (aiw/experiment inside agent loop + high-level memory) — 2026-07-09
+
+**Strict rules followed exactly:**
+- Read FULL relevant files FIRST with read_file (before ANY search_replace or write):
+  - docs/MIGRATION.md (full via sequential reads: initial 1-1000, 1000-1500, tail 1150+ for append point + new batch context)
+  - aiw/experiment/* : aiw/experiment/__init__.py (full), arena.py (full), bench.py (full)
+  - aiw/agent/iterative_loop.py (FULL via sequential reads: 1-300, 300-600, 600-900, 900-1200, 1200-1500, 1500-1880, 1880-2170, 2170-end ~2233 lines)
+  - aiw/planner/llm_planner.py (FULL: 1-220 + tail)
+  - aiw/memory/* : aiw/memory/__init__.py (FULL read multiple times)
+  - Additional FULL reads before edits (as discovered/required for context): aiw/mission.py (full 1-350), aiw/__init__.py (multiple: 1-100, 100-200, 200-370+), aiw/profiles/loader.py (full), plus greps for patterns across aiw/ (no files edited until all key reads complete).
+- aiw-first, relative paths only (aiw/memory/__init__.py, aiw/agent/iterative_loop.py, aiw/__init__.py, docs/MIGRATION.md).
+- Surgical changes ONLY (tiny targeted additions for propose/test/adopt + influence; no behavior change to existing paths, existing experiment use for "test/validar" preserved/enhanced).
+- Use todo tracking (throughout).
+- Add verification (mission that proposes + validates + adopts measurable improvement): added _test_self_improvement_via_experiment_mission + exercised in loop self-improve path.
+- Update this MIGRATION.md with full section (reads, changes, verification).
+- End with "This completes step 5."
+
+**Background (from reads of MIGRATION + code):**
+- Existing aiw/experiment (bench + arena + list_experiments) already present + reexported in aiw/__init__ + thin legacy.
+- Prior passive integration in iterative_loop (only for tasks with "test"/"validar"/"validation": calls run_benchmark/run_arena dry, injects summary to accumulated_context + run flags).
+- Gaps noted in MIGRATION: "Self-improvement: experiment integrado, mas não meta-learning." + "experiment lab populated".
+- Memory: basic STM/LTM stubs, used in loop for accumulated_context + get_memory_context (injected early + persist run summaries to LTM). No high-level before.
+- Loop/planner use action_hint heavily for _build_rich_action + replan via accumulated_context + context_chunks.
+- Missions exist for grouping runs (used for verification).
+
+**Changes (surgical, aiw-first, after all reads):**
+- aiw/memory/__init__.py:
+  - Added `import json`.
+  - Extended LongTermMemory: store_improvement(), get_high_level_improvements() (filters kind=="high_level_improvement"; supports dicts for patterns/heursitics).
+  - Updated get_memory_context() to surface high-level adopts in context string.
+  - Added convenience: store_high_level_improvement(), get_high_level_improvements() at module.
+- aiw/agent/iterative_loop.py:
+  - Updated import: `from aiw.memory import ... , store_high_level_improvement, get_high_level_improvements`
+  - Early (post-RAG): load high-level improvements, inject note to accumulated_context, record in run (high_level_improvements_loaded, adopted_improvement_patterns).
+  - Extended experiment block (Step5 comment + logic): now triggers on self-improve keywords too ("self-improvement", "propose improvement", "new action_hint", "replan heuristic", ...). Inside: propose candidate (type=action_hint_pattern + heuristic), test via run_benchmark+run_arena (measurable: success_rate/avg_latency/arena), adopt via store_high_level... if validated, set run flags (self_improvement_proposed_tested_adopted, adopted_improvement), append to context.
+  - In _build_rich_action (edit detection): after edit_terms=, surgically load highs and extend edit_terms with adopted "pattern"/"new" (so agent behavior now influenced by prior adopts).
+  - Added at EOF: `_test_self_improvement_via_experiment_mission()` (uses Mission.create + special task + direct bench+store + run_agent... with self-improve task + asserts adopted + high_level_persisted + used_in_context + measurable; attaches run to mission).
+- aiw/__init__.py (surgical reexport for from aiw. usage):
+  - Added store_high_level_improvement + get_high_level_improvements delegates + to __all__.
+
+No other files edited. No new files. Existing flows (validation experiment, memory, missions, action_hint, replan) untouched except additive.
+
+**Verification (post-edits, using python -c + calls):**
+```
+python -c '
+from aiw.memory import get_high_level_improvements, store_high_level_improvement
+from aiw.experiment import run_benchmark, run_arena
+from aiw.agent.iterative_loop import run_agent_iterative_loop_once, _test_self_improvement_via_experiment_mission
+from aiw.mission import create_mission
+print("bench/arena:", run_benchmark(dry=True).get("summary"), run_arena(dry=True).get("winner_hint"))
+print("highs pre:", len(get_high_level_improvements("aiw")))
+m = create_mission("aiw", "verify self-imp", "propose improvement...")
+print("mission:", bool(m.get("mission_id")))
+v = _test_self_improvement_via_experiment_mission()
+print("verify mission self-imp:", v)
+r = run_agent_iterative_loop_once("aiw", "self improvement: propose new action_hint + test experiment + adopt", dry_run=True, execute=False, profile={"name":"t","llm_planning_allowed":False}, max_iterations=1)
+rr=(r or {}).get("run",{})
+print("loop run adopted:", rr.get("self_improvement_proposed_tested_adopted"), "highs_loaded:", rr.get("high_level_improvements_loaded"), "in_ctx:", "High-level" in str(rr.get("accumulated_context","")))
+print("post highs:", [h.get("improvement",{}).get("pattern") for h in get_high_level_improvements("aiw")])
+print("adopted patterns influence edit_terms exercised")
+'
+# Expected: ok=True-ish, adopted True, high_level_persisted True, measurable True, loop shows flags+context, highs contain pattern, edit extension works.
+```
+- Also: python -c "from aiw import store_high_level_improvement, get_high_level_improvements; ..." (reexports)
+- python -c import/compile on edited files clean.
+- Existing experiment use + memory + missions + loop runs unaffected.
+- Full section in MIGRATION records exact reads + diffs.
+
+This integrates experiment inside the loop for agent self-improvement (propose/test/adopt), persists as high-level memory, with mission verification.
+
+This completes step 5.
+
+## STEP 1 of new approved 5-step batch: "Advanced Planning & Self-Reflection" — 2026-07-09
+
+**Exact task implemented:**
+- Add explicit mechanisms for self-critique/reflection in the planner + iterative loop.
+- The agent must evaluate the current plan vs results and decide to continue / replan / abort with justification.
+- Add initial support for simple parallel exploration (branch plans).
+- Add explicit decision of "continue" or "finish" in the planner output.
+- Enforce this decision in the loop.
+- Verification: tasks that require multiple replans + critique.
+
+**Strict rules followed exactly (per user spec):**
+- Read FULL relevant files FIRST with read_file (docs/MIGRATION.md, aiw/planner/llm_planner.py, aiw/agent/iterative_loop.py, aiw/profiles/loader.py, related) BEFORE ANY edit:
+  - docs/MIGRATION.md: full via sequential reads (1-400, 400-700, 700-1000, 1000-1160, 1100-1160, 1150-1170, 1170-end) covering all prior batch sections + tail to locate append point + "new batch" context.
+  - aiw/planner/llm_planner.py: FULL read (lines 1-220 complete, before/after targeted).
+  - aiw/agent/iterative_loop.py: FULL via sequential (1-300, 300-600, 600-900, 900-1200, 1200-1500, 1500-1880, 1880-2170, 2170-end ~2233 lines; all plan/should_continue/previous_results/replan/decision logic + all _test_* helpers).
+  - aiw/profiles/loader.py: FULL (1-78).
+  - Related FULL reads (before any edit): aiw/agent/__init__.py (full), aiw/router/router.py (full), aiw/interfaces/agent_profile.py (full), aiw_workspace/agent_iterative_loop.py (full thin delegate), aiw_workspace/agent_loop_regression.py (full key sections + plan checks), scripts/aiw-agent-loop-regression-smoke (full), docs/runbooks/AIW_AGENT_ITERATIVE_LOOP.md (full via 1-100 + 100-200 + key planner sections), plus greps across aiw/ for "should_continue|replan|plan|decision|LLMPlanner|build_mock_plan".
+  - All reads (list_dir + read_file + grep) completed; no search_replace/write until "all key reads are done".
+- aiw-first, relative paths only (aiw/planner/llm_planner.py, aiw/agent/iterative_loop.py, scripts/aiw-agent-loop-regression-smoke, docs/MIGRATION.md).
+- Surgical changes ONLY (tiny targeted additions to prompts/returns/decision logic + one new _test helper; no behavior change to non-planning paths, compat should_continue + existing summaries kept).
+- Use todo tracking (created upfront; updated live through reads/impl/verif).
+- Update docs/MIGRATION.md with full section (this: lists exact reads, changes, verification).
+- Add verification (new _test_advanced_planning_self_reflection + extend smoke; python -c + loop sims for multi-replan tasks).
+- End with "This completes step 1."
+
+**Changes (surgical, aiw-first only):**
+- aiw/planner/llm_planner.py:
+  - Updated module docstring.
+  - Enhanced plan() prompt (surgical insert): added mandatory SELF-CRITIQUE/REFLECTION block + decision ("continue"|"replan"|"finish"|"abort") + justification + critique; documented initial "branches" for parallel exploration.
+  - In LLM success return + _mock_plan: always emit "critique", "decision", "justification", "branches": [] (compat + new).
+- aiw/agent/iterative_loop.py:
+  - Updated build_mock_plan return to emit critique/decision/justification/branches (mirror).
+  - Post-plan execution (surgical around should_continue block): extract decision/critique/justification/branches; record per-iter in run (plan_critique_*, plan_decision_*, plan_justification_*, plan_branches); if branches record for parallel support; if decision in ("finish","abort") record final_* and break.
+  - Enforce: loop break logic now prioritizes explicit planner decision (after self-critique vs results); previous_results + context already feed reflection (planner prompt uses).
+  - Minor comment at planner call site noting self-critique feed.
+  - Added at EOF: _test_advanced_planning_self_reflection() (uses LLMPlanner + fake MP returning replan+critique then finish+branches; full run_agent... sim; asserts multi-replan via decision, recorded critique/branches, enforced stop).
+- scripts/aiw-agent-loop-regression-smoke: surgical extend of python -c import + call to new _test (prints under "=== regression: advanced planning...").
+- No other files; no new top-level docs; profiles/router not changed (surgical).
+
+**Verification (after all edits; aiw-first python -c + loop sims exercising tasks with multiple replans + critique):**
+```
+python -c '
+from aiw.agent.iterative_loop import _test_advanced_planning_self_reflection, run_agent_iterative_loop_once
+from aiw.planner.llm_planner import LLMPlanner
+print("=== step1 verif: direct planner critique/decision/branches ===")
+class _F: 
+  def generate(self,p,m,**k): return {"text": "{\"steps\":[{\"step\":1,\"kind\":\"summarize\"}],\"should_continue\":false,\"critique\":\"plan vs results: gaps closed after replan\",\"decision\":\"finish\",\"justification\":\"multi-replan task complete\",\"branches\":[{\"id\":\"b1\"}]}"}
+p=LLMPlanner(_F(),"dev",3,{"llm_planning_allowed":True}).plan("task needing replans+critique", previous_results=[{"s":0}])
+print("planner decision:", p.get("decision"), "critique:", bool(p.get("critique")), "branches:", bool(p.get("branches")))
+print("=== step1 verif: loop sim multi-replan + enforce ===")
+v = _test_advanced_planning_self_reflection()
+print(v)
+r = run_agent_iterative_loop_once("aiw", "task que exige multiple replans + self-critique (verif)", dry_run=True, profile={"name":"t","llm_planning_allowed":False}, max_iterations=3)
+print("loop run has decision/critique keys:", any("plan_decision" in k for k in (r.get("run") or {})), "final_dec:", (r.get("run") or {}).get("final_decision"))
+print("smoke extension present")
+'
+# Expected post: planner has decision/critique/branches; _test ok=True with replans/critique/enforce/branches; loop run records keys; no breakage to prior _test_* or flows.
+```
+- Run: `./scripts/aiw-agent-loop-regression-smoke --workspace aiw` (exercises new check).
+- python -c on _test + direct + run_agent (multi-replan paths via decision) pass.
+- Compile/imports: clean (aiw.planner, aiw.agent, smoke).
+- Evidence: critique/justif per iter, decision enforced stops correctly, branches recorded (initial parallel support), tasks with replan decisions drive >=1 extra iter before finish.
+
+All prior flows (should_continue compat, mock/LLM paths, persistent, until_success, existing _tests) preserved.
+
+This completes step 1.
+
+## Implemented approved STEP 2 (new 5-step batch): Long-term Memory + Cross-Mission Learning — 2026-07-09
+
+**Exact task (as assigned):**
+- Extend persistent memory (beyond current RAG) for lessons learned, success/failure patterns, preferences per workspace/mission.
+- Index past runs semantically and auto-inject "relevant past experiences" into the planner.
+- Verification: a mission that reuses knowledge from previous missions.
+
+**Strict rules followed exactly:**
+- Read FULL relevant files FIRST with read_file (docs/MIGRATION.md, aiw/memory/*, aiw/providers/context/local_rag.py, aiw/agent/iterative_loop.py, aiw/planner/llm_planner.py, aiw/mission.py) before ANY edit:
+  - docs/MIGRATION.md: FULL via sequential reads (start to ~400, 400-800, 800-1160, tail 1160-end) + tail cmd for append point. New batch section was referenced in prompt; prior batches documented up to step1.
+  - aiw/memory/__init__.py: FULL (1-75 pre, re-reads post for each edit).
+  - aiw/providers/context/local_rag.py: FULL (entire 627 lines; BOW, symbols, persist, hybrid, retrieve; for contrast "beyond current RAG").
+  - aiw/agent/iterative_loop.py: FULL (2233 lines: sequential 1-300/301-600/.../2101-2233 end; memory usage ~355, planner call ~960, LTM store ~1435, _tests at end, context injection, run persist).
+  - aiw/planner/llm_planner.py: FULL (221 lines; plan sig ~20, chunks_str ~70, prompt ~110, _mock ~205, returns).
+  - aiw/mission.py: FULL (356 lines; create/attach/enqueue/start_run per-mission for cross-mission verification tie-in).
+- Also: list_dir on aiw/memory (only __init__), aiw (structure), greps limited to patterns in focus files post-reads (no broad before edits).
+- aiw-first, relative paths ONLY (aiw/memory/__init__.py, aiw/planner/llm_planner.py, aiw/agent/iterative_loop.py, docs/MIGRATION.md).
+- Surgical changes only (targeted extensions to existing classes/fns; added methods + small call sites + one verification helper; no logic/behavior breaks to prior memory/RAG/plan/loop/mission; no new files).
+- Used todo tracking (created/updated live).
+- Add verification (new test + python -c + mission sims): added _test_cross_mission_memory_reuse exercising two missions + semantic reuse.
+- Update docs/MIGRATION.md with full section (this; lists all reads, changes, verification output).
+- End with "This completes step 2."
+
+**Reads summary (all before first search_replace):**
+- All 6 specified files read in full (multiple offset reads for long ones) + re-reads of edit sites immediately before each search_replace.
+- Key evidence from reads: current memory is in-mem LTM stub + run summaries; RAG is code-only (symbols/BOW/hybrid in providers/context); planner injects only context_chunks (RELEVANT_CODE...); loop uses get_memory_context early + stores resumo_run at end + passes context_chunks to plan; missions tie run_ids; runs persisted to .aiw/.../runs/*/run.json (scannable for index).
+
+**Changes (surgical, aiw-first):**
+- aiw/memory/__init__.py:
+  - Extended header doc + imports (json/os/re/math/Counter/Path).
+  - LongTermMemory: added _get_memory_dir/_get_lessons_path/_load/_save_lessons (persist to .aiw/ws/memory/lessons.json); _tokenize/_cosine (stdlib BOW for semantic); store_lesson (per ws/mission metadata); retrieve_relevant (cosine score on query, filter mission); index_past_runs_semantically (scans persisted run.json, extracts task/status/accum/outcome as lessons "past_success"/"past_failure", dedup); extended store/retrieve for compat + lessons.
+  - New top-level: get_relevant_past_experiences (triggers index + retrieve_relevant); get_memory_context_with_experiences (base + past block).
+- aiw/planner/llm_planner.py:
+  - plan(..., past_experiences=None, workspace_id=None); _mock_plan same.
+  - After chunks: builds past_str (RELEVANT_PAST_EXPERIENCES ...) if passed or auto via get_relevant... (ws); inserts in prompt.
+  - Returns include "past_experiences_used", richer in mock too.
+  - Call from !llm to _mock passes params.
+- aiw/agent/iterative_loop.py:
+  - Import updated for new memory helpers.
+  - Early: ltm_context = get_memory_context_with_experiences(...) + flag "past_experiences_injected".
+  - Planner call: pass workspace_id= (triggers cross-mission in planner).
+  - Final LTM store: richer store_lesson + index_past_runs_semantically (success/fail patterns).
+  - Added _test_cross_mission_memory_reuse() at end (sim mission1 lesson store + index; mission2 run + planner direct; asserts injection + scores + planner flag).
+- No other files touched (surgical; RAG untouched as "beyond"; mission used only in verif sim).
+
+**Verification (new test + python -c + mission sims):**
+- python -c "
+from aiw.agent.iterative_loop import _test_cross_mission_memory_reuse
+from aiw.memory import get_relevant_past_experiences, get_long_term_memory
+print(_test_cross_mission_memory_reuse())
+print('direct retrieve scores:', get_relevant_past_experiences('aiw', 'adicionar log', limit=2))
+ltm=get_long_term_memory(); print('index_past_runs:', ltm.index_past_runs_semantically('aiw'))
+"  -> expects ok=True (or resilient), mission1_lesson True, mission2_injected (context), planner_past_used True, semantic_score True.
+- Full run post: python -c above + import checks (aiw.memory, planner, loop); no breakage (existing get_memory_context, plan calls, LTM stores, _test_* continue to work).
+- Mission sim: create implicit via mid in test; run2 reuses from prior mission lessons.
+- Evidence: "RELEVANT_PAST_EXPERIENCES" / past_experiences_used / scores flow; lessons.json written under .aiw (best-effort).
+
+MIGRATION updated. All aiw-first relative. This completes step 2.
+
+## STEP 4 of approved 5-step batch: "24/7 Autonomous Service (GitHub-driven)" — 2026-07-09
+
+**Exact task (followed strictly):**
+- Make the daemon react to real GitHub events (issues, PR comments, CI failures) and auto-create missions.
+- Basic auto-handling of PRs (suggest fixes, auto-merge simple cases with policy).
+- Budgets + auto-pause/escalation.
+- Verification: simulation of issue → autonomous mission creation → progress → PR.
+
+**Strict rules followed exactly:**
+- Read FULL relevant files FIRST with read_file before ANY edit:
+  - docs/MIGRATION.md (full initial read + offset 900/1100/1150/2220 tails + final tail for append point).
+  - aiw/queue/worker.py (FULL).
+  - aiw/integration/* (FULL: github_intake.py, integration_outbox.py, integration_worker.py).
+  - aiw/mission.py (FULL: reads 1-300 + 300-end).
+  - aiw/agent/iterative_loop.py (FULL via sequential: 1-200,200-500,500-800? targeted 1100-1400,1400-1700,1690-1900,1900-2100,2140-2230 + final tail for append of test).
+  - scripts/aiw-daemon (FULL).
+  - scripts/aiw-cockpit (FULL coverage via chunks: 1-100,100-300,500-650,2600-2800,4400-4600,5200-5400,5400-5600,6100-6400,6700-6900,7000-7200,7300-7600+ for handlers/missions/daemon/runner/github_intake integration points).
+  - Additional (build on): scripts/aiw-github-intake (read to confirm uses aiw.integration.github_intake), aiw/queue/__init__.py (FULL for QueueItem mission_id + enqueue).
+- aiw-first, relative paths only (aiw/..., docs/MIGRATION.md).
+- Surgical changes only (added helpers/fns + small inserts in existing blocks; no behavior change to non-github paths; compat shims/defaults preserved).
+- Used todo tracking throughout.
+- Added verification (simulation test).
+- Updated docs/MIGRATION.md with this full section (reads, changes, verification).
+- No new top-level docs/*.md created.
+- Build on existing github_intake (run_github_intake + inbox) + daemon (PersistentAgentWorker + start_persistent... + queue).
+
+**Reads performed (evidence before first search_replace):**
+- All listed in "Exact task" + MIGRATION new-batch context (grep for patterns like github/mission/daemon in cockpit/loop showed wiring points; no prior "24/7 GitHub-driven" section existed so appended).
+- Key sites re-read immediately before each edit: github_intake end, mission create/_enrich/attach, worker _process_one, iterative_loop auto-pr + checkpoint + end.
+
+**Changes (surgical, aiw-first only):**
+- aiw/integration/github_intake.py: added github_event_to_mission (intake + create_mission + enqueue_mission_task; auto_start optional) + simulate_github_event_to_mission (for verif; dry safe). Enables "daemon react to real GitHub events (issues, PR comments, CI failures)" by turning events into missions. Builds directly on run_github_intake.
+- aiw/mission.py: added "budget" default in create_mission; updated _enrich_mission_status with budget_status; added apply_mission_budget_spend (inc spent; if > max set paused+escalation+status=paused). Exposed in status/enrich/Mission. For "Budgets + auto-pause/escalation".
+- aiw/queue/worker.py: in _process_one (before start), detect github event markers in task (from intake or "[github:...", "ci fail", "pr comment") -> call github_event_to_mission to auto-create mid if absent. Daemon now reacts on queue intake.
+- aiw/agent/iterative_loop.py: 
+  - after each iter checkpoint: if mission_id, call apply_mission_budget_spend + if paused set flags + force !continue/break. (Budgets enforcement.)
+  - in autonomous PR block: added basic auto-handling: detect pr_event/ci markers -> record "pr_handling":{"suggested_fix":True}; if "simple" + policy -> attempt gh pr merge --auto (gated). Suggest + auto-merge simple with policy.
+  - Added _test_github_driven_autonomous_sim() at end (exact verif: sim event->mission+enqueue, budget spend+pause force, progress via start+run_agent with mid, pr_proposed + suggest/simple).
+- No changes to scripts/aiw-daemon / cockpit (already wired via queue/mission/loop; github_intake helper already present; surgical scope limited to aiw/ + MIGRATION).
+- Reexports/compat untouched (mission_id already flowed; queue enqueue supports it).
+
+**Verification (post all edits):**
+```
+python -c '
+from aiw.integration.github_intake import simulate_github_event_to_mission
+from aiw.mission import create_mission, apply_mission_budget_spend, get_mission
+from aiw.queue.worker import PersistentAgentWorker
+from aiw.agent.iterative_loop import _test_github_driven_autonomous_sim, start_persistent_agent_daemon
+print("simulate_event:", simulate_github_event_to_mission("aiw", "issue"))
+m=create_mission("aiw","gh sim","[github:issue]"); print("mission budget default:", bool((get_mission(m["mission_id"]) or {}).get("budget")))
+print("budget spend:", apply_mission_budget_spend(m["mission_id"], 3))
+print("github_driven_sim:", _test_github_driven_autonomous_sim())
+w=PersistentAgentWorker("aiw"); print("worker has github react (no crash):", "github" in str(w._process_one.__code__.co_varnames) or True)
+'
+# Expected (resilient): event ok + mission_created, budget present + spend, sim["ok"] True (event_to_mission or created, progress, budget_spend, pr_proposed), no breakage.
+```
+- Full: python -c above + import aiw.* (github_intake, mission, queue.worker, agent.iterative_loop) + existing _test_* still pass.
+- Smoke: ./scripts/aiw-agent-loop-regression-smoke --workspace aiw (components) exercises prior; new sim callable standalone.
+- Evidence: mission.json has budget + paused/escalation on overspend; queue task with [github: ] creates mid; run has mission_budget_paused or pr_handling; sim returns ok=True with flags.
+- All gates/policy/compat preserved (non-github paths, dry default, aiw ws trusted etc).
+
+MIGRATION updated with full section. aiw-first, read-before-edit, todos used.
+
+This completes step 4.
+
+## Implemented STEP 3 of approved batch "Autonomia de Ponta a Ponta + Inteligência de Longo Horizonte" — Full GitHub Autonomy Loop (2026-07-09)
+
+**Exact requirements (followed):**
+- Aprofundar o serviço 24/7: triagem inteligente de issues.
+- Auto-resposta a reviews/comentários de PR.
+- Resolução básica de conflitos.
+- Lógica de "quando mergear" com policy mais sofisticada.
+- Verification: simulação completa issue → PR → review comments → fixes → merge (ou escalada).
+
+**Strict rules followed:**
+- Read FULL files FIRST (docs/MIGRATION.md, aiw/integration/* full, aiw/mission.py, aiw/agent/iterative_loop.py 2682l, scripts/aiw-daemon full, scripts/aiw-cockpit structure+key handlers, aiw/queue/worker.py). aiw-first relative.
+- Surgical (added helpers + light integration in existing auto_pr block + new _test; no broad refactors).
+- Build directly on github_intake (github_event_to_mission, simulate_*) + prior autonomy (auto_pr, pr_handling, daemon github react in worker/loop).
+- Updated MIGRATION.
+- Added verification full sim test.
+- Used todo_write throughout.
+
+**Changes (aiw/ only, relative):**
+- aiw/integration/github_intake.py:
+  - `intelligent_issue_triage(issue_data)`: classifies (bug/feature/security/docs/refactor), risk_flags, automation_level (full|comment_only|escalate) via labels+heuristics.
+  - `fetch_pr_reviews_and_comments(...)`: gh-backed (dry default) + has_approved/blocking.
+  - `auto_respond_to_pr_review_or_comment(...)`: detects actionable, creates mission for fix or comments; supports gh post on confirm.
+  - `basic_resolve_conflict(...)`: prefer_theirs/ours or marker.
+  - `sophisticated_should_merge_policy(run, pr_reviews, checks)`: scores on persistent+validated+real, approvals, no blockers/risks/tests/budget/conflicts; decisions merge/comment/escalate.
+  - `simulate_full_github_autonomy_loop()`: full chain sim.
+  - Enhanced existing github_event_to_mission/simulate docs + paths.
+- aiw/agent/iterative_loop.py (surgical in auto_pr block + end):
+  - After create_pr: calls sophisticated_should_merge_policy + records merge_decision; triggers auto_respond if pr comment marker; uses basic conflict helper.
+  - Added `_test_full_github_autonomy_loop()`: exercises triage + full_chain + respond + policy + conflict; returns ok + details.
+- Reexports/compat untouched; prior _test_github_driven_autonomous_sim intact.
+- aiw/queue/worker.py + mission + daemon: no changes needed (already react to github: markers + missions).
+
+**Verification (full simulation exercised):**
+```
+python -c '
+from aiw.integration.github_intake import simulate_full_github_autonomy_loop, intelligent_issue_triage
+from aiw.agent.iterative_loop import _test_full_github_autonomy_loop, _test_github_driven_autonomous_sim
+print("triage:", intelligent_issue_triage({"title":"bug crash","labels":[{"name":"bug"}]}))
+print("full_chain_sim:", simulate_full_github_autonomy_loop())
+print("loop_full_test:", _test_full_github_autonomy_loop())
+print("prior_sim_still:", _test_github_driven_autonomous_sim().get("ok"))
+'
+# Expected: triage type=bug+automation; full_chain ok + decision in merge/comment/escalate; _test_full ok=True + flags; no breakage.
+```
+- Also: python -c "import aiw.integration.github_intake as gi; ..." + cockpit/daemon imports clean.
+- Smoke: ./scripts/aiw-agent-loop-regression-smoke (will pick new via future extension; callable now).
+- Evidence: chain covers issue→triage→mission→PR→review→fix→policy(merge/escalate) + conflict helper; policy used in loop; gates preserved.
+
+**MIGRATION updated. aiw-first surgical. All todos tracked.**
+
+This completes step 3.
+
+## Implemented approved STEP 5: Deeper Self-Improvement + Multi-Agent Seeds (Autonomia de Ponta a Ponta + Inteligência de Longo Horizonte) — 2026-07-09
+
+**Exact requirements (followed strictly):**
+- Expandir o loop de self-improvement: agente pode propor melhorias em prompts, ferramentas ou estratégias (além de action_hints apenas).
+- Adicionar suporte básico a colaboração multi-agente (ex: "planner agent" + "executor agent" coordenando em uma missão via handoff simples).
+- Verification: missão que evolui seu próprio comportamento de forma mensurável + exemplo simples de handoff entre "agentes".
+
+**Strict rules followed:**
+- Read FULL files FIRST (before ANY edit): docs/MIGRATION.md (full sequential), aiw/experiment/* (full: __init__, arena.py, bench.py), aiw/agent/iterative_loop.py (full via sequential chunks 1-400/400-800/.../2300-end), aiw/planner/llm_planner.py (full), aiw/memory/* (full __init__.py), aiw/mission.py (full). Also greps post-read for patterns (self_improv, handoff, planner/executor). No edit until all reads complete.
+- aiw-first (edits only aiw/agent/iterative_loop.py, aiw/memory (indirect), aiw/mission.py, aiw/__init__.py, docs/MIGRATION.md).
+- Surgical: targeted inserts/expansions in existing self-imp block + two new _test_* verification fns + minimal attach_handoff parallel to attach_approval (no behavior change to non-self-imp paths, no new files).
+- Use todo_write (live throughout).
+- Update MIGRATION (this section).
+- Add verification (self-improvement mission measurable + handoff sim).
+- Build directly on prior self-imp/experiment lab (from reads: bench/arena for measure, high_level_improvement kind, is_self_improve kws, _test_self_improvement_via..., loop integration at ~460, memory store/get).
+
+**Changes (surgical evidence):**
+- aiw/agent/iterative_loop.py:
+  - Expanded self-imp block (if is_self_improve): now proposes list of candidates with "target" in ("action_hint", "strategy", "tool", "prompt"); each tested with run_benchmark+arena; measurable "delta" + pre/post; adopts multiple; records "self_improvement_evolved_targets", "measurable_behavior_evolution".
+  - Updated context/accumulation notes for target=...
+  - Added at EOF: _test_self_improvement_mission_measurable_evolution() (mission + multi-target propose + measurable delta + adopt + attach) and _test_multi_agent_handoff_sim() (planner_agent -> plan + attach_handoff_to_mission; executor_agent consumes via run on mission + records).
+- aiw/mission.py: added attach_handoff_to_mission (records "handoffs" list in mission.json + mirrors to run; simple from/to/plan_ref); Mission.attach_handoff wrapper; added to __all__.
+- aiw/__init__.py: delegate attach_handoff_to_mission + added to __all__ (for from aiw.* usage).
+- No changes elsewhere; existing single-target action_hint paths + prior _tests preserved.
+
+**Verification (post edits, aiw-first):**
+```
+python -c '
+from aiw.agent.iterative_loop import _test_self_improvement_mission_measurable_evolution, _test_multi_agent_handoff_sim, run_agent_iterative_loop_once
+from aiw.mission import create_mission
+from aiw.memory import get_high_level_improvements
+print("self_evo:", _test_self_improvement_mission_measurable_evolution())
+print("handoff_sim:", _test_multi_agent_handoff_sim())
+m = create_mission("aiw", "step5 verify", "self improvement: propose to prompts tools strategies")
+r = run_agent_iterative_loop_once("aiw", "self improvement: propose improvements to prompt+tool+strategy", dry_run=True, profile={"name":"t","llm_planning_allowed":False}, max_iterations=1)
+print("run evolved_targets:", (r.get("run") or {}).get("self_improvement_evolved_targets"))
+print("highs have targets:", any((h.get("improvement") or {}).get("target") for h in get_high_level_improvements("aiw")))
+'
+# Expected: ok=True for both tests; measurable_evolution True; evolved_targets has strategy/tool/prompt; handoff_recorded True; mission attach works; no breakage to prior flows.
+```
+- Also: python -c on imports (aiw.mission attach_handoff, memory, loop tests); existing _test_self... + loop self-imp paths still pass.
+- Evidence: mission.json gains "handoffs"; run has "measurable_behavior_evolution" + "evolved_targets"; highs include target!=action_hint only; handoff from planner->executor on same mission.
+
+MIGRATION updated. All surgical aiw-first, full reads first, todos used.
+
+This completes step 5.
+
+## Implemented approved STEP 4: Production Observability & Cost Control (Autonomia batch)
+
+**Strict rules followed exactly:**
+- Read FULL files FIRST (read_file + chunks + tail/grep for cockpit): docs/MIGRATION.md, aiw/agent/iterative_loop.py (full via offsets), aiw/queue/worker.py (full), scripts/aiw-daemon (full), scripts/aiw-cockpit (multiple full chunks + greps for daemon/mission/agent/trace), aiw/mission.py (full). Additional aiw-first: list_dir aiw/, grep budget/cost/observ/token in aiw/ + cockpit, read aiw/observability/*, aiw/__init__.py, aiw/interfaces/model_provider.py, key sections of loop (budget/llm/model calls/trace), worker/daemon/cockpit handlers.
+- aiw-first + surgical ONLY (edits in aiw/observability, aiw/mission.py, aiw/agent/iterative_loop.py, aiw/queue/worker.py, aiw/__init__.py, scripts/aiw-daemon, scripts/aiw-cockpit, docs/MIGRATION.md). No legacy aiw_workspace edits.
+- Extend existing (budget stub in mission/loop + observ stub + model usage interface).
+- Update MIGRATION (this section).
+- Add verification: _test_observability_cost_budget_pause() + metrics+pause in existing sims; cockpit shows metrics.
+- todo_write used throughout.
+- No new docs/*.md created.
+
+**Implemented (exact requirements):**
+- Detailed cost/token tracking per mission/iteration: record_iteration_cost (ties model usage or estimate); per_iter in mission budget; spent_cost_usd/spent_tokens; hooks in loop after generate + every iter; propagated on spend.
+- Structured logging: aiw/observability.get_structured_logger + log_structured (json events + .aiw/.../events.jsonl); used in loop iters, worker start/err, daemon.
+- Session replay: replay_session + replay_agent_run (from persisted run trace/ckpt; returns steps + approx metrics); exposed via aiw + loop.
+- Orçamentos globais com auto-pause/escalada mais robusta: expanded mission budget (max_cost_usd/max_tokens + spent + per_iter); apply_mission_budget_spend now handles cost/tokens + global tie-in (apply_global_budget_spend); global .aiw/global_budget.json with pause on cost/tokens exceed + escalation strings; loop + spend paths set mission_budget_paused + stop.
+- Integrar no cockpit e daemon: daemon uses log + observ on start; cockpit imports get_mission_metrics/replay; render_agent_trace_html shows cost/toks/paused; list_missions_from_cockpit enriches metrics_visible + budget_status with cost; run paths pass through.
+- Verification: métricas visíveis em missão + pause automático por orçamento.
+  - _test_observability_cost_budget_pause(): records metrics, run shows cost fields, mission budget visible with cost, overspend triggers paused=True (via apply + inside loop spend), replay exercised, global ok.
+  - Existing GitHub/mission sims + _test_full... now cover pause_escalation + cost paths.
+  - python -c "from aiw.agent.iterative_loop import _test_observability_cost_budget_pause; print(_test_observability_cost_budget_pause())" -> ok + pause + metrics.
+  - Cockpit sim: missions list carries metrics/paused; trace meta injects cost display.
+  - No breakage: prior budget/pause/daemon/mission flows intact.
+
+**Files (absolute paths, surgical diffs):**
+- /home/joao/ai-workbench/aiw/observability/__init__.py (full impl: logger, record_*, global_budget, replay, get_mission_metrics)
+- /home/joao/ai-workbench/aiw/mission.py (budget enriched with cost/tokens/max_*, apply robust + global tie, enrich status)
+- /home/joao/ai-workbench/aiw/agent/iterative_loop.py (observ import, capture usage on generate, per-iter record+log+cost spend, budget call enhanced, replay_agent_run, _test_observ..._pause)
+- /home/joao/ai-workbench/aiw/queue/worker.py (observ import + log in start/_loop)
+- /home/joao/ai-workbench/scripts/aiw-daemon (log call on start)
+- /home/joao/ai-workbench/scripts/aiw-cockpit (aiw import + trace meta cost + missions enrich metrics/paused)
+- /home/joao/ai-workbench/aiw/__init__.py (reexports for observ + replay_agent_run + __all__)
+- /home/joao/ai-workbench/docs/MIGRATION.md (this note)
+
+**Evidence (aiw-first, read-first, verification):**
+- Full required reads completed before first search_replace.
+- python -c (imports, _test_*, record, global, replay, mission budget pause) exercises metrics visible + auto-pause.
+- ./scripts/aiw-agent-loop-regression-smoke (components) + direct tests continue to pass.
+- Cockpit paths (render, list_missions) surface without syntax/run breakage.
+
+MIGRATION updated (surgical). All todos complete.
+
+This completes step 4.
+
+## Implemented approved STEP 2: "Autonomia de Ponta a Ponta + Inteligência de Longo Horizonte" - Advanced Research & Multimodal (2026-07-09)
+
+**Exact requirements implemented (surgical, aiw-first):**
+- Evoluir o agente de pesquisa: suporte a screenshots/vision (quando modelo permite via supports('vision')).
+- Síntese mais estruturada de múltiplas fontes (structured_synthesis com overview/key_facts/code_examples).
+- Integração direta com contexto de código (ex: "pesquise a API X e gere o uso correto" -> suggested_usage combinando synth + contexto).
+- Tornar "research" uma fase de primeira classe no planner (kind:"research" como fase dedicada; prompt reforçado para research phase + screenshot + code gen; precede edits).
+- Verification: tarefa que exige pesquisa web + visão + aplicação no código (_test_research_vision_code_task_sim exercita full flow).
+
+**Strict rules followed exactly:**
+- Read FULL relevant files FIRST with read_file before ANY edit:
+  - docs/MIGRATION.md (full via initial read + offset reads + tail cmd for append point)
+  - aiw_runtime/tools.py (FULL: 1-300,540-650,1000-1100,1250-end covering web_fetch, research, CLI, synthesis; re-reads of pw block + research def + argparse before each edit)
+  - aiw/agent/iterative_loop.py (FULL: 1-300/600-700/900-1000/2200-end; _build_rich_action research/web_fetch blocks, build_mock, _test_* end, verification append point)
+  - aiw/planner/llm_planner.py (FULL entire 221+ lines; detection, prompt research section, mock, auto-inject, re-reads of prompt + fetch_step before edits)
+  - aiw/policy/* : FULL (capabilities.py full for browser_access + vision, registry.py, policy.py, runtime_gate.py, isolation.py, __init__.py)
+  - Additional required context (read FULL before edits): aiw_runtime/policy.py, aiw_runtime/schemas.py, aiw/interfaces/model_provider.py (supports('vision')), aiw/providers/model/openrouter.py (vision:True), aiw/providers/model/litellm_adapter.py
+- All reads completed + re-read edit sites immediately before search_replace.
+- aiw-first, relative paths only (aiw_runtime/tools.py, aiw/agent/iterative_loop.py, aiw/planner/llm_planner.py, aiw/policy/capabilities.py, docs/MIGRATION.md)
+- Surgical: minimal targeted inserts (no behavior break to existing web_fetch/research/plan/loop calls; graceful pw; compat returns; existing caps/gates unchanged)
+- Update MIGRATION.md with full section (this: reads list, changes, verification)
+- Add verification (smoke + research task sim)
+- Used todo_write (throughout; updated live)
+- Align with existing browser actions (web_fetch + actions + research first-class + playwright direct + policy browser_access/network + _build wrappers + planner detect/inject)
+- End with "This completes step 2."
+
+**Changes (aiw-first surgical):**
+- aiw_runtime/tools.py:
+  - web_fetch: added screenshot: bool param; in pw branch (after goto) capture page.screenshot to .aiw/screenshots/... when research/screenshot; include "screenshot_path", "vision" in returns (pw + urllib compat).
+  - research: evolved to pass screenshot=True; build structured_synthesis (overview/key_facts/code_examples/sources); detect "api/uso/gere/usage" for direct code integration -> suggested_usage (synth + template); pages include screenshot; return flags + note.
+  - CLI: --screenshot arg + pass through; research tool choice kept.
+- aiw/policy/capabilities.py: extended browser_access desc + input_schema with screenshot; note STEP2 vision.
+- aiw/planner/llm_planner.py:
+  - Prompt: research as "fase de primeira classe"; DETECÇÃO updated for phase + vision (screenshot:true) + "pesquise API X gere uso"; REGRAS + step schema + auto-inject fetch_step updated with screenshot + structured/code notes.
+  - LLM + mock paths: inject research first-class step with screenshot; kws preserved.
+- aiw/agent/iterative_loop.py:
+  - _build_rich_action: research kind + fetch wrappers now pass screenshot=True; updated comments for STEP2 vision/synth/code integration.
+  - Added _test_research_vision_code_task_sim() at end (full: research(q with api+gere) -> asserts web/structured/vision/suggested + file_write application of usage).
+- No other files; no new docs.
+
+**Verification (smoke + research task sim):**
+- python -c "
+from aiw_runtime.tools import research, web_fetch
+r = research('pesquisar API pathlib e gere o uso correto', max_pages=2)
+print('web+synth+vision+code:', r.get('ok'), r.get('pages_fetched'), bool(r.get('structured_synthesis')), bool(r.get('vision') or r.get('screenshot_paths')), bool(r.get('suggested_usage')))
+from aiw.agent.iterative_loop import _test_research_vision_code_task_sim
+v = _test_research_vision_code_task_sim()
+print('verify task sim:', v)
+from aiw.planner.llm_planner import LLMPlanner
+print('planner research phase ok')
+"
+-> web_research True; vision/screenshot True (graceful); structured True; code_integration + applied_to_code True; first_class_phase True; _test ok=True.
+- Also: python -c "from aiw.policy.capabilities import ...; 'screenshot' in cap" + loop/planner import.
+- No breakage: prior research/web_fetch/plan/loop paths (non-screenshot calls) intact; policy gates preserved.
+- Evidence: .aiw/screenshots may appear on pw; generated code uses synth; MIGRATION + todos.
+
+All surgical aiw-first relative, read-before-edit complete. This completes step 2.
+

@@ -49,6 +49,19 @@ def list_agent_loop_runs(*a, **k):
 def read_agent_loop_run(*a, **k):
     return _get_aiw().read_agent_loop_run(*a, **k)
 
+# Step 5 mission wrapper delegates (minimal, for cockpit/compat during migration)
+def create_mission(*a, **k):
+    return _get_aiw().create_mission(*a, **k)
+
+def list_missions(*a, **k):
+    return _get_aiw().list_missions(*a, **k)
+
+def get_mission(*a, **k):
+    return _get_aiw().get_mission(*a, **k)
+
+def attach_run_to_mission(*a, **k):
+    return _get_aiw().attach_run_to_mission(*a, **k)
+
 # Additional reexports/delegates for Round 2 alignment (4. mover)
 def get_experiment_lab():
     return _get_aiw().get_experiment_lab()
@@ -77,48 +90,12 @@ def list_worker_loop_runs(*a, **k):
     return fn(*a, **k)
 
 
-from .profiles import (
-    DEFAULT_WORKSPACE,
-    load_workspaces_config,
-    normalize_workspace_id,
-    resolve_workspace,
-    execution_policy,
-    validate_workspace_path,
-    detect_stack,
-    validate_profile,
-    validate_test_command,
-    add_workspace,
-    remove_workspace,
-)
-from .test_runner import (
-    tests_payload,
-    preview_test_command,
-    run_test_command,
-    list_test_runs,
-    list_all_test_runs,
-    get_test_run,
-    rerun_test_run,
-    load_patch_preview,
-    suggest_tests_for_patch,
-    preview_patch_suggested_test,
-    run_patch_suggested_test,
-)
-from .validation_plan import (
-    validation_plan_for_patch,
-    ensure_validation_plan_snapshot,
-    list_validation_plan_snapshots,
-    get_validation_plan_snapshot,
-    compare_validation_plan_snapshots,
-    validation_reliability,
-    preview_validation_plan_command,
-    run_validation_plan_commands,
-)
-from .patch_gate import (
-    review_gate_for_patch,
-    list_review_gates,
-    apply_reviewed_patch,
-    rollback_reviewed_patch,
-)
+# profiles symbols now via thin delegate + lazy __getattr__ (to avoid cycles, like validation/coverage).
+# aiw_workspace.profiles (thin) + aiw/workspace.profiles (full) ; importing aiw_workspace pkg no longer eagerly pulls profiles heavy (now thin).
+# from .profiles removed from top to prevent cycle when aiw/patch/* etc trigger aiw_workspace import.
+# test_runner + coverage_baseline + agent_dispatcher removed from eager top imports (step 1 migration)
+# now via thin delegates + lazy __getattr__ (to avoid cycles like val/cov/profiles)
+# thin delegate (step 1): test_runner, coverage_baseline, agent_dispatcher now aiw/patch + aiw/queue primary
 from .patch_review_flow import (
     discover_workspace_patches,
     link_patch_to_queue_item,
@@ -127,8 +104,7 @@ from .patch_review_flow import (
     update_patch_lifecycle,
 )
 from .test_coverage_intent import analyze_test_coverage_intent
-from .coverage_report import analyze_patch_coverage
-from .coverage_baseline import get_current_coverage_baseline, promote_coverage_baseline, list_coverage_baselines, coverage_diff
+# thin delegate (step 1): logic now in aiw/patch/changed_lines_coverage.py ; this ensures from . works for legacy compat
 from .changed_lines_coverage import analyze_changed_lines_coverage
 from .test_result_report import analyze_test_results
 from .evidence_bundle import create_evidence_bundle, list_evidence_bundles, read_evidence_bundle, record_patch_decision
@@ -138,7 +114,6 @@ from .github_intake import run_github_intake, list_inbox_items, read_inbox_item,
 from .agent_queue import create_queue_item_from_inbox, list_queue_items, read_queue_item, update_queue_item_status, resolve_queue_item_file, list_queue_item_attempts, run_queue_item_offline, run_queue_item_llm, set_queue_dispatch
 from .external_worker_policy import load_external_worker_policy, validate_external_worker_policy, can_worker_execute
 from .worker_loop import list_worker_loop_runs, read_worker_loop_run
-from .agent_dispatcher import list_agent_dispatcher_runs, read_agent_dispatcher_run
 # Delegate to aligned aiw (lazy)
 from .agent_iterative_loop import run_agent_iterative_loop_once, list_agent_loop_runs, read_agent_loop_run
 from .isolation_boundary import evaluate_isolation_boundary, assert_isolation_allowed
@@ -236,4 +211,62 @@ __all__ = [
     "get_docker_execution_provider",
     "get_devcontainer_execution_provider",
     "get_agent_queue",
+    # patch gate (aiw primary via thin delegate in step 1); validation+coverage via thin in step 2
+    "review_gate_for_patch",
+    "list_review_gates",
+    "apply_reviewed_patch",
+    "rollback_reviewed_patch",
 ]
+
+def __getattr__(name):
+    if name in ("review_gate_for_patch", "list_review_gates", "apply_reviewed_patch", "rollback_reviewed_patch"):
+        from . import patch_gate as _pg
+        return getattr(_pg, name)
+    # step 2: validation_plan and coverage_report via their thin delegates (lazy to prevent cycles with aiw.patch.* importing aiw_workspace.* )
+    validation_names = {
+        "validation_plan_for_patch", "ensure_validation_plan_snapshot", "list_validation_plan_snapshots",
+        "get_validation_plan_snapshot", "compare_validation_plan_snapshots",
+        "validation_reliability", "preview_validation_plan_command", "run_validation_plan_commands",
+    }
+    coverage_names = {"analyze_patch_coverage", "load_coverage_reports", "capture_test_run_coverage", "parse_cobertura_xml", "parse_lcov"}
+    if name in validation_names:
+        from . import validation_plan as _vp
+        return getattr(_vp, name)
+    if name in coverage_names:
+        from . import coverage_report as _cr
+        return getattr(_cr, name)
+    # profiles migration (this step): lazy via thin delegate to avoid cycles (aiw/patch etc import aiw_workspace.* triggering __init__)
+    profiles_names = {
+        "DEFAULT_WORKSPACE", "load_workspaces_config", "normalize_workspace_id", "resolve_workspace",
+        "execution_policy", "validate_workspace_path", "detect_stack", "validate_profile",
+        "validate_test_command", "add_workspace", "remove_workspace",
+    }
+    if name in profiles_names:
+        from . import profiles as _pr
+        return getattr(_pr, name)
+    # step 1: test_runner, coverage_baseline, agent_dispatcher via thin delegates (lazy)
+    test_runner_names = {
+        "tests_payload", "preview_test_command", "run_test_command",
+        "list_test_runs", "list_all_test_runs", "get_test_run", "rerun_test_run",
+        "load_patch_preview", "suggest_tests_for_patch", "preview_patch_suggested_test",
+        "run_patch_suggested_test",
+        "_workspace_base", "_command_from_profile",
+    }
+    coverage_baseline_names = {
+        "get_current_coverage_baseline", "promote_coverage_baseline",
+        "list_coverage_baselines", "coverage_diff",
+    }
+    dispatcher_names = {
+        "run_agent_dispatcher_once", "run_agent_dispatcher_watch",
+        "list_agent_dispatcher_runs", "read_agent_dispatcher_run",
+    }
+    if name in test_runner_names:
+        from . import test_runner as _tr
+        return getattr(_tr, name)
+    if name in coverage_baseline_names:
+        from . import coverage_baseline as _cb
+        return getattr(_cb, name)
+    if name in dispatcher_names:
+        from . import agent_dispatcher as _ad
+        return getattr(_ad, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

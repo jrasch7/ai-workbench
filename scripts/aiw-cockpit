@@ -65,6 +65,7 @@ try:
     from aiw import preview_test_command, run_test_command, get_test_run, list_test_runs
     from aiw import get_current_coverage_baseline, promote_coverage_baseline, list_coverage_baselines, coverage_diff
     from aiw import run_agent_dispatcher_once, list_agent_dispatcher_runs, read_agent_dispatcher_run
+    from aiw import get_mission_metrics, replay_session  # Step 4 observ/cost metrics + replay
 except Exception:
     load_profile = None
     get_model_router = None
@@ -1585,6 +1586,15 @@ def render_agent_trace_html(run_data: dict) -> str:
         + f' Aprovação: <span class="tag status-{html.escape(appr.replace("_","-"))}">{html.escape(appr)}</span>'
         + f'</div>'
     )
+    # Step 4: metrics/cost visible in mission trace (from run + observ)
+    try:
+        mc = run_data.get("mission_cost") or run_data.get("_last_iter_cost")
+        mt = run_data.get("mission_tokens") or run_data.get("_last_iter_tokens")
+        mbp = run_data.get("mission_budget_paused")
+        if mc or mt or mbp:
+            meta += f'<div style="font-size:10px;color:#9aa">cost≈${float(mc or 0):.4f} toks={int(mt or 0)} {"PAUSED" if mbp else ""}</div>'
+    except Exception:
+        pass
 
     # Auto-PR status for persistent runs (wired in aiw/agent/iterative_loop on success+validation)
     auto_pr_html = ""
@@ -5485,6 +5495,10 @@ def list_missions_from_cockpit(workspace_id: str = None, limit: int = 20) -> lis
                 m["pending_approvals"] = [a for a in approvs if (a.get("status") or "").lower() not in ("approved","rejected")]
                 m["run_count"] = m.get("run_count") or len(m.get("run_ids", []))
                 m["pr_links"] = m.get("pr_urls") or []
+                # Step 4: metrics + pause visible in mission list/dashboard
+                b = full.get("budget") or m.get("budget") or {}
+                m["budget_status"] = m.get("budget_status") or (f"iters={b.get('spent_iterations',0)} cost=${float(b.get('spent_cost_usd',0)):.4f} toks={b.get('spent_tokens',0)}" + (" PAUSED" if b.get("paused") else ""))
+                m["metrics_visible"] = {"cost": b.get("spent_cost_usd"), "tokens": b.get("spent_tokens"), "paused": b.get("paused")}
             except Exception:
                 pass
         return ms

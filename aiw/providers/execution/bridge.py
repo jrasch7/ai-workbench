@@ -20,8 +20,8 @@ def provider_for_capability(capability_name: str, exec_provider_name: str = None
             provider = provider()
         if capability_name == "codeact_sandbox":
             return provider
-    # Fallback direto (instanciado) para evitar recursão
-    from aiw_workspace.execution_provider import CodeActExecutionProvider
+    # Fallback direto (agora do aiw/ migrado, sem aiw_workspace para o caminho do agente)
+    from .codeact import CodeActExecutionProvider
     if capability_name == "codeact_sandbox":
         return CodeActExecutionProvider()
     return None

@@ -1,0 +1,9 @@
+{
+  "max_cost_usd": 5.0,
+  "spent_cost_usd": 0.010024,
+  "max_tokens": 500000,
+  "spent_tokens": 24,
+  "paused": false,
+  "escalation": null,
+  "updated": "2026-07-09T14:43:01.012447Z"
+}

@@ -19,9 +19,9 @@ See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the complete target lay
 ## Current Capabilities & Way of Working (2026-07)
 
 **Core Loop (Provider-First)**
-- Agent Iterative Loop with LLM-driven planning (OpenRouter + profiles) + real dispatch to Execution Providers.
-- Model Router (AUTO) + Agent Profiles that control allowed models, execution provider (codeact/docker/devcontainer), tools and whether real LLM planning is allowed.
-- Strong Policy + Isolation + Runtime Gates on every action.
+- **Loop Iterativo do Agente** com planejamento LLM-driven (OpenRouter + **Perfis de Agente**) + despacho real a **Provedores de Execução**.
+- **Roteador de Modelo** (AUTO) + **Perfis de Agente** que controlam modelos permitidos, Provedor de Execução (codeact/docker/devcontainer), tools e se planejamento LLM real é permitido.
+- Policy + Isolation + Runtime Gates fortes em toda ação.
 
 **Tools & Execution**
 - Execution Providers: CodeAct (primary), Docker & Devcontainer (improved stubs with realistic dry-run + basic execution).
@@ -42,6 +42,19 @@ See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the complete target lay
 
 See recent progress in the Architecture document and the wiring in `aiw/agent/iterative_loop.py`.
 
+**Hoje (usável)**: Cockpit + Loop Iterativo do Agente com **refatorações precisas** (LLM faz file_read + emite old_text/new_text exatos → project_patch_preview em fontes reais) + execução real (file_write / patch apply via aiw_runtime/tools) + "Aplicar patch seguro" com resultado inline no trace (sem reload). 
+
+Exemplo completo e fluxo de 5 passos aplicados em `docs/MIGRATION.md`. Regression smoke agora cobre o fluxo inteiro "editar + preview + apply + validate".
+
+Use:
+```bash
+./scripts/aiw-cockpit
+# ou
+./scripts/aiw-agent-loop --workspace aiw --task "refatore funcao Y (leia primeiro) e valide" --execute --confirm-agent-loop --profile software-engineer --max-iterations 2
+```
+
+Key OpenRouter melhora o planejamento LLM; o caminho de execução real funciona mesmo com fallback mock.
+
 **Target architecture & migration**: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/MIGRATION.md](docs/MIGRATION.md).
 
 **Do not add major new features to the legacy monolith (`aiw_workspace/`).** New code targets the `aiw/` structure.
@@ -61,82 +74,276 @@ See the full current state, tools, and how we work in:
 ## Useful commands (current)
 
 ```bash
-# Agent loop with current wiring (profile + router + providers)
-./scripts/aiw-agent-loop --workspace sandbox-test --task "your engineering task" --profile software-engineer --dry-run --once
+# Inicie o Cockpit (interface principal para desenvolvimento real com Loop Iterativo do Agente)
+./scripts/aiw-cockpit
 
-# List execution providers (codeact + docker + devcontainer)
+# Listar Provedores de Execução (codeact + docker + devcontainer)
 ./scripts/aiw-execution-provider --list
 
-# Quick experiment
-python3 -c 'from aiw.experiment import run_benchmark; print(run_benchmark(dry=True))'
+# Listar Perfis de Agente disponíveis
+python3 -c 'from aiw import list_profiles; print(list_profiles())'
+
+# Loop via CLI (equivalente para automação; prefira Cockpit para escolher modelo OpenRouter + perfil)
+./scripts/aiw-agent-loop --workspace aiw --task "..." --profile software-engineer --execute --confirm-agent-loop --max-iterations 4 --once
 ```
 
-For full operational cockpit and older flows, see the scripts and runbooks (many are historical).
+Para fluxos operacionais completos e runbooks, consulte os scripts e `docs/runbooks/`.
 
-## Como começar a usar o AIW HOJE para desenvolver (prioridade máxima agora)
+## Como usar o AIW para desenvolvimento real hoje
 
-Entendi perfeitamente. O objetivo mudou: **fazer o AIW útil para desenvolvimento real o mais rápido possível**, para você não precisar pular para Hermes/Odysseus hoje.
+O **Cockpit** (`./scripts/aiw-cockpit`) é a interface principal recomendada para desenvolvimento real com o AIW.
 
-### Setup em 2 minutos:
+O núcleo é o **Loop Iterativo do Agente** (implementado primariamente em `aiw/agent/iterative_loop.py`):
 
-1. Tenha `OPENROUTER_API_KEY` com saldo (recarregue agora se precisar).
+- Escolha de **Perfil de Agente** (ex: `software-engineer`) + seleção explícita de modelo **OpenRouter**.
+- **Roteador de Modelo** (AUTO) decide provider/model com base no perfil + tarefa.
+- **Planejador LLM** (real quando chave OpenRouter presente e `llm_planning_allowed` no perfil) ou mock.
+- Múltiplas iterações com replanejamento usando resultados + contexto acumulado.
+- Despacho ao **Provedor de Execução** (CodeAct primário, também Docker/Devcontainer) com **Execução Real** (quando `--execute` / botão real + `confirm_agent_loop` + policy permite).
+- `execution_trace` estruturado (por iteração/passo: status como "simulado"/"executado"/"concluido_llm"/"erro", policy, retries, resultados, ferramentas).
+- Persistência de runs em `.aiw/workspaces/<ws>/agent-iterative-loop/runs/`.
+- Integração com Memória (curto/longo prazo).
 
-2. Rode com execução real:
+**Caminho recomendado**: Cockpit + **Perfil de Agente** + modelo OpenRouter. O `aiw-agent-loop` CLI é equivalente para automação/scripts.
 
-```bash
-./scripts/aiw-agent-loop \
-  --workspace seu-projeto \
-  --task "Analise o código do módulo principal, identifique problemas e faça uma refatoração pequena e segura" \
-  --profile software-engineer \
-  --execute \
-  --confirm-agent-loop \
-  --max-iterations 5
-```
+Uso temporário de outros harnesses (ex: OpenHands local, Aider, Cursor) é aceitável para tarefas pontuais durante migração, mas **o Loop Iterativo do Agente + Cockpit é o caminho principal** para desenvolvimento real no AIW.
 
-O que o Loop Iterativo do Agente faz em modo real:
-- Chama OpenRouter de verdade para planejar
-- Executa múltiplas iterações
-- Usa ferramentas reais (git, web, execução de código Python)
-- O CodeAct provider pode fazer edições quando o plano pedir (sujeito à policy de segurança)
-- Mostra execution_trace detalhado no final
-
-Melhorias recentes para uso real:
-- Ações mais úteis para desenvolvimento (não só prints)
-- Suporte melhor a iterações com contexto acumulado
-- Rastreamento claro do que foi executado
-
-### Interface funcional (Cockpit - comece por aqui)
+### 1. Inicie o Cockpit
 
 ```bash
 ./scripts/aiw-cockpit
 ```
 
-Agora tem:
-- Formulário "Executar Agente Direto" com textarea para descrever a tarefa livremente.
-- Seleção de perfil e workspace.
-- Botão que chama o **novo Loop Iterativo do Agente** com execução real + OpenRouter.
-- Resultados e execution_trace aparecem na seção Agent Iterative Loop.
+Acesse `http://127.0.0.1:8765` (ou a porta em `AIW_COCKPIT_PORT`).
 
-Isso é o início de uma interface real. Podemos melhorar o formulário, adicionar live view, etc. rapidamente.
+O Cockpit é a UI principal:
+- Formulário de **Loop Iterativo do Agente** (seção destacada na home):
+  - Textarea para tarefa em linguagem natural.
+  - **Perfil do Agente** (seleção clara): `software-engineer` (recomendado), `security-analyst`, `code-reviewer`.
+  - **Modelo OpenRouter** (seleção explícita): `openai/gpt-oss-120b:free`, `anthropic/claude-3.5-sonnet`, `openai/gpt-4o`, `meta-llama/llama-3.3-70b-instruct:free` etc.
+  - Workspace (padrão "aiw"; outros via config).
+- Botões:
+  - "Executar Loop Iterativo do Agente (execute=True)" → **Execução Real** (sujeita a policy + confirm).
+  - "Loop Iterativo (offline)" → dry-run / simulação segura.
+- Resultado pós-submit: página dedicada com resumo (run_id, status, perfil, modelo, iterações) + `execution_trace` renderizado (collapsibles por iteração, destaques de paths de arquivos, status por passo).
+- Botão "Re-executar com mesma tarefa" preserva perfil + modelo escolhidos.
+- Listagem de runs recentes do Loop Iterativo do Agente na home.
 
-Se quiser, me diga uma tarefa específica ("Refatore o módulo Y para usar X") que eu preparo/testo o fluxo via código. 
+### 2. Configure OPENROUTER_API_KEY (para LLM real + planejamento)
 
-Nenhum daemon externo roda por padrão.
-Nenhuma ação GitHub/Jira é executada pela UI.
-Toda integração externa exige CLI manual, confirmação explícita e policy permitindo.
+```bash
+export OPENROUTER_API_KEY=sk-or-v1-...
+# ou coloque em .env (seu .env.example ou similar) e exporte
+```
 
-Nenhum daemon externo roda por padrão.
-Nenhuma ação GitHub/Jira é executada pela UI.
-Toda integração externa exige CLI manual, confirmação explícita e policy permitindo.
+- Para modelos pagos: recarregue créditos em https://openrouter.ai/credits .
+- Modelos `:free` funcionam sem recarga (sujeitos a limites do provedor).
+- Sem chave válida: cai automaticamente em planner mock + simulações (ainda útil para explorar o fluxo).
+
+## Resumo Análise do Sistema (2026-07-08, pós 5 passos via subagentes)
+- Loop Iterativo do Agente: Refinado (ações ricas, retry, trace completo, Exec Real).
+- Cockpit: Integrado e melhorado (form Perfil+modelo, trace bonito, re-exec).
+- Migração: Cirúrgica (integration/patch em aiw/, delegates).
+- Docs: Atualizados com fluxo prático, PT terms, usáveis vs gaps.
+- Estado: ~75% alinhado, usável para dev real via interface. Gaps: migração full, exec autonomous total. Foco "do jeito certo".
+
+Full docs: ARCHITECTURE.md + MIGRATION.md.
+
+### 3. Fluxo prático para desenvolvimento real (hoje)
+
+1. Rode `./scripts/aiw-cockpit`.
+2. No formulário do Loop:
+   - Perfil: `software-engineer` (habilita LLM planning + Provedor de Execução codeact).
+   - Modelo: inicie com `openai/gpt-oss-120b:free`.
+   - Tarefa: ex: "Analise o módulo aiw/agent/iterative_loop.py e sugira 2 melhorias concretas de código sem editar arquivos."
+3. Clique **"Executar Loop Iterativo do Agente (execute=True)"** (ou offline para dry).
+4. Aguarde o processamento (planejamento + 1-N iterações + dispatch).
+5. Na página de resultado veja:
+   - `router_decision` (provider, model, rationale do Perfil de Agente).
+   - Planos por iteração (`plan_iteration_N`).
+   - **`execution_trace`**: array detalhado com `status`, `result`, policy, retries, provider, timestamps.
+   - Contexto acumulado e resumo.
+6. Itere: use "Re-executar com mesma tarefa" ou volte e refine a tarefa com "baseado no trace anterior...".
+
+**Via CLI (mesmo Loop, para scripts/automação):**
+
+```bash
+./scripts/aiw-agent-loop \
+  --workspace aiw \
+  --task "Liste arquivos .py principais e resuma o objetivo do projeto" \
+  --profile software-engineer \
+  --execute \
+  --confirm-agent-loop \
+  --max-iterations 3
+```
+
+- Sem `--execute`: dry-run (simulação via Provedor de Execução).
+- `--execute --confirm-agent-loop`: habilita **Execução Real** (ações podem escrever em `.aiw/generated/*`, usar tools git/file via aiw_runtime, etc., sempre gateadas por Policy).
+- Perfil `code-reviewer` força `llm_planning_allowed=false` (plano mock determinístico).
+
+**max-iterations** 3-5 é típico para tarefas reais.
+
+### Exemplo completo de fluxo de desenvolvimento real: "tarefa real → trace com edição → resultado"
+
+Este é o fluxo acionável recomendado para desenvolvimento real usando o **Loop Iterativo do Agente**.
+
+#### Passo a passo no Cockpit (interface principal)
+
+1. Inicie o Cockpit:
+   ```bash
+   ./scripts/aiw-cockpit
+   ```
+   Acesse `http://127.0.0.1:8765`.
+
+2. Localize o formulário **"Executar Agente Direto - Loop Iterativo do Agente (Perfil de Agente + Execução Real)"**.
+
+3. Preencha:
+   - **Tarefa** (textarea): `Liste os principais arquivos e diretórios do projeto (top 8) e crie um arquivo de resumo em .aiw/generated/resumo-estrutura.md listando-os com contagem, usando ferramentas reais do Provedor de Execução.`
+   - **Perfil de Agente**: `software-engineer` (habilita `llm_planning_allowed=true`, tools incluindo `file_write`, `execution_provider=codeact`).
+   - **Modelo OpenRouter** (explícito): `openai/gpt-oss-120b:free` (ou `anthropic/claude-3.5-sonnet`, `meta-llama/llama-3.3-70b-instruct:free` etc.).
+   - Workspace: `aiw` (padrão).
+
+4. Submeta:
+   - Clique **"Executar (Execução Real)"** (usa `execute=True` + `confirm_agent_loop=True` internamente → **Execução Real**).
+   - Ou primeiro teste com **"Executar (Offline / Dry-run)"** (sem side-effects).
+
+5. Observe o processamento:
+   - Roteador de Modelo decide com base no **Perfil de Agente** + tarefa.
+   - Planner produz plano (LLM se chave + perfil permite, senão mock).
+   - Múltiplas iterações: despacho de passos ricos ao **Provedor de Execução** (codeact), com retry, policy gates e contexto acumulado.
+
+6. Resultado imediato na página dedicada:
+   - Cabeçalho com meta: Status, **Perfil de Agente**, Modelo, Provider (Provedor de Execução), "Execução Real: ✓", iterações.
+   - `router_decision`, `plan_iteration_N`.
+   - **`execution_trace`** renderizado (collapsibles por iteração, status por passo como "executado", badges de sucesso, spans com 📄 paths de arquivos modificados/criados).
+   - Seção de Contexto Acumulado.
+   - Links: "Ver JSON do run", API direta.
+   - **Botão "Re-executar com mesma tarefa"** — preserva automaticamente o **Perfil de Agente** + modelo OpenRouter escolhidos e re-submete.
+
+7. Verifique o resultado da edição real (side-effect controlado):
+   ```bash
+   ls -l .aiw/generated/ | grep resumo
+   cat .aiw/generated/resumo-estrutura.md
+   # (backups automáticos em .aiw/backups/ para writes)
+   ```
+   O arquivo foi criado por `file_write` via `aiw_runtime.tools` dentro de uma ação `python_eval` despachada pelo Provedor de Execução.
+
+8. Re-execute:
+   - Clique "Re-executar com mesma tarefa" (ou volte ao form principal e refine a tarefa, mantendo Perfil + modelo).
+   - Observe novo `run_id`, possivelmente mais iterações ou refinamento pelo contexto acumulado do run anterior.
+
+#### Exemplo de `execution_trace` (com Execução Real e edição via Provedor de Execução)
+
+```json
+{
+  "run_id": "ail-d82d7acb",
+  "workspace_id": "aiw",
+  "mode": "execute",
+  "status": "completed",
+  "planner": "llm",
+  "task": "Liste os principais arquivos e diretórios do projeto (top 8) e crie um arquivo de resumo em .aiw/generated/resumo-estrutura.md ...",
+  "router_decision": {
+    "provider": "openrouter",
+    "model": "openai/gpt-oss-120b:free",
+    "rationale": "...",
+    "profile_used": "software-engineer"
+  },
+  "profile": {
+    "name": "software-engineer",
+    "execution_provider": "codeact",
+    "llm_planning_allowed": true,
+    "tools": ["file_read", "file_write", "codeact_sandbox", ...]
+  },
+  "chosen_model": "openai/gpt-oss-120b:free",
+  "chosen_provider": "openrouter",
+  "chosen_execution_provider": "codeact",
+  "has_real_execution": true,
+  "plan_iteration_1": { "planner": "llm", "steps": [ ... ], "should_continue": false },
+  "execution_trace": [
+    {
+      "iteration": 1,
+      "kind": "inspect_context",
+      "title": "Inspecionar contexto",
+      "status": "executado",
+      "success": true,
+      "provider": "codeact",
+      "mode": "Execucao_Real",
+      "result": { "inspecao": { "tool": "directory_list", "entries": [...] } },
+      "policy_decision": { "allowed": true, "reason": "offline_confirmed_fixed_codeact_eval" }
+    },
+    {
+      "iteration": 1,
+      "kind": "codeact_python_eval",
+      "title": "Executar via CodeAct",
+      "status": "executado",
+      "success": true,
+      "provider": "codeact",
+      "mode": "Execucao_Real",
+      "retries": 0,
+      "input": { "action": { "kind": "python_eval", "source": "generated_default_tool_use" } },
+      "result": {
+        "status": "completed",
+        "returncode": 0,
+        "stdout": "...\n{'ok': True, 'tool': 'file_write', 'path': '.aiw/generated/loop_iter1_Executar_via_CodeAct.log', 'bytes_written': 114, 'overwritten': true, ...}\n",
+        "action": { "code": "from aiw_runtime.tools import ... file_write(...) ..." }
+      },
+      "policy_decision": { "allowed": true }
+    },
+    {
+      "iteration": 1,
+      "kind": "summarize",
+      "title": "Resumir e evidenciar",
+      "status": "concluido_fallback",
+      "success": true
+    }
+  ],
+  "total_iterations_executed": 1,
+  "accumulated_context": "Tarefa inicial: ...\n[Iter 1][codeact_python_eval] ... file_write ...",
+  "execution_provider_used": "codeact"
+}
+```
+
+**Observações chave:**
+- `status: "executado"` e `mode: "Execucao_Real"` indicam que o **Provedor de Execução** (codeact) executou com side-effects reais (file_write permitido em `.aiw/generated`).
+- O trace destaca o path do arquivo editado/criado (visível também na UI do Cockpit).
+- Re-execução cria novo run (novo `run_id`), reutilizando Perfil de Agente + modelo do form.
+- Política (PolicyEngine) + Isolation + Runtime Gate sempre avaliam; `confirm_agent_loop` é obrigatório para Execução Real.
+
+Resultados persistem em `.aiw/workspaces/aiw/agent-iterative-loop/runs/<run_id>/run.json` e são listáveis via `list_agent_loop_runs` / `read_agent_loop_run`.
+
+Use este fluxo para tarefas reais de engenharia: inspeção → edits seguros → validação → re-iteração via re-exec ou nova tarefa com contexto.
+
+### Notas importantes sobre estado atual (pós migração)
+
+- **Provedor de Execução** primário: CodeAct (totalmente migrado em `aiw/providers/execution/`). Suporte a Docker/Devcontainer.
+- **Execução Real** passa por Policy + Isolation + Runtime Gate; requer confirmação explícita.
+- Integrações externas (GitHub Intake, workers, patch review) ainda exigem CLI dedicado na maioria dos casos (thinned delegates em aiw/ para vários).
+- O Loop suporta re-planejamento, retries inteligentes, ferramentas via aiw_runtime (git, file, shell, web_search com guard).
+- Listagem/histórico de runs do Loop Iterativo do Agente agora funcional via aiw/ (disco + memória).
+
+### Usando outro harness temporariamente (ok, mas este é o caminho)
+
+Para partes ainda em migração (ex: fluxos completos de PR/patch pesados), é aceitável usar temporariamente:
+- Runners legados (`aiw-runner-agent`, `aiw-runner-once` com `AIW_AGENT_OFFLINE=1`).
+- Invocações diretas de providers.
+- Harnesses externos (OpenHands, Aider, Claude Code) — depois integre artefatos de volta.
+
+**Mas para desenvolvimento real hoje: use Cockpit + Loop Iterativo do Agente.** É o fluxo estável, provider-first, com trace e policy.
+
+Veja:
+- [docs/MIGRATION.md](docs/MIGRATION.md) (estado da migração e partes usáveis).
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- `docs/runbooks/AIW_AGENT_ITERATIVE_LOOP.md`, `docs/guides/cockpit-interfaces.md`
+- Runbooks de Policy, Execution Provider, etc. em `docs/runbooks/`.
 
 
 ## Foreground Worker Loop
 
-O AIW possui um worker loop manual e foreground para processar Integration Outbox.
+O AIW possui um worker loop manual e foreground para processar Integration Outbox (parte ainda mais dependente de legado durante migração).
 
-Ele não é daemon, não roda em background e não executa pela UI.
+Ele não é daemon, não roda em background e grande parte não executa pela UI do Cockpit.
 
-Fluxo:
+Fluxo (requer CLI explícito):
 
 Integration Outbox item ready
 → dispatch.json explícito
@@ -147,6 +354,8 @@ Integration Outbox item ready
 
 Por padrão, roda em dry-run.
 Execução real exige --execute e --confirm-worker-loop.
+
+(Para o Loop Iterativo do Agente, prefira o Cockpit ou aiw-agent-loop como descrito acima.)
 
 ## Inspirações
 
@@ -190,7 +399,7 @@ Manuais detalhados (Runbooks) do funcionamento real das camadas:
 * [Source Root Test Mapping](docs/runbooks/AIW_SOURCE_ROOT_TEST_MAPPING.md)
 * [Validation Plan](docs/runbooks/AIW_VALIDATION_PLAN.md)
 * [Validation Plan Snapshots](docs/runbooks/AIW_VALIDATION_PLAN_SNAPSHOTS.md)
-* [Agent Iterative Loop Offline v1](docs/runbooks/AIW_AGENT_ITERATIVE_LOOP.md)
+* [Agent Iterative Loop (Loop Iterativo do Agente)](docs/runbooks/AIW_AGENT_ITERATIVE_LOOP.md)
 * [Agent Loop Regression Smoke](docs/runbooks/AIW_AGENT_LOOP_REGRESSION_SMOKE.md)
 * [AIW Isolation Boundary](docs/runbooks/AIW_ISOLATION_BOUNDARY.md)
 * [AIW Runtime Gate](docs/runbooks/AIW_RUNTIME_GATE.md)

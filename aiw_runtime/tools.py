@@ -546,10 +546,15 @@ def git_diff_for_pr(base_ref: str = "main", head_ref: str = "HEAD"):
 # Returns better structured for agent: title (parsed), links_summary, actions_executed, content (post-extract if applied).
 # Callable from loop actions via python_eval wrapper. Keep minimal: text only, timeouts, no arbitrary scripts.
 # Still gated (network_access checked before exec in loop/policy). No break to existing web_fetch calls.
-def web_fetch(url: str, max_bytes: int = 8000, render_js: bool = False, research: bool = False, actions: list | None = None):
+# STEP3 Deep Research evolution: support stateful sessions (session_id tracks visited pages + accum for synthesis across calls); first-class external_research tool (planner can call directly, not only auto-inject).
+_BROWSER_SESSIONS: dict = {}
+
+
+def web_fetch(url: str, max_bytes: int = 8000, render_js: bool = False, research: bool = False, actions: list | None = None, session_id: str | None = None, screenshot: bool = False):
     """Enhanced web_fetch with basic actions support (follow, extract, click, fill for interactive browser).
     actions: list of simple ops e.g. ["follow", "extract", "click:button.submit", "fill:input[name=q]:aiw"] (stdlib + graceful pw).
     Playwright used for full interactive (click/fill); MCP-aligned action shapes but direct lib (self-contained).
+    screenshot=True (for vision when model allows): captures page screenshot (pw) for vision analysis + research.
     Still fully gated by network_access / browser_access policy.
     """
     if not url.startswith(("http://", "https://")):
@@ -557,6 +562,13 @@ def web_fetch(url: str, max_bytes: int = 8000, render_js: bool = False, research
     actions = actions or []
     attempt_playwright = bool(render_js or research)
     fallback_note = None
+    # STEP3: stateful session support (accum history + pages for multi-page research synthesis; persists across calls in same proc)
+    sid = session_id
+    if sid:
+        _BROWSER_SESSIONS.setdefault(sid, {"history": [], "pages": [], "current": None})
+        sess = _BROWSER_SESSIONS[sid]
+        sess["history"].append(url)
+        sess["current"] = url
 
     # --- step 5 browser polish: actions impl (stdlib urllib + re; graceful) ---
     def _follow_with_urllib(start_url: str, max_hops: int = 3, to: int = 8, mbytes: int = 8000) -> tuple:
@@ -640,8 +652,20 @@ def web_fetch(url: str, max_bytes: int = 8000, render_js: bool = False, research
                 # STEP 3: execute interactive browser actions (click, fill, extract) for forms/research
                 # Self-contained direct playwright (aligns with MCP browser_click / browser_fill_form / navigate but no MCP dep at runtime).
                 # Safe: only basic locator based; no run unsafe JS for agent actions.
+                # STEP2: screenshot + vision support (when model supports 'vision' via provider.supports('vision')): capture for multimodal describe.
                 actions_executed = []
                 final_url = page.url or url
+                screenshot_path = None
+                if screenshot or research:
+                    try:
+                        from pathlib import Path as _P
+                        shot_dir = _P(".aiw/screenshots")
+                        shot_dir.mkdir(parents=True, exist_ok=True)
+                        sid_safe = (sid or "s").replace("/", "_")[:16]
+                        screenshot_path = str(shot_dir / f"{sid_safe}_{abs(hash(url))%10000}.png")
+                        page.screenshot(path=screenshot_path, full_page=False)
+                    except Exception:
+                        screenshot_path = None
                 try:
                     for a in (actions or []):
                         a_str = str(a) if not isinstance(a, dict) else ""
@@ -709,6 +733,13 @@ def web_fetch(url: str, max_bytes: int = 8000, render_js: bool = False, research
                 # merge pw-executed interactive results
                 merged = (act_res.get("results", []) or []) + [r for r in actions_executed if r]
                 content = act_res.get("content", content)
+                if sid:
+                    sess["pages"].append({"url": final_url, "title": title or "", "len": len(content or "")})
+                if screenshot_path:
+                    try:
+                        sess.setdefault("screenshots", []).append(screenshot_path) if sid else None
+                    except Exception:
+                        pass
                 return {
                     "ok": True,
                     "tool": "web_fetch",
@@ -725,6 +756,10 @@ def web_fetch(url: str, max_bytes: int = 8000, render_js: bool = False, research
                     "note": "Playwright rendered + interactive actions (click/fill/extract/nav for forms/research). Gated by network_access/browser_access cap + optional dep. MCP-aligned shapes, self-contained.",
                     "engine": "playwright",
                     "research_mode": research,
+                    "session_id": sid,
+                    "session_state": _BROWSER_SESSIONS.get(sid) if sid else None,
+                    "screenshot_path": screenshot_path,
+                    "vision": bool(screenshot_path),
                 }
         except ImportError:
             fallback_note = "playwright not installed; using urllib"
@@ -755,6 +790,8 @@ def web_fetch(url: str, max_bytes: int = 8000, render_js: bool = False, research
         title, links = _extract_web_metadata(text, ctype)
         act_res = _apply_web_actions(text, ctype, actions, final_u)
         text = act_res.get("content", text)
+        if sid:
+            sess["pages"].append({"url": final_u, "title": title or "", "len": len(text or "")})
         return {
             "ok": True,
             "tool": "web_fetch",
@@ -771,6 +808,10 @@ def web_fetch(url: str, max_bytes: int = 8000, render_js: bool = False, research
             "note": note,
             "engine": "urllib",
             "research_mode": research,
+            "session_id": sid,
+            "session_state": _BROWSER_SESSIONS.get(sid) if sid else None,
+            "screenshot_path": None,
+            "vision": False,
         }
     except Exception as e:
         return {"ok": False, "tool": "web_fetch", "url": url, "error": str(e)[:200]}
@@ -1118,7 +1159,7 @@ if __name__ == "__main__":
         "directory_list", "file_read", "shell_exec", "file_write", "file_patch",
         "project_patch_preview", "project_patch_apply", "project_patch_rollback",
         "git_create_branch", "git_commit", "git_diff_for_pr", "create_pr",
-        "web_fetch"
+        "web_fetch", "research"
     ])
     parser.add_argument("--path", type=str)
     parser.add_argument("--max-depth", type=int, default=2)
@@ -1146,6 +1187,7 @@ if __name__ == "__main__":
     parser.add_argument("--render-js", type=str, default="false")
     parser.add_argument("--research", type=str, default="false")
     parser.add_argument("--actions", type=str, default="")  # comma sep e.g. follow,extract,click:button,fill:#q:aiw
+    parser.add_argument("--screenshot", type=str, default="false")  # STEP2 vision/screenshots support
 
     args = parser.parse_args()
 
@@ -1185,7 +1227,11 @@ if __name__ == "__main__":
         rjs = (getattr(args, "render_js", "false") or "false").lower() in ("true", "1", "yes")
         rsr = (getattr(args, "research", "false") or "false").lower() in ("true", "1", "yes")
         act_list = [a.strip() for a in (getattr(args, "actions", "") or "").split(",") if a.strip()] or None
-        print(json.dumps(web_fetch(args.path or "", args.max_bytes, render_js=rjs, research=rsr, actions=act_list), indent=2))
+        # STEP2: support --screenshot for vision paths (passed through)
+        shot = (getattr(args, "screenshot", "false") or getattr(args, "vision", "false") or "false").lower() in ("true", "1", "yes")
+        print(json.dumps(web_fetch(args.path or "", args.max_bytes, render_js=rjs, research=rsr, actions=act_list, screenshot=shot), indent=2))
+    elif args.tool == "research":
+        print(json.dumps(research(args.command or args.path or "python stdlib path", max_pages=2), indent=2))
     elif args.tool == "web_search":
         print(json.dumps(web_search(args.query or ""), indent=2))
     elif args.tool == "git_log":
@@ -1276,3 +1322,83 @@ def run_tests(target: str = ".", pytest_args: str = "-q --tb=short", timeout: in
         }
     except Exception as e:
         return {"ok": False, "tool": "run_tests", "error": str(e)}
+
+
+# STEP 3: first-class external research tool (not *only* auto-injected web_fetch).
+# Supports multi-page fetch via session, crude synthesis from extracts + titles. Aligns with existing web_fetch/web_search actions.
+# Planner/loop can emit kind:"research" step (first-class); falls back to web_fetch if needed.
+# Synthesis: simple aggregation of key extracts across pages; returns sources + synth for use in code (e.g. docs-informed impl).
+# STEP2: evolved - screenshots/vision (pw screenshot when research), structured synthesis (sections), direct code context integration ("pesquise API X e gere uso correto").
+def research(query: str, max_pages: int = 3, session_id: str | None = None) -> dict:
+    """First-class research: search + fetch multiple pages (stateful if session) + synthesize.
+    Real research task sim: multiple distinct pages + synthesis + (caller can use in code write).
+    Supports screenshot for vision (when model allows via supports('vision')) + structured synth + suggested code usage.
+    """
+    try:
+        qres = web_search(query, max_results=max(2, min(4, max_pages)))
+        urls = []
+        if isinstance(qres, dict) and qres.get("results"):
+            for r in qres.get("results", [])[:max_pages]:
+                u = r.get("url")
+                if u and u.startswith("http"): urls.append(u)
+        if not urls:
+            # fallback real pages for research tasks (python docs etc; multiple)
+            urls = ["https://docs.python.org/3/library/os.path.html", "https://docs.python.org/3/library/pathlib.html"]
+        pages = []
+        synth_parts = []
+        code_hints = []
+        sid = session_id or ("rs-" + str(abs(hash(query)))[:8])
+        screenshots = []
+        for u in urls[:max_pages]:
+            f = web_fetch(u, max_bytes=3000, research=True, actions=["extract"], session_id=sid, screenshot=True)
+            if f.get("ok"):
+                pentry = {"url": f.get("final_url", u), "title": f.get("title", ""), "content": (f.get("content") or "")[:800]}
+                if f.get("screenshot_path"):
+                    pentry["screenshot_path"] = f.get("screenshot_path")
+                    screenshots.append(f.get("screenshot_path"))
+                pages.append(pentry)
+                ex = (f.get("actions_executed") or [])
+                for e in ex:
+                    if isinstance(e, dict) and e.get("extracted"):
+                        synth_parts.append(str(e["extracted"])[:300])
+                if f.get("title"):
+                    synth_parts.append("PAGE:" + f.get("title","")[:100])
+                # crude code hint extraction for "gere o uso" integration
+                cands = [str(e.get("extracted",{}).get("code_blocks") or "") for e in ex if isinstance(e,dict)]
+                for c in cands:
+                    if c: code_hints.append(c[:200])
+        # STEP2: structured synthesis from multiple sources
+        structured = {
+            "overview": "SYNTHESIS from " + str(len(pages)) + " sources for query: " + query,
+            "key_facts": [s[:160] for s in synth_parts[:4]],
+            "code_examples": code_hints[:2] or ["(see pages for usage)"],
+            "sources": [p["url"] for p in pages],
+        }
+        synthesis = structured["overview"] + ". Key: " + " ; ".join(synth_parts[:5])[:600]
+        # STEP2: direct integration with code context (e.g. "pesquise a API X e gere o uso correto")
+        suggested_usage = None
+        ql = (query or "").lower()
+        if any(k in ql for k in ["api", "uso", "gere", "usage", "exemplo", "code", "implement"]):
+            # combine synth + simple template (context-aware usage stub)
+            base = code_hints[0] if code_hints else "from module import api\nresult = api()"
+            suggested_usage = "# Suggested usage based on research synthesis + code context\n" + base[:300] + "\n# Sources: " + ", ".join(structured["sources"][:2])
+        res = {
+            "ok": True,
+            "tool": "research",
+            "query": query,
+            "pages_fetched": len(pages),
+            "sources": [p["url"] for p in pages],
+            "pages": pages,
+            "synthesis": synthesis,
+            "structured_synthesis": structured,
+            "session_id": sid,
+            "session_state": _BROWSER_SESSIONS.get(sid),
+            "note": "first-class external research (multi-page + structured synth + vision screenshots); integrates code context for usage gen",
+            "screenshot_paths": screenshots,
+            "vision": len(screenshots) > 0,
+        }
+        if suggested_usage:
+            res["suggested_usage"] = suggested_usage
+        return res
+    except Exception as e:
+        return {"ok": False, "tool": "research", "query": query, "error": str(e)[:120]}

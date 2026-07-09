@@ -1,6 +1,7 @@
 """Policy layer (target structure).
 
 This is the canonical place for capability, isolation and runtime decisions.
+aiw/ preferred (light surgical migration step 4 for capabilities, analogous to runtime_gate).
 """
 
 from .registry import (
@@ -8,9 +9,11 @@ from .registry import (
     PolicyEngine,
     get_capability_registry,
     get_policy_engine,
+    POLICY_PROFILE,  # reexport for agent/regression path (aiw preferred)
+    is_trusted_ws,  # step 5 policy relax helper (aiw-first)
 )
 
-# Expose legacy style for compatibility during alignment
+# Expose legacy style for compatibility during alignment; aiw preferred via registry/engine
 def evaluate_capability_policy(*a, **k):
     return get_policy_engine().evaluate_capability(*a, **k)
 
@@ -25,6 +28,8 @@ __all__ = [
     "PolicyEngine",
     "get_capability_registry",
     "get_policy_engine",
+    "POLICY_PROFILE",
+    "is_trusted_ws",  # aiw-first trusted ws for cap relax (step 5)
     "evaluate_capability_policy",
     "evaluate_isolation_boundary",
     "evaluate_runtime_gate",
