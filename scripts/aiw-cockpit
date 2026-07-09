@@ -61,6 +61,10 @@ try:
     # profiles (workspace heavy) + external_worker_policy now aiw-first (this migration step)
     from aiw import resolve_workspace, load_workspaces_config, validate_profile, validate_test_command, execution_policy
     from aiw import load_external_worker_policy, validate_external_worker_policy, can_worker_execute
+    # step 1: test_runner/cov_baseline/dispatcher via aiw (or aiw.patch/aiw.queue)
+    from aiw import preview_test_command, run_test_command, get_test_run, list_test_runs
+    from aiw import get_current_coverage_baseline, promote_coverage_baseline, list_coverage_baselines, coverage_diff
+    from aiw import run_agent_dispatcher_once, list_agent_dispatcher_runs, read_agent_dispatcher_run
 except Exception:
     load_profile = None
     get_model_router = None
@@ -504,8 +508,12 @@ def _safe_create_pr(patch_id: str = "", title: str = "", body: str = "", confirm
             try:
                 prev = None
                 try:
-                    from aiw_workspace.test_runner import load_patch_preview as _load_pp
-                    prev = _load_pp(active_workspace_id(), patch_id) or {}
+                    try:
+                        from aiw.patch.test_runner import load_patch_preview as _load_pp
+                        prev = _load_pp(active_workspace_id(), patch_id) or {}
+                    except Exception:
+                        from aiw_workspace.test_runner import load_patch_preview as _load_pp
+                        prev = _load_pp(active_workspace_id(), patch_id) or {}
                 except Exception:
                     for pdir in [
                         ROOT / ".aiw" / "workspaces" / active_workspace_id() / "patches",
@@ -3815,8 +3823,12 @@ setInterval(function(){ var b=document.getElementById("daemon-status-bar"); if(b
     </div>
     ''')
 
-    from aiw_workspace.worker_loop import list_worker_loop_runs
-    wlr_res = list_worker_loop_runs(active_workspace)
+    try:
+        from aiw.queue import list_worker_loop_runs  # if exposed, else
+        wlr_res = list_worker_loop_runs(active_workspace)
+    except Exception:
+        from aiw_workspace.worker_loop import list_worker_loop_runs
+        wlr_res = list_worker_loop_runs(active_workspace)
     wlr_runs = wlr_res.get("runs", [])
     wlr_runs_html = ""
     for r in wlr_runs[:3]:
@@ -3845,8 +3857,12 @@ setInterval(function(){ var b=document.getElementById("daemon-status-bar"); if(b
     </div>
     ''')
 
-    from aiw_workspace.agent_dispatcher import list_agent_dispatcher_runs
-    adr_res = list_agent_dispatcher_runs(active_workspace)
+    try:
+        from aiw.queue.agent_dispatcher import list_agent_dispatcher_runs
+        adr_res = list_agent_dispatcher_runs(active_workspace)
+    except Exception:
+        from aiw_workspace.agent_dispatcher import list_agent_dispatcher_runs
+        adr_res = list_agent_dispatcher_runs(active_workspace)
     adr_runs = adr_res.get("runs", [])
     adr_runs_html = ""
     for r in adr_runs[:3]:
@@ -4074,8 +4090,12 @@ setInterval(function(){ var b=document.getElementById("daemon-status-bar"); if(b
               <button class="btn btn-secondary" type="submit">Loop Iterativo (Offline)</button>
             </form>
         """
-        from aiw_workspace.coverage_baseline import get_current_coverage_baseline
-        baseline_payload = get_current_coverage_baseline(ws["id"])
+        try:
+            from aiw.patch.coverage_baseline import get_current_coverage_baseline
+            baseline_payload = get_current_coverage_baseline(ws["id"])
+        except Exception:
+            from aiw_workspace.coverage_baseline import get_current_coverage_baseline
+            baseline_payload = get_current_coverage_baseline(ws["id"])
         baseline_tags = ""
         if baseline_payload.get("ok"):
             b = baseline_payload["baseline"]
@@ -4256,8 +4276,12 @@ setInterval(function(){ var b=document.getElementById("daemon-status-bar"); if(b
                 
             test_run_html += "</div>"
 
-            from aiw_workspace.coverage_baseline import coverage_diff
-            diff_payload = coverage_diff(ws_id, test_id, patch_id)
+            try:
+                from aiw.patch.coverage_baseline import coverage_diff
+                diff_payload = coverage_diff(ws_id, test_id, patch_id)
+            except Exception:
+                from aiw_workspace.coverage_baseline import coverage_diff
+                diff_payload = coverage_diff(ws_id, test_id, patch_id)
             if diff_payload.get("ok"):
                 d_status = diff_payload.get("status")
                 d_delta = diff_payload.get("delta", 0.0)
@@ -6250,27 +6274,43 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/api/workspaces/") and path.endswith("/worker-loop/runs"):
             ws_id = path[len("/api/workspaces/"):-len("/worker-loop/runs")].strip("/")
-            from aiw_workspace.worker_loop import list_worker_loop_runs
-            return self._respond(list_worker_loop_runs(ws_id), 200)
+            try:
+                from aiw.queue.worker import list_worker_loop_runs  # fallback
+                return self._respond(list_worker_loop_runs(ws_id), 200)
+            except Exception:
+                from aiw_workspace.worker_loop import list_worker_loop_runs
+                return self._respond(list_worker_loop_runs(ws_id), 200)
 
         if path.startswith("/api/workspaces/") and "/worker-loop/runs/" in path:
             parts = path.split("/")
             ws_id = parts[3]
             run_id = parts[6]
-            from aiw_workspace.worker_loop import read_worker_loop_run
-            return self._respond(read_worker_loop_run(ws_id, run_id), 200)
+            try:
+                from aiw_workspace.worker_loop import read_worker_loop_run
+                return self._respond(read_worker_loop_run(ws_id, run_id), 200)
+            except Exception:
+                from aiw_workspace.worker_loop import read_worker_loop_run
+                return self._respond(read_worker_loop_run(ws_id, run_id), 200)
 
         if path.startswith("/api/workspaces/") and path.endswith("/agent-dispatcher/runs"):
             ws_id = path[len("/api/workspaces/"):-len("/agent-dispatcher/runs")].strip("/")
-            from aiw_workspace.agent_dispatcher import list_agent_dispatcher_runs
-            return self._respond(list_agent_dispatcher_runs(ws_id), 200)
+            try:
+                from aiw.queue.agent_dispatcher import list_agent_dispatcher_runs
+                return self._respond(list_agent_dispatcher_runs(ws_id), 200)
+            except Exception:
+                from aiw_workspace.agent_dispatcher import list_agent_dispatcher_runs
+                return self._respond(list_agent_dispatcher_runs(ws_id), 200)
 
         if path.startswith("/api/workspaces/") and "/agent-dispatcher/runs/" in path:
             parts = path.split("/")
             ws_id = parts[3]
             run_id = parts[6]
-            from aiw_workspace.agent_dispatcher import read_agent_dispatcher_run
-            return self._respond(read_agent_dispatcher_run(ws_id, run_id), 200)
+            try:
+                from aiw.queue.agent_dispatcher import read_agent_dispatcher_run
+                return self._respond(read_agent_dispatcher_run(ws_id, run_id), 200)
+            except Exception:
+                from aiw_workspace.agent_dispatcher import read_agent_dispatcher_run
+                return self._respond(read_agent_dispatcher_run(ws_id, run_id), 200)
 
         if path.startswith("/api/workspaces/") and path.endswith("/agent-iterative-loop/runs"):
             ws_id = path[len("/api/workspaces/"):-len("/agent-iterative-loop/runs")].strip("/")
@@ -6499,29 +6539,50 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/api/workspaces/") and path.endswith("/coverage/baselines"):
             ws_id = path.split("/")[3]
-            from aiw_workspace.coverage_baseline import list_coverage_baselines
-            return self._respond(list_coverage_baselines(ws_id), 200)
+            try:
+                from aiw.patch.coverage_baseline import list_coverage_baselines
+                return self._respond(list_coverage_baselines(ws_id), 200)
+            except Exception:
+                from aiw_workspace.coverage_baseline import list_coverage_baselines
+                return self._respond(list_coverage_baselines(ws_id), 200)
 
         if path.startswith("/api/workspaces/") and path.endswith("/coverage/baseline"):
             ws_id = path.split("/")[3]
-            from aiw_workspace.coverage_baseline import get_current_coverage_baseline
-            return self._respond(get_current_coverage_baseline(ws_id), 200)
+            try:
+                from aiw.patch.coverage_baseline import get_current_coverage_baseline
+                return self._respond(get_current_coverage_baseline(ws_id), 200)
+            except Exception:
+                from aiw_workspace.coverage_baseline import get_current_coverage_baseline
+                return self._respond(get_current_coverage_baseline(ws_id), 200)
 
         if path.startswith("/api/workspaces/") and "/tests/runs/" in path and path.endswith("/coverage-diff"):
             parts = path.split("/")
-            from aiw_workspace.coverage_baseline import coverage_diff
-            return self._respond(coverage_diff(parts[3], parts[6]), 200)
+            try:
+                from aiw.patch.coverage_baseline import coverage_diff
+                return self._respond(coverage_diff(parts[3], parts[6]), 200)
+            except Exception:
+                from aiw_workspace.coverage_baseline import coverage_diff
+                return self._respond(coverage_diff(parts[3], parts[6]), 200)
 
         if path.startswith("/api/workspaces/") and "/patches/" in path and path.endswith("/coverage-diff"):
             parts = path.split("/")
             ws_id = parts[3]
             patch_id = parts[5]
-            from aiw_workspace.test_runner import list_test_runs
-            runs_payload = list_test_runs(ws_id, limit=50)
+            try:
+                from aiw.patch.test_runner import list_test_runs
+                runs_payload = list_test_runs(ws_id, limit=50)
+            except Exception:
+                from aiw_workspace.test_runner import list_test_runs
+                runs_payload = list_test_runs(ws_id, limit=50)
             cap_run_id = next((r.get("test_run_id") for r in runs_payload.get("runs", []) if r.get("patch_id") == patch_id and r.get("coverage_summary", {}).get("summary", {}).get("has_reports")), None)
-            from aiw_workspace.coverage_baseline import coverage_diff
-            if cap_run_id:
-                return self._respond(coverage_diff(ws_id, cap_run_id, patch_id), 200)
+            try:
+                from aiw.patch.coverage_baseline import coverage_diff
+                if cap_run_id:
+                    return self._respond(coverage_diff(ws_id, cap_run_id, patch_id), 200)
+            except Exception:
+                from aiw_workspace.coverage_baseline import coverage_diff
+                if cap_run_id:
+                    return self._respond(coverage_diff(ws_id, cap_run_id, patch_id), 200)
             return self._respond({"ok": True, "status": "no_current_coverage", "error": "No captured run found for patch"}, 200)
 
         if path.startswith("/api/workspaces/") and "/patches/" in path and path.endswith("/changed-lines-coverage"):
@@ -6541,8 +6602,12 @@ class Handler(BaseHTTPRequestHandler):
             parts = path.split("/")
             ws_id = parts[3]
             run_id = parts[6]
-            from aiw_workspace.test_runner import get_test_run
-            run_payload = get_test_run(ws_id, run_id)
+            try:
+                from aiw.patch.test_runner import get_test_run
+                run_payload = get_test_run(ws_id, run_id)
+            except Exception:
+                from aiw_workspace.test_runner import get_test_run
+                run_payload = get_test_run(ws_id, run_id)
             tr = run_payload.get("test_results") or {"ok": True, "summary": {"has_reports": False, "status": "no_report"}, "failed_cases": []}
             return self._respond(tr, 200)
 
@@ -6550,8 +6615,12 @@ class Handler(BaseHTTPRequestHandler):
             parts = path.split("/")
             ws_id = parts[3]
             patch_id = parts[5]
-            from aiw_workspace.test_runner import list_test_runs
-            runs_payload = list_test_runs(ws_id, limit=50)
+            try:
+                from aiw.patch.test_runner import list_test_runs
+                runs_payload = list_test_runs(ws_id, limit=50)
+            except Exception:
+                from aiw_workspace.test_runner import list_test_runs
+                runs_payload = list_test_runs(ws_id, limit=50)
             cap_run = next((r for r in runs_payload.get("runs", []) if r.get("patch_id") == patch_id and r.get("test_results", {}).get("summary", {}).get("has_reports")), None)
             if cap_run:
                 tr = cap_run["test_results"]
