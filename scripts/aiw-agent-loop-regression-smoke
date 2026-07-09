@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 # AIW Agent Loop offline regression smoke.
 # Includes full "editar + preview + apply + validate" flow test (step 5).
+# Step 5: + _test_full_mission_daemon_e2e (mission create->enqueue->daemon_persistent->real edit+validate->auto_pr do_real + preview_only=False explicit + browser actions + RAG).
 
 export PYTHONPATH="$PWD:$PYTHONPATH"
 
 python3 -c '
 import sys
 sys.path.insert(0, ".")
-from aiw.agent.iterative_loop import _test_full_edit_preview_apply_validate_flow, _test_rich_actions_execute_paths, _test_multi_daemon_persistent
+from aiw.agent.iterative_loop import _test_full_edit_preview_apply_validate_flow, _test_rich_actions_execute_paths, _test_multi_daemon_persistent, _test_full_mission_daemon_e2e
 print("=== regression: full edit-preview-apply-validate ===")
 print(_test_full_edit_preview_apply_validate_flow())
 print("=== regression: rich actions ===")
 print(_test_rich_actions_execute_paths())
 print("=== regression: multi-mission daemon e2e (step 4) ===")
 print(_test_multi_daemon_persistent())
+print("=== regression: full mission daemon e2e + browser + RAG + preview_only=False (step 5) ===")
+print(_test_full_mission_daemon_e2e())
 ' || echo "extra flow tests had issues (non-fatal for base smoke)"
 
 # Daemon multi-mission E2E (step 4 approved)

@@ -40,20 +40,27 @@ from aiw_workspace import (
     load_workspaces_config as load_workspace_profiles,
     resolve_workspace as resolve_workspace_profile,
 )
-# Prefer aiw/ imports para loop, profiles (perfis de agente), providers (Provedor de Modelo/Execução)
+# Prefer aiw/ imports para loop, profiles (perfis de agente + workspace profiles migrados), providers (Provedor de Modelo/Execução)
 # e módulos migrados que impactam Cockpit + Loop Iterativo do Agente (github_intake, integration_* , runtime_gate/policy).
 # Usa try/except para manter compat total com legado durante transição cirúrgica.
 # Integração completa do aiw/agent/iterative_loop no Cockpit: "Executar Agente Direto" + botões usam run_agent_iterative_loop_once;
 # Perfil de Agente, modelos OpenRouter (free), trace rico com collapsibles, re-exec, display direto pós-submit, termos PT.
 # Atualizado: runtime_gate migrado para aiw/policy + integration helpers agora preferem aiw/ (sem aiw_workspace.profiles).
 # Adicionado: preview de alterações + botão "Aplicar patch seguro" no render_agent_trace_html (de execution_trace), usa _safe_patch_* prefer aiw_runtime/tools + aiw/ paths.
+# Step 2: prefer aiw for validation_plan + coverage_report (via aiw import try + patch).
+# This step: profiles (heavy workspace) + external_worker_policy migrated to aiw/workspace/ + thin delegates + aiw reexports + prefer in callers.
 try:
     from aiw import load_profile, get_model_router, get_experiment_lab, load_profile as load_agent_profile
     from aiw import review_gate_for_patch, list_review_gates, apply_reviewed_patch, rollback_reviewed_patch, analyze_changed_lines_coverage
+    from aiw import validation_plan_for_patch, ensure_validation_plan_snapshot, analyze_patch_coverage  # step 2: validation+coverage aiw/patch prefer
+    from aiw import create_mission, list_missions, get_mission, attach_run_to_mission, attach_approval_to_mission, enqueue_mission_task  # Step 5 expanded: multi-run + approvals + queue
     from aiw.providers.execution import list_execution_providers
     from aiw.providers.model import get_model_provider_registry  # prefer providers
     from aiw.profiles.loader import load_profile as _load_agent_profile  # perfis do agente
     from aiw.policy import evaluate_runtime_gate  # Porta de Runtime / runtime_gate prefer aiw/ (migração cirúrgica)
+    # profiles (workspace heavy) + external_worker_policy now aiw-first (this migration step)
+    from aiw import resolve_workspace, load_workspaces_config, validate_profile, validate_test_command, execution_policy
+    from aiw import load_external_worker_policy, validate_external_worker_policy, can_worker_execute
 except Exception:
     load_profile = None
     get_model_router = None
@@ -67,6 +74,25 @@ except Exception:
     apply_reviewed_patch = None
     rollback_reviewed_patch = None
     analyze_changed_lines_coverage = None
+    validation_plan_for_patch = None
+    ensure_validation_plan_snapshot = None
+    analyze_patch_coverage = None
+    create_mission = None
+    list_missions = None
+    get_mission = None
+    attach_run_to_mission = None
+    attach_approval_to_mission = None
+    enqueue_mission_task = None
+
+# After aiw try, ensure workspace profile aliases prefer aiw/ for migrated (profiles)
+try:
+    # these may be set by the from aiw above
+    if 'resolve_workspace' in globals() and resolve_workspace is not None:
+        resolve_workspace_profile = resolve_workspace
+    if 'load_workspaces_config' in globals() and load_workspaces_config is not None:
+        load_workspace_profiles = load_workspaces_config
+except Exception:
+    pass
 
 # Helpers para preferir aiw/ em módulos migrados (github_intake, integration_*)
 # Usados em handlers do cockpit para agent/intake flows. Mantém compat.
@@ -127,6 +153,62 @@ from aiw_workspace import (
     analyze_patch_coverage,
     load_patch_preview,
 )
+
+# Prefer aiw/ (aiw-first) for validation_plan + coverage_report now migrated (try/except compat).
+# Overrides the legacy import names above when aiw available.
+try:
+    from aiw.patch import (
+        validation_plan_for_patch,
+        ensure_validation_plan_snapshot,
+        list_validation_plan_snapshots,
+        get_validation_plan_snapshot,
+        compare_validation_plan_snapshots,
+        validation_reliability,
+        preview_validation_plan_command,
+        run_validation_plan_commands,
+        analyze_patch_coverage,
+        load_coverage_reports,
+    )
+except Exception:
+    pass  # keep legacy names for full compat
+
+# Override workspace profile names preferring aiw/ (profiles + external migrated this step)
+try:
+    from aiw import (
+        resolve_workspace as _aiw_rs,
+        load_workspaces_config as _aiw_lw,
+        validate_profile as _aiw_vp,
+        validate_test_command as _aiw_vtc,
+        execution_policy as _aiw_ep,
+        load_external_worker_policy as _aiw_lewp,
+        validate_external_worker_policy as _aiw_vewp,
+        can_worker_execute as _aiw_cwe,
+    )
+    if _aiw_rs is not None:
+        resolve_workspace_profile = _aiw_rs
+    if _aiw_lw is not None:
+        load_workspace_profiles = _aiw_lw
+    if _aiw_vp is not None:
+        validate_workspace_profile = _aiw_vp
+    # also bind common names if used directly
+    if _aiw_rs is not None:
+        resolve_workspace = _aiw_rs
+    if _aiw_lw is not None:
+        load_workspaces_config = _aiw_lw
+    if _aiw_vp is not None:
+        validate_profile = _aiw_vp
+    if _aiw_vtc is not None:
+        validate_test_command = _aiw_vtc
+    if _aiw_ep is not None:
+        workspace_execution_policy = _aiw_ep
+    if _aiw_lewp is not None:
+        load_external_worker_policy = _aiw_lewp
+    if _aiw_vewp is not None:
+        validate_external_worker_policy = _aiw_vewp
+    if _aiw_cwe is not None:
+        can_worker_execute = _aiw_cwe
+except Exception:
+    pass  # keep legacy for compat
 
 TASK_QUEUES = ["inbox", "running", "blocked", "queued", "done", "failed"]
 
@@ -444,90 +526,77 @@ def _safe_create_pr(patch_id: str = "", title: str = "", body: str = "", confirm
         return {"ok": False, "error": str(e), "patch_id": patch_id}
 
 
-# === Basic persistent missions (Step 4) ===
-# Store in .aiw/workspaces/{ws}/missions/  ; extend agent runs with mission_id for grouping.
-# Runs remain compatible with current aiw/agent/iterative_loop run.json .
-def _now_iso_cockpit() -> str:
-    import datetime
-    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _get_missions_dir(workspace_id: str | None = None) -> Path:
-    ws = active_workspace_id(workspace_id)
-    d = ROOT / ".aiw" / "workspaces" / ws / "missions"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def create_mission(workspace_id: str | None = None, title: str = "Missão", task: str = "") -> dict:
-    ws = active_workspace_id(workspace_id)
-    mid = "mis-" + uuid.uuid4().hex[:8]
-    mdir = _get_missions_dir(ws) / mid
-    mdir.mkdir(parents=True, exist_ok=True)
-    mission = {
-        "mission_id": mid,
-        "workspace_id": ws,
-        "title": title or "Missão sem título",
-        "task": (task or "")[:500],
-        "created_at": _now_iso_cockpit(),
-        "status": "active",
-        "run_ids": [],
-    }
-    (mdir / "mission.json").write_text(json.dumps(mission, indent=2, ensure_ascii=False), encoding="utf-8")
-    return mission
-
-
-def list_missions(workspace_id: str | None = None, limit: int = 20) -> list[dict]:
-    mdir = _get_missions_dir(workspace_id)
-    items = []
-    for d in sorted([p for p in mdir.iterdir() if p.is_dir()], key=lambda p: p.stat().st_mtime, reverse=True)[:limit]:
-        mj = d / "mission.json"
+# Step 5: minimal mission wrapper now lives in aiw/mission.py (imported at top).
+# Kept minimal shims only if aiw import failed (surgical compat with Step 4 callers).
+# aiw impl adds enrichment for persistent run/ckpt/auto_pr status used in views.
+if create_mission is None or list_missions is None:
+    def _now_iso_cockpit() -> str:
+        import datetime
+        return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    def _get_missions_dir(workspace_id: str | None = None) -> Path:
+        ws = active_workspace_id(workspace_id)
+        d = ROOT / ".aiw" / "workspaces" / ws / "missions"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+    def create_mission(workspace_id: str | None = None, title: str = "Missão", task: str = "") -> dict:
+        ws = active_workspace_id(workspace_id)
+        mid = "mis-" + uuid.uuid4().hex[:8]
+        mdir = _get_missions_dir(ws) / mid
+        mdir.mkdir(parents=True, exist_ok=True)
+        mission = {"mission_id": mid, "workspace_id": ws, "title": title or "Missão sem título", "task": (task or "")[:500], "created_at": _now_iso_cockpit(), "status": "active", "run_ids": []}
+        (mdir / "mission.json").write_text(json.dumps(mission, indent=2, ensure_ascii=False), encoding="utf-8")
+        return mission
+    def list_missions(workspace_id: str | None = None, limit: int = 20) -> list[dict]:
+        mdir = _get_missions_dir(workspace_id)
+        items = []
+        for d in sorted([p for p in mdir.iterdir() if p.is_dir()], key=lambda p: p.stat().st_mtime, reverse=True)[:limit]:
+            mj = d / "mission.json"
+            if mj.exists():
+                try:
+                    items.append(json.loads(mj.read_text(encoding="utf-8")))
+                except Exception:
+                    pass
+        return items
+    def get_mission(mission_id: str, workspace_id: str | None = None) -> dict | None:
+        if not mission_id: return None
+        mj = _get_missions_dir(workspace_id) / str(mission_id) / "mission.json"
         if mj.exists():
-            try:
-                m = json.loads(mj.read_text(encoding="utf-8"))
-                items.append(m)
-            except Exception:
-                pass
-    return items
-
-
-def get_mission(mission_id: str, workspace_id: str | None = None) -> dict | None:
-    if not mission_id:
+            try: return json.loads(mj.read_text(encoding="utf-8"))
+            except: return None
         return None
-    mj = _get_missions_dir(workspace_id) / str(mission_id) / "mission.json"
-    if mj.exists():
+    def attach_run_to_mission(mission_id: str, run_id: str, workspace_id: str | None = None) -> bool:
+        if not mission_id or not run_id: return False
+        ws = active_workspace_id(workspace_id)
+        mj_path = _get_missions_dir(ws) / mission_id / "mission.json"
+        if not mj_path.exists(): return False
         try:
-            return json.loads(mj.read_text(encoding="utf-8"))
+            m = json.loads(mj_path.read_text(encoding="utf-8"))
+            if run_id not in m.get("run_ids", []):
+                m.setdefault("run_ids", []).append(run_id)
+                mj_path.write_text(json.dumps(m, indent=2, ensure_ascii=False), encoding="utf-8")
+            run_j = ROOT / ".aiw" / "workspaces" / ws / "agent-iterative-loop" / "runs" / run_id / "run.json"
+            if run_j.exists():
+                try:
+                    rdata = json.loads(run_j.read_text(encoding="utf-8"))
+                    rdata["mission_id"] = mission_id
+                    run_j.write_text(json.dumps(rdata, indent=2, ensure_ascii=False), encoding="utf-8")
+                except Exception: pass
+            return True
         except Exception:
-            return None
-    return None
-
-
-def attach_run_to_mission(mission_id: str, run_id: str, workspace_id: str | None = None) -> bool:
-    """Attach run_id to mission; also inject mission_id into the agent's persisted run.json for compatibility."""
-    if not mission_id or not run_id:
-        return False
-    ws = active_workspace_id(workspace_id)
-    mj_path = _get_missions_dir(ws) / mission_id / "mission.json"
-    if not mj_path.exists():
-        return False
-    try:
-        m = json.loads(mj_path.read_text(encoding="utf-8"))
-        if run_id not in m.get("run_ids", []):
-            m.setdefault("run_ids", []).append(run_id)
+            return False
+    def attach_approval_to_mission(mission_id: str, approval: dict, workspace_id: str | None = None) -> bool:
+        if not mission_id or not isinstance(approval, dict): return False
+        ws = active_workspace_id(workspace_id)
+        mj_path = _get_missions_dir(ws) / mission_id / "mission.json"
+        if not mj_path.exists(): return False
+        try:
+            m = json.loads(mj_path.read_text(encoding="utf-8"))
+            m.setdefault("approvals", []).append(dict(approval))
             mj_path.write_text(json.dumps(m, indent=2, ensure_ascii=False), encoding="utf-8")
-        # Extend the agent run.json (works with current loop runs on disk)
-        run_j = ROOT / ".aiw" / "workspaces" / ws / "agent-iterative-loop" / "runs" / run_id / "run.json"
-        if run_j.exists():
-            try:
-                rdata = json.loads(run_j.read_text(encoding="utf-8"))
-                rdata["mission_id"] = mission_id
-                run_j.write_text(json.dumps(rdata, indent=2, ensure_ascii=False), encoding="utf-8")
-            except Exception:
-                pass
-        return True
-    except Exception:
-        return False
+            return True
+        except Exception: return False
+    def enqueue_mission_task(mission_id: str, task: str = "", priority: int = 5, workspace_id: str | None = None) -> dict:
+        return {"ok": False, "note": "shim-no-queue"}
 
 
 def workspace_root_for_context(workspace_id: str | None = None) -> Path:
@@ -2625,13 +2694,18 @@ def render_page() -> str:
     missions_list = list_missions(active_workspace, limit=5)
 
     # Daemon / bg worker status for 24/7 persistent agents (aiw queue+loop)
+    # Production: real-time JS polling (updates DOM no full reload), health surfaced, per-daemon stop controls (via /api/worker/stop?daemon_id=)
     daemon_status_html = ""
     try:
         dlist = list_daemons_from_cockpit(active_workspace)
         dcount = 0
         workers_info = ""
+        pid_info = ""
+        live_details = ""
+        daemon_controls = ""
         if isinstance(dlist, dict):
-            daemons = (dlist.get("daemons") or {}).get("daemons") or (dlist.get("daemons") or [])
+            daemons_raw = dlist.get("daemons") or {}
+            daemons = (daemons_raw.get("daemons") if isinstance(daemons_raw, dict) else daemons_raw) or (dlist.get("daemons") or [])
             dcount = len(daemons) if isinstance(daemons, list) else 0
             wks = dlist.get("workers") or {}
             if isinstance(wks, dict) and wks.get("workers"):
@@ -2639,21 +2713,91 @@ def render_page() -> str:
                     wrun = "running" if winfo.get("running") else "stopped"
                     wcnt = winfo.get("active_count", 0)
                     workers_info = f' worker[{wsid}:{wrun} active={wcnt}]'
+                    if winfo.get("health") is not None:
+                        workers_info += f' h={winfo.get("health")}'
+            # live info from top level (list_daemons_from returns workers+daemons; worker describe now has pid/uptime)
+            wp = dlist.get("worker_pid") or (daemons_raw.get("worker_pid") if isinstance(daemons_raw, dict) else None)
+            if wp:
+                pid_info = f' pid={wp}'
+            wup = dlist.get("worker_uptime_s") or (daemons_raw.get("worker_uptime_s") if isinstance(daemons_raw, dict) else None)
+            if wup:
+                pid_info += f' uptime={wup}s'
+            # health info
+            wh = dlist.get("worker_health") or dlist.get("worker_health_detail", {}).get("healthy") if isinstance(dlist.get("worker_health_detail"), dict) else None
+            if wh is not None:
+                pid_info += f' health={wh}'
+            # details on some daemons (status, pid if exposed via future/loop) + per-daemon controls
+            if isinstance(daemons, list) and daemons:
+                samples = []
+                ctrl_parts = []
+                wsq_esc = html.escape(active_workspace)
+                for d in daemons[:5]:
+                    st = d.get("status") or "?"
+                    rid = (d.get("run_id") or d.get("daemon_id") or "")[:12]
+                    did = d.get("daemon_id") or d.get("run_id") or ""
+                    samples.append(f'{rid}:{st}')
+                    if did and st not in ("completed", "stopped", "error"):
+                        # per-daemon stop control (simple GET for api, or form; cockpit uses links that trigger fetch+reload)
+                        ctrl_parts.append(f'<a class="api-link" href="/api/worker/stop?workspace={wsq_esc}&daemon_id={html.escape(did)}" style="font-size:9px" onclick="return doDaemonStop(\'{html.escape(did)}\',this);" title="stop this daemon">stop:{rid}</a>')
+                live_details = " | " + ", ".join(samples)
+                if ctrl_parts:
+                    daemon_controls = " " + " ".join(ctrl_parts)
         wsq = html.escape(active_workspace)
         daemon_status_html = (
-            f'<div class="queue-bar" style="margin:4px 0">'
-            f'<span class="queue-pill">Daemons: <span class="q-count">{dcount}</span></span>'
-            f'{html.escape(workers_info)} '
+            f'<div class="queue-bar" style="margin:4px 0" id="daemon-status-bar" data-ws="{wsq}">'
+            f'<span class="queue-pill">Daemons: <span class="q-count" id="d-count">{dcount}</span></span>'
+            f'<span id="d-info">{html.escape(workers_info)}{html.escape(pid_info)}{html.escape(live_details)}</span>'
+            f'{daemon_controls} '
             f'<a class="api-link" href="/api/daemons" target="_blank" style="font-size:10px">/api/daemons</a> '
             f'<a class="api-link" href="/api/worker/status?workspace={wsq}" target="_blank" style="font-size:10px">status</a> '
             f'<a class="api-link" href="/api/worker/start?workspace={wsq}" target="_blank" style="font-size:10px" title="Start persistent worker + auto-resume checkpoints">start-worker</a> '
             f'<a class="api-link" href="/api/worker/stop?workspace={wsq}" target="_blank" style="font-size:10px" title="Stop worker">stop-worker</a> '
             f'<a class="api-link" href="/api/worker/resume?workspace={wsq}" target="_blank" style="font-size:10px" title="Resume all checkpoints as daemons">resume-ckpts</a> '
-            f'| <small style="color:#666">or: ./scripts/aiw-daemon --workspace {html.escape(active_workspace)}</small>'
+            f'| <small style="color:#666">or: ./scripts/aiw-daemon --workspace {html.escape(active_workspace)} [--pidfile ...] [--log-json] [--health-port N]</small>'
+            f' <button type="button" onclick="refreshDaemonStatus(true)" style="font-size:9px;padding:1px 4px">refresh</button>'
             f'</div>'
+            '''<script>
+function updateDaemonBar(data) {
+  try {
+    var bar = document.getElementById("daemon-status-bar");
+    if (!bar || !data) return;
+    var cnt = bar.querySelector("#d-count");
+    var inf = bar.querySelector("#d-info");
+    if (cnt) cnt.textContent = (data.count != null ? data.count : (data.daemons && data.daemons.length) || 0);
+    var ws = bar.getAttribute("data-ws") || "aiw";
+    var wpid = data.worker_pid || (data.workers && data.workers.workers && Object.values(data.workers.workers)[0] && Object.values(data.workers.workers)[0].pid) || "";
+    var wup = data.worker_uptime_s || "";
+    var h = (data.worker_health_detail && data.worker_health_detail.healthy) || data.worker_health || "";
+    var info = " worker active=" + ((data.workers && data.workers.workers && Object.keys(data.workers.workers).length) || 0);
+    if (wpid) info += " pid=" + wpid;
+    if (wup) info += " up=" + wup + "s";
+    if (h !== "") info += " h=" + h;
+    if (inf) inf.textContent = info;
+    // note: for per-daemon list we rely on manual refresh or full page; simple bar live
+  } catch(e){}
+}
+function refreshDaemonStatus(noReload) {
+  fetch("/api/daemons").then(r=>r.json()).then(d=>{
+    var bar=document.getElementById("daemon-status-bar");
+    if(bar) bar.style.outline="1px dashed #0a0";
+    updateDaemonBar(d);
+    if (!noReload) setTimeout(()=>location.reload(), 800);
+  }).catch(()=>{ if(!noReload) location.reload(); });
+}
+function doDaemonStop(did, el) {
+  if (!confirm("Stop daemon " + did + "?")) return false;
+  var ws = (document.getElementById("daemon-status-bar")||{}).getAttribute("data-ws") || "aiw";
+  fetch("/api/worker/stop?workspace=" + encodeURIComponent(ws) + "&daemon_id=" + encodeURIComponent(did))
+    .then(r=>r.json()).then(d=>{ if(el) el.textContent="stopping"; setTimeout(refreshDaemonStatus, 1200); })
+    .catch(()=>alert("stop call failed"));
+  return false;
+}
+// auto real-time poll every ~8s (simple, no SSE)
+setInterval(function(){ var b=document.getElementById("daemon-status-bar"); if(b) refreshDaemonStatus(true); }, 8000);
+</script>'''
         )
     except Exception:
-        daemon_status_html = '<div style="font-size:10px;color:#666">Daemons: (use start button or /api/worker/start / ./scripts/aiw-daemon)</div>'
+        daemon_status_html = '<div style="font-size:10px;color:#666">Daemons: (use start button or /api/worker/start / ./scripts/aiw-daemon [--pidfile])</div>'
 
     # Queue pills
     queue_pills = ""
@@ -2781,7 +2925,7 @@ def render_page() -> str:
           <div style="margin-bottom:8px">
             <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:2px">Missão persistente (básico - Step 4: agrupa runs de tarefa longa)</label>
             <input class="input" name="mission_title" placeholder="Título da missão (ex: Refatorar módulo X + validar; deixe vazio para run isolado)" style="width:100%">
-            <small style="color:#666">Cria .aiw/workspaces/.../missions/mis-xxx/ + injeta mission_id no run.json. Re-execs subsequentes podem anexar (via form hidden).</small>
+            <small style="color:#666">Step 5: usa aiw.mission (create+attach) agrupa run_id + ckpt + auto_pr. Re-execs anexam via mission_id hidden.</small>
           </div>
           <div style="margin-bottom:8px">
             <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;display:block;margin-bottom:2px">Resume / Long-running (checkpointing + recovery)</label>
@@ -4348,7 +4492,7 @@ def render_page() -> str:
     agent_loop_section = f"""
     <div class="section-block">
       <h3>Loop Iterativo do Agente (runs recentes - aiw/agent/iterative_loop.py)</h3>
-      <div class="signal-note" style="margin-bottom:10px">Use o formulário "Executar Agente Direto" (Perfil de Agente + modelo OpenRouter via aiw/agent/iterative_loop). execution_trace mostra preview de alterações propostos + botão "Aplicar patch seguro" (integra aiw_runtime/tools / patch flows). Collapsíveis, status, paths, diffs e contexto acumulado. Suporte básico missões persistentes + aprovação patches. <strong>Novidade: persistent + resume via checkpoint (run_id em .aiw/.../checkpoints/)</strong> | <a href="/api/daemons" target="_blank">Monitor Daemons (JSON)</a></div>
+      <div class="signal-note" style="margin-bottom:10px">Use o formulário "Executar Agente Direto" (Perfil de Agente + modelo OpenRouter via aiw/agent/iterative_loop). execution_trace mostra preview de alterações propostos + botão "Aplicar patch seguro" (integra aiw_runtime/tools / patch flows). Collapsíveis, status, paths, diffs e contexto acumulado. Step 5: missões mínimas (aiw/mission.py) + persistent + resume ckpt + auto_pr. | <a href="/api/daemons" target="_blank">Monitor Daemons (JSON)</a></div>
       {agent_loop_rows}
       {agent_loop_detail_html}
       <div class="api-links" style="margin-top:10px">
@@ -4357,17 +4501,39 @@ def render_page() -> str:
     </div>
     """
 
-    # Basic persistent missions listing (Step 4)
+    # Step 4/5: expanded cockpit missions view as table (run counts, pr links, pending approvals + inline approve + attach run form)
     missions_html = ""
     if missions_list:
         mrows = ""
         for m in missions_list:
             mid = html.escape(str(m.get("mission_id","")))
             mtit = html.escape(str(m.get("title",""))[:60])
-            mstatus = html.escape(str(m.get("status","")))
-            mruns = len(m.get("run_ids", []))
-            mrows += f'<div class="mini-run" style="font-size:11px"><strong>{mtit}</strong> <span class="tag">{mid}</span> <span class="tag">{mstatus}</span> <span class="tag">{mruns} runs</span></div>'
-        missions_html = f'<div class="section-block" style="margin-top:8px"><h4>Missões persistentes (agrupam runs longos / re-execs)</h4>{mrows}<small style="color:#666">Armazenado em .aiw/workspaces/{html.escape(active_workspace)}/missions/</small></div>'
+            mstatus = html.escape(str(m.get("status","") or "active"))
+            mruns = m.get("run_count", len(m.get("run_ids", [])))
+            pers = m.get("persistent_run_count", 0)
+            has_ck = "ckpt" if m.get("has_checkpoint") else ""
+            apr = m.get("auto_pr_status") or ""
+            appr_cnt = m.get("approval_count", len(m.get("approvals", [])) or 0)
+            prs = m.get("pr_links") or m.get("pr_urls") or []
+            pr_tag = ""
+            if prs:
+                pu = html.escape(prs[0])
+                pr_tag = f'<a class="tag" href="{pu}" target="_blank" style="background:#0a4">pr</a>'
+            elif apr:
+                pr_tag = f'<span class="tag" style="background:#440">{html.escape(str(apr))}</span>'
+            mon = f'<span class="tag">pers:{pers}</span>' if pers or has_ck else ''
+            pending = m.get("pending_approvals") or []
+            pend_cnt = len(pending)
+            appr_tag = f'<span class="tag" style="background:#f59e0b">appr:{appr_cnt}</span>' + (f' <span style="color:#c00">pend:{pend_cnt}</span>' if pend_cnt else '')
+            # inline approve (posts /mission/approve)
+            appr_form = f'''<form method="post" action="/mission/approve" style="display:inline"><input type="hidden" name="mission_id" value="{mid}"><button class="btn btn-ghost" style="padding:1px 3px;font-size:8px" type="submit">Approve</button></form>''' if pend_cnt or mstatus in ("active","pending","in_progress") else ""
+            # re-exec form
+            reexec = f'''<form method="post" action="/runner/run-agent" style="display:inline;margin-left:2px"><input type="hidden" name="agent_task" value="{mtit} (reexec)"><input type="hidden" name="workspace_id" value="{html.escape(active_workspace)}"><input type="hidden" name="mission_id" value="{mid}"><input type="hidden" name="persistent" value="1"><button class="btn btn-small" type="submit" style="padding:1px 3px;font-size:8px">Re-exec</button></form>'''
+            # attach run form (inline for table UX)
+            attach_form = f'''<form method="post" action="/mission/attach" style="display:inline;margin-left:2px"><input type="hidden" name="mission_id" value="{mid}"><input type="text" name="run_id" placeholder="ail-xxx" style="width:70px;font-size:8px;padding:1px"><button class="btn btn-small" type="submit" style="padding:1px 2px;font-size:8px">Attach</button></form>'''
+            mrows += f'<tr><td style="font-size:9px"><strong>{mtit}</strong><br><span class="tag" style="font-size:8px">{mid}</span></td><td style="font-size:9px">{mstatus} {mon}</td><td style="font-size:9px">{mruns} runs</td><td style="font-size:9px">{pr_tag}</td><td style="font-size:9px">{appr_tag} {appr_form}</td><td style="font-size:9px">{reexec}{attach_form}</td></tr>'
+        table = f'<table style="width:100%;font-size:9px;border-collapse:collapse;margin:4px 0"><thead><tr style="background:#222"><th>Missão</th><th>Status</th><th>Runs</th><th>PR</th><th>Approvals</th><th>Actions</th></tr></thead><tbody>{mrows}</tbody></table>'
+        missions_html = f'<div class="section-block" style="margin-top:8px"><h4>Missões 24/7 (tabela: run counts, pr links, approvals pendentes + approve inline + attach run; aiw/mission.py)</h4>{table}<small style="color:#666">CLI: aiw mission runs|status|bulk-approve | /api/missions | attach via form or aiw mission attach</small></div>'
     agent_loop_section += missions_html
 
     # Overview section content
@@ -5070,7 +5236,7 @@ def run_agent_from_cockpit(model: str = "dev-coder", offline: bool = False, work
     - model: OpenRouter explícito (ex: openai/gpt-oss-120b:free e outros)
     - profile: Perfil de Agente (software-engineer, security-analyst, code-reviewer)
     - offline=False => execute=True + confirm_agent_loop para Execução Real (policy + provider)
-    - mission_id / mission_title: suporte básico a missões persistentes (Step 4) - cria container + agrupa via mission_id injetado no run.json
+    - mission_id / mission_title: Step 5 minimal wrapper via aiw.mission (groups persistent run_id + ckpt + auto_pr status)
     - resume_run_id: if provided, pass to loop for checkpoint resume (load state + continue)
     - persistent: flag for long-running mode (relaxed iters + checkpoints)
     - Mantém backward compat (fallback só offline); "Executar Agente Direto" usa isso.
@@ -5115,7 +5281,7 @@ def run_agent_from_cockpit(model: str = "dev-coder", offline: bool = False, work
         run = res.get("run", {}) if isinstance(res, dict) else {}
         run_id = run.get("run_id", "") or res.get("run_id", "")
         run_dir = f".aiw/workspaces/{ws_id}/agent-iterative-loop/runs/{run_id}" if run_id else ""
-        # Basic persistent mission support (Step 4): create if title given (for new long task), attach run to mission, inject mission_id to run.json
+        # Step 5: use aiw mission wrapper (create if title, attach; loop now accepts+stores mission_id too)
         try:
             effective_mid = mission_id
             if mission_title and not effective_mid:
@@ -5174,7 +5340,7 @@ def run_agent_from_cockpit(model: str = "dev-coder", offline: bool = False, work
                 pass
 
     ok = completed.returncode == 0 and bool(run_dir)
-    # Legacy fallback: still support attaching mission if provided (extract run_id from path)
+    # Legacy fallback: still support attaching mission (Step 5 aiw.mission) if provided (extract run_id from path)
     try:
         if (mission_id or mission_title) and run_dir:
             rid = run_dir.split("/")[-1] if run_dir else ""
@@ -5189,11 +5355,12 @@ def run_agent_from_cockpit(model: str = "dev-coder", offline: bool = False, work
     return ok, output, run_dir
 
 
-def start_daemon_agent_from_cockpit(workspace_id: str = None, task: str = None, profile: str = "software-engineer", model: str = "openai/gpt-oss-120b:free", resume_run_id: str = None) -> tuple[bool, str, str]:
+def start_daemon_agent_from_cockpit(workspace_id: str = None, task: str = None, profile: str = "software-engineer", model: str = "openai/gpt-oss-120b:free", resume_run_id: str = None, mission_id: str | None = None) -> tuple[bool, str, str]:
     """Start background daemon persistent agent (24/7 mode).
     Uses aiw.queue.worker + aiw.agent.iterative_loop persistent (relaxed MAX, queue intake, ckpt recovery).
     Runs in bg thread; monitor via /api/... or list_daemons.
     resume_run_id enables resuming from checkpoint for daemons.
+    mission_id (Step 5) passed through to tie wrapper.
     """
     ws_id = active_workspace_id(workspace_id)
     task_text = task or "Autonomous persistent mission from Cockpit daemon (24/7 agent)"
@@ -5222,6 +5389,7 @@ def start_daemon_agent_from_cockpit(workspace_id: str = None, task: str = None, 
             confirm=True,
             model=model,
             resume_run_id=resume_run_id,
+            mission_id=mission_id,
         )
         run_id = dres.get("run_id") or dres.get("daemon_id", "")
         run_dir = f".aiw/workspaces/{ws_id}/agent-iterative-loop/runs/{run_id}" if run_id else ""
@@ -5239,9 +5407,65 @@ def list_daemons_from_cockpit(workspace_id: str = None) -> dict:
         ws = active_workspace_id(workspace_id)
         workers = list_daemon_workers(ws)
         daemons = list_running_daemons(ws)
-        return {"ok": True, "workers": workers, "daemons": daemons}
+        # live status enrichment: pull pid/uptime from workers describe if present (now provided by PersistentAgentWorker)
+        daemons_list = (daemons.get("daemons") if isinstance(daemons, dict) else daemons) or []
+        out = {"ok": True, "workers": workers, "daemons": daemons, "count": len(daemons_list) if isinstance(daemons_list, list) else 0}
+        try:
+            wdict = (workers or {}).get("workers") or {}
+            for _wsi, winf in wdict.items():
+                if isinstance(winf, dict) and winf.get("pid"):
+                    out["worker_pid"] = winf.get("pid")
+                    out["worker_uptime_s"] = winf.get("uptime_s")
+                    out["worker_health"] = winf.get("health") or winf.get("healthy")
+                    break
+            # also from direct if list_daemon_workers updated
+            if not out.get("worker_pid") and isinstance(workers, dict) and workers.get("pid"):
+                out["worker_pid"] = workers.get("pid")
+            # pull health if present in describe
+            if isinstance(workers, dict) and "workers" in workers:
+                for ww in (workers.get("workers") or {}).values():
+                    if isinstance(ww, dict) and "health" in ww:
+                        out.setdefault("worker_health", ww.get("health"))
+                        break
+        except Exception:
+            pass
+        # also surface health from direct worker if available
+        try:
+            if str(ROOT) not in sys.path:
+                sys.path.insert(0, str(ROOT))
+            from aiw.queue import worker_health
+            out["worker_health_detail"] = worker_health(ws)
+        except Exception:
+            pass
+        return out
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+def list_missions_from_cockpit(workspace_id: str = None, limit: int = 20) -> list[dict]:
+    """Richer mission list for dashboard (uses expanded aiw.mission with runs/approvals/queue). Step4: enriched for table (counts, pr, pending approvs)."""
+    try:
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        from aiw import list_missions as _lm, get_mission
+        ws = active_workspace_id(workspace_id)
+        ms = _lm(ws, limit=limit)
+        # enrich further for UI (list runs summary + pending approvs for table)
+        for m in ms:
+            try:
+                mid = m.get("mission_id")
+                full = get_mission(mid, ws) or m
+                m["approvals"] = full.get("approvals", [])
+                m["run_ids"] = full.get("run_ids", [])
+                approvs = m.get("approvals") or []
+                m["pending_approvals"] = [a for a in approvs if (a.get("status") or "").lower() not in ("approved","rejected")]
+                m["run_count"] = m.get("run_count") or len(m.get("run_ids", []))
+                m["pr_links"] = m.get("pr_urls") or []
+            except Exception:
+                pass
+        return ms
+    except Exception as e:
+        return [{"error": str(e)}]
 
 
 def run_action(action: str, run_path: str, reason: str = "") -> tuple[bool, str]:
@@ -6090,6 +6314,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(payload)
             return
 
+        if path == "/api/missions" or path.endswith("/missions"):
+            try:
+                payload = {"ok": True, "missions": list_missions_from_cockpit(None, limit=20)}
+            except Exception as e:
+                payload = {"ok": False, "error": str(e)}
+            self.send_json(payload)
+            return
+
         # Minimal worker controls for 24/7 daemon (start/stop/status/resume); keep simple, use ?workspace=xx
         if path.startswith("/api/worker/"):
             try:
@@ -6100,9 +6332,11 @@ class Handler(BaseHTTPRequestHandler):
                 ws_id = (qd.get("workspace", [""])[0] or qd.get("ws", [""])[0] or "aiw")
                 from aiw.queue import (
                     start_daemon_worker, stop_daemon_worker,
-                    get_persistent_worker, resume_all_checkpoints_as_daemons
+                    get_persistent_worker, resume_all_checkpoints_as_daemons,
+                    worker_health,
                 )
                 action = path.split("/api/worker/", 1)[-1].split("?", 1)[0].rstrip("/")
+                qd_daemon = qd.get("daemon_id", [""])[0] or qd.get("did", [""])[0] or qd.get("id", [""])[0]
                 if action in ("start", "start-daemon", ""):
                     # explicit resume wire here too (idempotent)
                     try:
@@ -6111,13 +6345,24 @@ class Handler(BaseHTTPRequestHandler):
                         pass
                     payload = start_daemon_worker(ws_id)
                 elif action in ("stop", "stop-daemon"):
-                    payload = stop_daemon_worker(ws_id)
+                    if qd_daemon:
+                        try:
+                            from aiw.agent.iterative_loop import stop_persistent_agent_daemon as _stop_d
+                            payload = _stop_d(qd_daemon)
+                            payload.setdefault("ok", True)
+                        except Exception as ee:
+                            payload = {"ok": False, "error": str(ee), "daemon_id": qd_daemon}
+                    else:
+                        payload = stop_daemon_worker(ws_id)
                 elif action in ("resume", "resume-ckpts", "resume_all_checkpoints_as_daemons"):
                     payload = resume_all_checkpoints_as_daemons(ws_id)
+                elif action in ("health", "status"):
+                    w = get_persistent_worker(ws_id)
+                    payload = {"ok": True, "health": worker_health(ws_id) if 'worker_health' in dir() else w.health(), "worker": w.describe(), "daemons": w.list_daemons()}
                 else:
                     # status
                     w = get_persistent_worker(ws_id)
-                    payload = {"ok": True, "worker": w.describe(), "daemons": w.list_daemons()}
+                    payload = {"ok": True, "worker": w.describe(), "health": getattr(w, "health", lambda: {})(), "daemons": w.list_daemons()}
             except Exception as e:
                 payload = {"ok": False, "error": str(e), "path": path}
             self.send_json(payload)
@@ -7003,7 +7248,7 @@ class Handler(BaseHTTPRequestHandler):
             start_daemon = str(form.get("start_daemon", [""])[0]).lower() in ("1", "true", "on", "yes")
             offline = path == "/runner/run-agent-offline"
             if start_daemon and not offline:
-                ok, output, generated_run = start_daemon_agent_from_cockpit(workspace_id=workspace_id, task=agent_task, profile=prof_name, model=model, resume_run_id=resume_run_id)
+                ok, output, generated_run = start_daemon_agent_from_cockpit(workspace_id=workspace_id, task=agent_task, profile=prof_name, model=model, resume_run_id=resume_run_id, mission_id=mission_id)
             else:
                 ok, output, generated_run = run_agent_from_cockpit(model, offline=offline, workspace_id=workspace_id, task=agent_task, profile=prof_name, mission_id=mission_id, mission_title=mission_title, resume_run_id=resume_run_id, persistent=persistent)
             redirect = f"/run?path={quote(generated_run)}" if generated_run else "/"
@@ -7012,8 +7257,8 @@ class Handler(BaseHTTPRequestHandler):
             workspace_id = form.get("workspace_id", [""])[0]
             agent_task = form.get("agent_task", [""])[0] or "Autonomous 24/7 persistent daemon task"
             prof_name = form.get("profile", ["software-engineer"])[0]
-            # resume_run_id captured at top of form handler; now passed for daemon resume support
-            ok, output, generated_run = start_daemon_agent_from_cockpit(workspace_id=workspace_id, task=agent_task, profile=prof_name, model=model, resume_run_id=resume_run_id)
+            # resume_run_id + mission_id (Step 5) captured at top
+            ok, output, generated_run = start_daemon_agent_from_cockpit(workspace_id=workspace_id, task=agent_task, profile=prof_name, model=model, resume_run_id=resume_run_id, mission_id=mission_id)
             redirect = f"/run?path={quote(generated_run)}" if generated_run else "/"
         elif path == "/action/approve":
             ok, output = run_action("approve", run_path)
@@ -7034,6 +7279,54 @@ class Handler(BaseHTTPRequestHandler):
                 ok = res.get("ok", False)
                 status = res.get("status", default_st)
                 output = res.get("error") or f"{status} (backup: {res.get('backup_path', '-')})"
+        if path == "/mission/approve":
+            # simple approvals UI tie-in for expanded mission (queue/approvals support)
+            mid = form.get("mission_id", [""])[0]
+            ok_m = False
+            outp = ""
+            try:
+                if str(ROOT) not in sys.path: sys.path.insert(0, str(ROOT))
+                from aiw import attach_approval_to_mission
+                ap = {"approval_id": "ap-cockpit-"+str(uuid.uuid4().hex[:6]), "status": "approved", "ts": __import__("datetime").datetime.utcnow().isoformat()+"Z", "by": "cockpit"}
+                ok_m = attach_approval_to_mission(mid, ap)
+                outp = "approved" if ok_m else "attach-failed"
+                if ok_m:
+                    try:
+                        from aiw import get_mission
+                        m = get_mission(mid) or {}
+                        for rid in reversed(m.get("run_ids", [])):
+                            rj = ROOT / ".aiw" / "workspaces" / active_workspace_id() / "agent-iterative-loop" / "runs" / rid / "run.json"
+                            if rj.exists():
+                                rd = json.loads(rj.read_text(encoding="utf-8"))
+                                rd["approval_status"] = "approved"
+                                rj.write_text(json.dumps(rd, indent=2, ensure_ascii=False), encoding="utf-8")
+                                break
+                    except Exception: pass
+            except Exception as e:
+                outp = str(e)
+            redirect = "/"
+            if "application/json" in (self.headers.get("Accept") or ""):
+                self.send_json({"ok": ok_m, "mission_id": mid, "result": outp})
+                return
+            # fall to normal html render below with redirect
+        if path == "/mission/attach":
+            # Step 4: attach run form handler (inline in missions table)
+            mid = form.get("mission_id", [""])[0]
+            rid = form.get("run_id", [""])[0]
+            ok_a = False
+            outp = ""
+            try:
+                if str(ROOT) not in sys.path: sys.path.insert(0, str(ROOT))
+                from aiw import attach_run_to_mission
+                ok_a = attach_run_to_mission(mid, rid)
+                outp = "attached" if ok_a else "attach-failed"
+            except Exception as e:
+                outp = str(e)
+            redirect = "/"
+            if "application/json" in (self.headers.get("Accept") or ""):
+                self.send_json({"ok": ok_a, "mission_id": mid, "run_id": rid, "result": outp})
+                return
+            # fallthrough to redirect render
                 # Polish for step 3: after _safe_patch_*, for agent-iterative-loop runs (when run_path provided by form),
                 # load via existing read logic (or .aiw/.../run.json fallback), update in-memory patch status in trace,
                 # then return full HTML (success banner + updated trace via render_agent_trace_html).

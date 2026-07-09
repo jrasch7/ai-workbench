@@ -96,6 +96,93 @@ else:
     exec "$AIW_ROOT/scripts/aiw-doctor-local" "$@"
     ;;
 
+  mission)
+    shift
+    cd "$AIW_ROOT"
+    # Expanded mission (Step 5): support run, create, attach, get, list + approvals/queue
+    python3 -c '
+import sys, os, json
+sys.path.insert(0, ".")
+os.environ.setdefault("AIW_ROOT", ".")
+args = sys.argv[1:]
+ws = args[0] if args else "aiw"
+action = args[1].lower() if len(args)>1 else "list"
+from aiw import create_mission, list_missions, get_mission, attach_run_to_mission, attach_approval_to_mission, enqueue_mission_task, Mission
+if action == "create":
+    title = args[2] if len(args)>2 else "Missão CLI"
+    task = args[3] if len(args)>3 else ""
+    print(json.dumps(create_mission(ws, title, task), indent=2, ensure_ascii=False))
+elif action == "run":
+    # aiw mission run [ws] "title" "task" [--persistent]
+    title = args[2] if len(args)>2 else "Missão via CLI run"
+    task = args[3] if len(args)>3 else title
+    m = create_mission(ws, title, task)
+    mid = m.get("mission_id")
+    print("[mission] created", mid)
+    # queue tie-in + start persistent daemon run for the mission
+    try:
+        qres = enqueue_mission_task(mid, task, priority=5, workspace_id=ws)
+        print("[mission] enqueued:", qres)
+        from aiw.agent.iterative_loop import start_persistent_agent_daemon
+        dres = start_persistent_agent_daemon(ws, task, execute=True, confirm=True, mission_id=mid, persistent=True)
+        print("[mission] started daemon:", json.dumps(dres, indent=2, ensure_ascii=False))
+        # attach if run_id present
+        rid = dres.get("run_id")
+        if rid:
+            attach_run_to_mission(mid, rid, ws)
+    except Exception as e:
+        print("[mission run fallback attach only]", e)
+    print(json.dumps(get_mission(mid, ws), indent=2, ensure_ascii=False))
+elif action == "attach":
+    mid = args[2] if len(args)>2 else ""
+    rid = args[3] if len(args)>3 else ""
+    print(attach_run_to_mission(mid, rid, ws))
+elif action == "approve":
+    mid = args[2] if len(args)>2 else ""
+    ap = {"approval_id": "ap-"+__import__("uuid").uuid4().hex[:6], "status": "approved", "ts": __import__("datetime").datetime.utcnow().isoformat()+"Z"}
+    print(attach_approval_to_mission(mid, ap, ws))
+elif action == "get" or action == "status":
+    mid = args[2] if len(args)>2 else ""
+    m = get_mission(mid, ws)
+    try:
+        from aiw.mission import Mission
+        if m:
+            mm = Mission(m)
+            print(json.dumps(mm.status(), indent=2, ensure_ascii=False))
+        else:
+            print(json.dumps(m, indent=2, ensure_ascii=False))
+    except Exception:
+        print(json.dumps(m, indent=2, ensure_ascii=False))
+elif action == "runs":
+    mid = args[2] if len(args)>2 else ""
+    try:
+        from aiw.mission import Mission
+        m = get_mission(mid, ws)
+        if m:
+            mm = Mission(m)
+            print(json.dumps(mm.list_runs(ws), indent=2, ensure_ascii=False))
+        else:
+            print("[]")
+    except Exception as e:
+        print(json.dumps({"error": str(e)}, indent=2))
+elif action in ("bulk-approve", "approve-all"):
+    # bulk approve pending for all active missions (CLI polish for prod UX)
+    ms = list_missions(ws, limit=50)
+    results = []
+    for m in ms:
+        mid = m.get("mission_id")
+        approvs = m.get("approvals", []) or []
+        pending = [a for a in approvs if (a.get("status") or "").lower() not in ("approved", "rejected")]
+        if pending or (m.get("status") or "active") in ("active", "pending", "in_progress"):
+            ap = {"approval_id": "ap-bulk-"+__import__("uuid").uuid4().hex[:6], "status": "approved", "ts": __import__("datetime").datetime.utcnow().isoformat()+"Z", "by": "cli-bulk"}
+            ok = attach_approval_to_mission(mid, ap, ws)
+            results.append({"mission_id": mid, "ok": ok})
+    print(json.dumps({"bulk_approved": results}, indent=2, ensure_ascii=False))
+else:
+    ms = list_missions(ws, limit=10)
+    print(json.dumps(ms, indent=2, ensure_ascii=False))
+' "$@"
+    ;;
 
 esac
 
@@ -343,5 +430,40 @@ Examples:
   aiw matrix dev-openrouter-free dev-coder
   aiw stop
 HELP
+    ;;
+  mission)
+    cd "$AIW_ROOT"
+    python3 -c '
+import sys, os, json
+sys.path.insert(0, ".")
+os.environ.setdefault("AIW_ROOT", ".")
+args = sys.argv[1:]
+ws = args[0] if args else "aiw"
+action = args[1].lower() if len(args)>1 else "list"
+from aiw import create_mission, list_missions, get_mission, attach_run_to_mission, attach_approval_to_mission, enqueue_mission_task
+if action == "create":
+    title = args[2] if len(args)>2 else "Missão"
+    task = args[3] if len(args)>3 else ""
+    print(json.dumps(create_mission(ws, title, task), indent=2))
+elif action == "run":
+    title = args[2] if len(args)>2 else "Missão run"
+    task = args[3] if len(args)>3 else title
+    m = create_mission(ws, title, task); mid=m.get("mission_id")
+    print("[mission] created", mid)
+    try:
+        print(enqueue_mission_task(mid, task, 5, ws))
+        from aiw.agent.iterative_loop import start_persistent_agent_daemon
+        print(start_persistent_agent_daemon(ws, task, execute=True, confirm=True, mission_id=mid, persistent=True))
+    except Exception as e: print("start err", e)
+    print(json.dumps(get_mission(mid, ws), indent=2))
+elif action == "attach":
+    print(attach_run_to_mission(args[2] if len(args)>2 else "", args[3] if len(args)>3 else "", ws))
+elif action == "approve":
+    print(attach_approval_to_mission(args[2] if len(args)>2 else "", {"approval_id":"ap-cli","status":"approved"}, ws))
+elif action == "get":
+    print(json.dumps(get_mission(args[2] if len(args)>2 else "", ws), indent=2))
+else:
+    print(json.dumps(list_missions(ws, 5), indent=2))
+' "$@"
     ;;
 esac

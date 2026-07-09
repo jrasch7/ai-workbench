@@ -297,11 +297,13 @@ Implementado via `aiw/agent/iterative_loop.py` (start_persistent_agent_daemon + 
 **Uso principal (Cockpit - recomendado):**
 1. `./scripts/aiw-cockpit`
 2. No form "Executar Agente Direto":
+   - (opc) Preencha "Missão persistente" (título cria via aiw.mission)
    - Marque "Start as background daemon (24/7 queue worker + multiple runs)"
    - Preencha Perfil (ex: software-engineer), modelo, tarefa longa.
    - Submit via botão "Start Daemon (bg persistent)" (ou normal + checkbox).
-3. Monitor: na UI aparece "Daemons: N" + link /api/daemons ; seções de missões persistentes.
+3. Monitor: na UI aparece "Daemons: N" + link /api/daemons ; seções de missões persistentes (Step 5: run+ckpt+auto_pr + pr links).
 4. Resume: use run_id de checkpoint listado, ou re-submeta com resume.
+5. CLI: ./scripts/aiw-agent-loop --mission-title "..." --persistent ... ; ou `aiw mission list/create/attach/get` ; python -c 'from aiw.mission import ...'
 
 **CLI equivalente:**
 ```bash
@@ -315,16 +317,24 @@ print(list_daemon_workers("aiw"))
 # Ou direto daemon para uma missão (usa thread bg + loop persistent)
 python3 -c '
 from aiw.agent.iterative_loop import start_persistent_agent_daemon, list_running_daemons
-d = start_persistent_agent_daemon("aiw", "Tarefa autônoma longa 24/7: pesquisar e refatorar", profile="software-engineer", execute=True, confirm=True)
+d = start_persistent_agent_daemon("aiw", "Tarefa autônoma longa 24/7: pesquisar e refatorar", profile="software-engineer", execute=True, confirm=True, mission_id="mis-xxx")
 print(d)
 print(list_running_daemons("aiw"))
 '
+# Step 5 mission wrapper (minimal)
+python3 -c '
+from aiw.mission import create_mission, list_missions, attach_run_to_mission, Mission
+m = create_mission("aiw", "Refator + validar")
+print(list_missions("aiw", 3))
+# attach_run_to_mission(m["mission_id"], "ail-...", "aiw")
+print(Mission.list()[:1])
+'
 
 # Via aiw-agent-loop (foreground mas com persistent/ckpt)
-./scripts/aiw-agent-loop --workspace aiw --task "missão persistente" --persistent --profile software-engineer --execute --confirm-agent-loop --max-iterations 0
+./scripts/aiw-agent-loop --workspace aiw --task "missão persistente" --persistent --profile software-engineer --execute --confirm-agent-loop --max-iterations 0 --mission-title "Exemplo Step5"
 
 # Resume de run_id (checkpoint)
-./scripts/aiw-agent-loop --workspace aiw --run-id ail-xxxx --resume --persistent ...
+./scripts/aiw-agent-loop --workspace aiw --run-id ail-xxxx --resume --persistent --mission-id mis-xxx ...
 
 # Env para unlimited (prático ilimitado, quebra só em !should_continue/policy/stop)
 AIW_PERSISTENT_MAX_ITERATIONS=0 ./scripts/aiw-agent-loop ...
@@ -357,6 +367,10 @@ O script principal `aiw` suporta subcomando (adicione symlink `ln -s aiw aiw-dae
 python3 -c '
 from aiw.agent.iterative_loop import _test_daemon_persistent_logic
 print(_test_daemon_persistent_logic())
+'
+python3 -c '
+from aiw.mission import create_mission, attach_run_to_mission, list_missions
+m=create_mission("aiw","v"); print(list_missions("aiw",1)); attach_run_to_mission(m["mission_id"],"demo-run","aiw")
 '
 ./scripts/aiw-agent-loop-regression-smoke --workspace aiw  # (ou partes)
 ```

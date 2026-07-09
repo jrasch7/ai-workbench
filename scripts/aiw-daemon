@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # AIW Persistent 24/7 Daemon launcher (foreground CLI for real bg worker).
-# Usage: ./scripts/aiw-daemon --workspace aiw
+# Usage: ./scripts/aiw-daemon --workspace aiw [--pidfile .aiw/workspaces/aiw/aiw-daemon.pid] [--log-level DEBUG] [--log-json] [--poll 30] [--status] [--notify] [--health-port 8766]
 # Starts PersistentAgentWorker + auto-resumes checkpoints as daemons.
 # Keep running for continuous queue intake + persistent agent missions.
+# Production features: robust pidfile (stale detect), systemd Type=simple/notify (sd_notify), journald compat (stdout+--log-json), basic health endpoint (file .status.json + optional HTTP /health on --health-port), health() checks, better err.
 # Prefer aiw/ imports. Companion to cockpit /runner/start-daemon and /api/worker/* .
 
 export PYTHONPATH="$PWD:$PYTHONPATH"
@@ -13,6 +14,12 @@ import sys
 import argparse
 import time
 import json
+import os
+import signal
+import logging
+import socket
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 # sys.argv fixed for the heredoc exec pattern (see other aiw-* scripts)
@@ -20,50 +27,270 @@ sys.path.insert(0, str(Path.cwd()))
 
 def main():
     parser = argparse.ArgumentParser(
-        description="AIW 24/7 foreground daemon (get_persistent_worker + start; resumes checkpoints)"
+        description="AIW 24/7 foreground daemon (get_persistent_worker + start; resumes checkpoints). Supports pidfile, structured logs, graceful stop, live status via describe. Production: robust pid, systemd notify, health endpoint (file+HTTP opt)."
     )
     parser.add_argument("--workspace", default="aiw", help="Workspace ID (default: aiw)")
     parser.add_argument("--poll", type=float, default=60.0, help="Status print interval in seconds")
     parser.add_argument("--no-resume", action="store_true", help="Skip calling resume_all_checkpoints_as_daemons on start")
+    parser.add_argument("--pidfile", default=None, help="Path to write PID file (e.g. .aiw/workspaces/aiw/aiw-daemon.pid); removed on graceful stop")
+    parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Python logging level")
+    parser.add_argument("--log-json", action="store_true", help="Emit structured JSON logs (one per line) instead of prefixed text")
+    parser.add_argument("--status", action="store_true", help="Print live worker status (describe + daemons + health) and exit (no start)")
+    parser.add_argument("--notify", action="store_true", help="Send systemd sd_notify (READY=1, STATUS=..) for Type=notify units; auto if NOTIFY_SOCKET present")
+    parser.add_argument("--health-port", type=int, default=None, help="Optional: serve basic HTTP health endpoint on 127.0.0.1:PORT (/health /status return worker health JSON)")
     args = parser.parse_args()
 
+    # Structured logging setup (text or json)
+    log_level = getattr(logging, args.log_level.upper(), logging.INFO)
+    logger = logging.getLogger("aiw-daemon")
+    logger.setLevel(log_level)
+    if not logger.handlers:
+        h = logging.StreamHandler(sys.stdout)
+        if args.log_json:
+            # minimal json formatter
+            class _JsonFmt(logging.Formatter):
+                def format(self, record):
+                    rec = {
+                        "ts": time.time(),
+                        "level": record.levelname,
+                        "logger": "aiw-daemon",
+                        "msg": record.getMessage(),
+                    }
+                    if record.exc_info:
+                        rec["exc"] = self.formatException(record.exc_info)
+                    return json.dumps(rec, default=str)
+            h.setFormatter(_JsonFmt())
+        else:
+            h.setFormatter(logging.Formatter("[aiw-daemon] %(levelname)s %(message)s"))
+        logger.addHandler(h)
+    # also allow direct structured for status prints
+    def log(msg, level="info", **kw):
+        if args.log_json:
+            rec = {"ts": time.time(), "level": level.upper(), "msg": msg, **kw}
+            print(json.dumps(rec, default=str), flush=True)
+        else:
+            extra = f" {json.dumps(kw, default=str)}" if kw else ""
+            logger.log(getattr(logging, level.upper(), logging.INFO), f"{msg}{extra}")
+
+    def _sd_notify(msg: str) -> bool:
+        """systemd notify compat (for Type=notify). No extra deps; uses NOTIFY_SOCKET."""
+        sock_path = os.environ.get("NOTIFY_SOCKET") or (getattr(args, "notify", False) and "@" or None)
+        if not sock_path:
+            return False
+        try:
+            if sock_path.startswith("@"):
+                sock_path = "\0" + sock_path[1:]
+            with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as s:
+                s.connect(sock_path)
+                s.sendall(msg.encode("utf-8"))
+            return True
+        except Exception:
+            return False
+
+    def _write_pidfile_robust(p: Path) -> bool:
+        """Robust pidfile: detect live process, refuse overwrite if running; cleanup stale."""
+        if p.exists():
+            try:
+                old_pid = int(p.read_text(encoding="utf-8").strip())
+                if old_pid > 0:
+                    try:
+                        os.kill(old_pid, 0)
+                        log("pidfile exists with live process, refusing to start", level="error", pid=old_pid, pidfile=str(p))
+                        return False
+                    except ProcessLookupError:
+                        # stale, ok to remove
+                        try:
+                            p.unlink()
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+            except Exception:
+                try:
+                    p.unlink(missing_ok=True)
+                except Exception:
+                    pass
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(str(os.getpid()), encoding="utf-8")
+            return True
+        except Exception as e:
+            log("pidfile write failed", level="error", error=str(e))
+            return False
+
+    class _HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path in ("/health", "/status", "/"):
+                try:
+                    from aiw.queue import get_persistent_worker
+                    ww = get_persistent_worker(ws)
+                    payload = {"ok": True, "health": ww.health(), "worker": ww.describe(), "ts": time.time()}
+                    body = json.dumps(payload, default=str, indent=2).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                except Exception as e:
+                    body = json.dumps({"ok": False, "error": str(e)}).encode("utf-8")
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+            else:
+                self.send_response(404)
+                self.end_headers()
+        def log_message(self, format, *args):
+            # quiet; use daemon logger
+            pass
+
+    def _start_health_server(port: int):
+        try:
+            srv = HTTPServer(("127.0.0.1", port), _HealthHandler)
+            t = threading.Thread(target=srv.serve_forever, daemon=True, name="aiw-daemon-health-http")
+            t.start()
+            log("health endpoint started", level="info", port=port, url=f"http://127.0.0.1:{port}/health")
+            return srv
+        except Exception as e:
+            log("health server failed to start (nonfatal)", level="warning", error=str(e))
+            return None
+
     ws = args.workspace or "aiw"
-    print(f"[aiw-daemon] Starting persistent worker for workspace={ws} (foreground keep-alive)", flush=True)
+    pidfile = args.pidfile
+    if pidfile:
+        p = Path(pidfile)
+        if not _write_pidfile_robust(p):
+            sys.exit(1)
+        log(f"pidfile written pid={os.getpid()}", level="info", pidfile=str(pidfile))
+
+    status_path = None
+    if pidfile:
+        sp = Path(pidfile)
+        status_path = sp.with_name(sp.name + ".status.json")
+
+    def _cleanup_pid():
+        if pidfile:
+            try:
+                Path(pidfile).unlink(missing_ok=True)
+            except Exception:
+                pass
+        if status_path:
+            try:
+                status_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    # basic live status (via worker describe) without starting loop
+    if args.status:
+        try:
+            from aiw.queue import get_persistent_worker
+            w = get_persistent_worker(ws)
+            desc = w.describe()
+            h = w.health() if hasattr(w, "health") else {}
+            dlist = w.list_daemons() or {}
+            print(json.dumps({"ok": True, "status": "live", "worker": desc, "health": h, "daemons": dlist}, indent=2, default=str), flush=True)
+        except Exception as e:
+            print(json.dumps({"ok": False, "error": str(e)}, default=str), flush=True)
+            sys.exit(1)
+        sys.exit(0)
+
+    log(f"Starting persistent worker for workspace={ws} (foreground keep-alive)", level="info")
+    w = None
     try:
         # Prefer aiw imports (now wired via aiw/queue/__init__)
         from aiw.queue import get_persistent_worker, resume_all_checkpoints_as_daemons
         w = get_persistent_worker(ws)
         start_res = w.start()
-        print("[aiw-daemon] worker.start() ->", json.dumps(start_res, indent=2, default=str), flush=True)
+        print("[aiw-daemon-debug] start() returned", flush=True)
+        log("worker.start()", level="info", start_res=start_res)
+        if getattr(args, "notify", False) or os.environ.get("NOTIFY_SOCKET"):
+            _sd_notify("READY=1")
+            _sd_notify("STATUS=aiw-daemon started, worker running")
+        health_srv = None
+        if getattr(args, "health_port", None):
+            health_srv = _start_health_server(args.health_port)
+        if status_path:
+            try:
+                log("writing initial status/health file", level="debug", path=str(status_path))
+                st = {"pid": os.getpid(), "worker": w.describe(), "health": w.health(), "ts": time.time()}
+                status_path.write_text(json.dumps(st, default=str, indent=2), encoding="utf-8")
+                log("status/health file written", level="info", path=str(status_path))
+            except Exception as we:
+                log("status file write err (nonfatal)", level="warning", error=str(we))
+                pass
 
         if not args.no_resume:
             try:
                 rres = resume_all_checkpoints_as_daemons(ws)
-                print("[aiw-daemon] resume_all_checkpoints_as_daemons ->", json.dumps(rres, indent=2, default=str)[:600], flush=True)
+                log("resume_all_checkpoints_as_daemons", level="info", result=str(json.dumps(rres, default=str)[:600]))
             except Exception as re:
-                print("[aiw-daemon] resume note:", re, flush=True)
+                log("resume note", level="warning", error=str(re))
 
-        print("[aiw-daemon] Running. Use Ctrl-C to stop. Cockpit /api/worker/* or start-daemon form also control.", flush=True)
-        print("[aiw-daemon] Monitor: /api/daemons or ./scripts/aiw-cockpit", flush=True)
+        log("Running. Use Ctrl-C or SIGTERM to stop. Cockpit /api/worker/* or start-daemon form also control. Use --pidfile for mgmt.", level="info")
+        log("Monitor: /api/daemons or ./scripts/aiw-cockpit or --status", level="info")
 
-        while True:
+        # Graceful stop via signals + flag (in addition to KeyboardInterrupt)
+        running = True
+        def _graceful_stop(signum, frame):
+            nonlocal running
+            log(f"signal received, stopping gracefully", level="warning", signal=signum)
+            running = False
+            if getattr(args, "notify", False) or os.environ.get("NOTIFY_SOCKET"):
+                _sd_notify("STOPPING=1")
+            try:
+                if w:
+                    w.stop()
+            except Exception:
+                pass
+            try:
+                _cleanup_pid()
+            except Exception:
+                pass
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, _graceful_stop)
+        signal.signal(signal.SIGTERM, _graceful_stop)
+
+        while running:
             time.sleep(max(1.0, args.poll))
+            if not running:
+                break
             try:
                 desc = w.describe()
+                h = w.health() if hasattr(w, "health") else {}
                 dlist = w.list_daemons() or {}
                 dcount = len((dlist.get("daemons") or [])) if isinstance(dlist, dict) else 0
-                print(f"[aiw-daemon status] {json.dumps(desc, default=str)} | listed_daemons~{dcount}", flush=True)
+                # live status print (structured if --log-json)
+                log("status", level="info", desc=desc, listed_daemons=dcount, healthy=h.get("healthy"))
+                if getattr(args, "notify", False) or os.environ.get("NOTIFY_SOCKET"):
+                    _sd_notify(f"STATUS=healthy={h.get('healthy')} active={h.get('active_count')} uptime={desc.get('uptime_s')}s")
+                if status_path:
+                    try:
+                        st = {"pid": os.getpid(), "worker": desc, "health": h, "daemons": dlist, "ts": time.time()}
+                        status_path.write_text(json.dumps(st, default=str, indent=2), encoding="utf-8")
+                    except Exception:
+                        pass  # keep silent in loop to avoid spam
             except Exception as se:
-                print("[aiw-daemon] status err (nonfatal):", se, flush=True)
+                log("status err (nonfatal)", level="warning", error=str(se))
     except KeyboardInterrupt:
-        print("\n[aiw-daemon] stopping (SIGINT)")
+        log("stopping (SIGINT/Keyboard)", level="warning")
         try:
-            w.stop()
+            if w:
+                w.stop()
+        except Exception:
+            pass
+        try:
+            _cleanup_pid()
         except Exception:
             pass
         sys.exit(0)
     except Exception as e:
-        print(f"[aiw-daemon] failed: {e}", file=sys.stderr)
+        log(f"failed: {e}", level="error")
+        try:
+            _cleanup_pid()
+        except Exception:
+            pass
         sys.exit(1)
 
 
