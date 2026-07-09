@@ -7323,10 +7323,11 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 outp = str(e)
             redirect = "/"
+            ok = bool(ok_a)
             if "application/json" in (self.headers.get("Accept") or ""):
                 self.send_json({"ok": ok_a, "mission_id": mid, "run_id": rid, "result": outp})
                 return
-            # fallthrough to redirect render
+            # fallthrough to redirect render (mirrors original /mission/approve non-breaking)
                 # Polish for step 3: after _safe_patch_*, for agent-iterative-loop runs (when run_path provided by form),
                 # load via existing read logic (or .aiw/.../run.json fallback), update in-memory patch status in trace,
                 # then return full HTML (success banner + updated trace via render_agent_trace_html).
